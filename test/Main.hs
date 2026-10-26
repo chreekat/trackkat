@@ -13,6 +13,7 @@ import TrackKat.GamePose
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
+import TrackKat.Response
 import TrackKat.Stats
 import TrackKat.Tracker
 
@@ -188,7 +189,7 @@ main = do
     check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
     check "bindings" $
         parseConfig "# comment\nrecenter = ctrl + shift+f12\n\npause=Pause # TrackIR style\n"
-            == Right Config{recenterKey = Binding [Ctrl, Shift] "F12", pauseKey = Binding [] "Pause"}
+            == Right defaultConfig{recenterKey = Binding [Ctrl, Shift] "F12", pauseKey = Binding [] "Pause"}
     check "binding codes" $
         fmap (\b -> (modifierMask b, virtualKey b, renderBinding b)) (parseBinding "Alt+Ctrl+NumPad5") == Right (3, 0x65, "Ctrl+Alt+NumPad5")
     check "unknown key reported" $ parseConfig "recenter = F99\n" == Left "line 1: unknown key \"F99\""
@@ -204,6 +205,40 @@ main = do
     check ("stats summary: " ++ summary w) $
         summary w == "latency 0.30 ms (max 0.40)  gap max 9 ms  stripes max 40  GC 2 (max 0.15 ms)  corrupt 1"
     check "empty stats" $ summary emptyWindow == "latency 0.00 ms (max 0.00)  gap max 0 ms  stripes max 0  GC 0 (max 0.00 ms)"
+
+    -- Response curves.
+    let deadzone = Curve [(0.5, 0), (1.5, 1)]
+        lookBehind = Curve [(10, 10), (45, 120)]
+        close a b = abs (a - b) < 1e-9
+    check "curve deadzone" $ all (uncurry close) [(applyCurve deadzone 0.3, 0), (applyCurve deadzone 1, 0.5), (applyCurve deadzone (-1), -0.5), (applyCurve deadzone 10, 9.5)]
+    check "curve gain" $ all (uncurry close) [(applyCurve lookBehind 5, 5), (applyCurve lookBehind 45, 120), (applyCurve lookBehind (-45), -120), (applyCurve lookBehind 52, 142)]
+
+    -- Shaping: jumps a head can't make are held off unless they persist;
+    -- smoothing settles still jitter and follows steps.
+    let linear = Curve [(1, 1)]
+        plain = Response NoSmoothing linear linear linear linear linear linear
+        smooth = plain{smoothing = Smoothing 1 0.05}
+        at y = HeadPose{yaw = y, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0}
+        run r frames = go newShaper (zip [0, 1 / 120 ..] frames)
+          where
+            go _ [] = []
+            go sh ((t, p) : rest) = let (out, sh') = shape r t p sh in yaw out : go sh' rest
+    check ("one-frame spike ignored: " ++ show (run plain (map at [0, 1, 60, 2, 3]))) $
+        run plain (map at [0, 1, 60, 2, 3]) == [0, 1, 1, 2, 3]
+    check ("persistent jump accepted: " ++ show (run plain (map at [0, 60, 61, 62, 63]))) $
+        run plain (map at [0, 60, 61, 62, 63]) == [0, 0, 0, 62, 63]
+    let jitter = run smooth (map at (take 240 (cycle [0.4, -0.4])))
+        steady = run smooth (map at (replicate 240 10))
+    check ("smoothing settles jitter: " ++ show (maximum (map abs (drop 120 jitter)))) $ maximum (map abs (drop 120 jitter)) < 0.05
+    check "smoothing reaches a held value" $ abs (last steady - 10) < 1e-6
+
+    -- Settings for smoothing and curves.
+    check "curve and smoothing settings" $
+        fmap response (parseConfig "yaw = 10:10 45:120\nsmoothing = off\n")
+            == Right ((response defaultConfig){smoothing = NoSmoothing, yawCurve = lookBehind})
+    check "smoothing setting" $ fmap (smoothing . response) (parseConfig "smoothing = 0.8 .1") == Right (Smoothing 0.8 0.1)
+    check "curve inputs must increase" $ parseConfig "pitch = 5:5 3:9" == Left "line 1: curve inputs must be positive and increasing"
+    check "curve points must be numbers" $ parseConfig "z = 1:x" == Left "line 1: expected input:output, not \"1:x\""
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
