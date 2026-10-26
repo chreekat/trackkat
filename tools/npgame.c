@@ -3,6 +3,7 @@
  * so it shows whether a game would accept it.
  *
  * usage: npgame [game-id] [path\to\NPClient64.dll]
+ * The game ID defaults to 1003, which DCS uses.
  * Without a path, it finds the DLL through the registry, like games do. */
 
 #include <windows.h>
@@ -33,8 +34,7 @@ typedef int(__stdcall *register_id_fn)(unsigned short);
 typedef int(__stdcall *request_data_fn)(unsigned short);
 typedef int(__stdcall *void_fn)(void);
 
-/* The DCS key, as in npclient.c. */
-static const unsigned char dcs_key[8] = {0x9B, 0xFC, 0x88, 0xF6, 0x8F, 0x86, 0x56, 0x05};
+#include "../npclient/game_keys.h"
 
 static unsigned cksum(unsigned char buf[], unsigned size)
 {
@@ -94,7 +94,12 @@ static HMODULE load_from_registry(void)
 
 int main(int argc, char **argv)
 {
-    unsigned short id = argc > 1 ? (unsigned short)atoi(argv[1]) : 1006;
+    unsigned short id = argc > 1 ? (unsigned short)atoi(argv[1]) : 1003;
+    const unsigned char *key = NULL;
+    for (size_t i = 0; i < sizeof scrambled_games / sizeof scrambled_games[0]; i++)
+        if (scrambled_games[i].id == id)
+            key = scrambled_games[i].key;
+    printf("game %u, %s data\n", id, key ? "scrambled" : "plain");
     HMODULE dll = argc > 2 ? LoadLibraryA(argv[2]) : load_from_registry();
     if (!dll) {
         fprintf(stderr, "could not load NPClient (error %lu)\n", GetLastError());
@@ -127,8 +132,8 @@ int main(int argc, char **argv)
     for (int i = 0; i < 40; i++) {
         tir_data_t d;
         int rc = get_data(&d);
-        if (id == 1006)
-            unscramble((unsigned char *)&d, sizeof d, dcs_key);
+        if (key)
+            unscramble((unsigned char *)&d, sizeof d, key);
         unsigned want = d.cksum;
         d.cksum = 0;
         int ok = cksum((unsigned char *)&d, sizeof d) == want;

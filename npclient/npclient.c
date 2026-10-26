@@ -38,14 +38,7 @@ typedef struct tir_signature {
     char AppSignature[200];
 } tir_signature_t;
 
-/* Games that expect their data scrambled, and the key, from OpenTrack's
- * "facetracknoir supported games.csv". Everything else gets it plain. */
-static const struct {
-    unsigned short id;
-    unsigned char key[8];
-} scrambled_games[] = {
-    {1006, {0x9B, 0xFC, 0x88, 0xF6, 0x8F, 0x86, 0x56, 0x05}}, /* DCS */
-};
+#include "game_keys.h"
 
 static HMODULE self;
 static HANDLE log_file = INVALID_HANDLE_VALUE;
@@ -317,9 +310,16 @@ NP_EXPORT(int) NP_GetData(tir_data_t *data)
 NP_EXPORT(int) NP_RegisterProgramProfileID(unsigned short id)
 {
     LOG_FIRST(5, "NP_RegisterProgramProfileID(%u)", id);
+    const char *name = NULL;
     for (size_t i = 0; i < sizeof scrambled_games / sizeof scrambled_games[0]; i++)
-        if (scrambled_games[i].id == id)
+        if (scrambled_games[i].id == id) {
             key = scrambled_games[i].key;
+            name = scrambled_games[i].name;
+        }
+    if (name)
+        np_log("game %u is %s: scrambling its data", id, name);
+    else
+        np_log("game %u: sending plain data", id);
     if (map_shared())
         heap->GameID = id;
     ensure_trackkat();

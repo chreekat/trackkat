@@ -63,8 +63,8 @@ again when it comes back.
 
 - `npclient.log`, beside the DLLs, records what each game asked NPClient for
   and what it got.
-- `npgame` loads NPClient like a game does (DCS by default, or
-  `npgame <game id>`), unscrambles and checksums what it gets as a game
+- `npgame` loads NPClient like a game does (as DCS, game 1003, by default,
+  or `npgame <game id>`), unscrambles and checksums what it gets as a game
   must, and prints the pose. Run it while trackkat is running.
 - `tools/test-npclient.sh` runs the same check under Wine, with a stand-in
   for trackkat.
