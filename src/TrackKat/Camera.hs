@@ -14,7 +14,9 @@ module TrackKat.Camera (
     productIdV3,
     withCamera,
     withPackets,
-    setLeds,
+    Light (..),
+    setLights,
+    newLightKeeper,
     Log,
     hex,
 ) where
@@ -23,10 +25,10 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (link, withAsync)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Exception (Exception, bracket_, finally, throwIO, try)
-import Control.Monad (forever, replicateM_, void)
+import Control.Monad (forever, replicateM_, void, when)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString as B
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Word (Word16, Word8)
 import GHC.Clock (getMonotonicTime, getMonotonicTimeNSec)
 
@@ -155,15 +157,39 @@ setIrBrightness :: Camera -> Int -> IO ()
 setIrBrightness cam level =
     setIrBrightnessRaw cam ((case max 5 (min 7 level) of 5 -> 150; 6 -> 250; _ -> 350) `shiftL` 4)
 
+data Light = Off | On
+    deriving (Eq, Show)
+
 -- | Set the two green lights on the front of the camera. NaturalPoint uses
 -- the first for "tracking the reflectors" and the second for "a game is using
 -- the tracking". Does nothing if the lights were disabled in 'Settings'.
 --
 -- Each command pauses for 50 ms, so only call this when the state changes.
-setLeds :: Camera -> Bool -> Bool -> IO ()
-setLeds cam first second
-    | camLedsEnabled cam = send cam (Cmd4 0x19 0x04 0x00 ((if first then 0x20 else 0) .|. (if second then 0x02 else 0)))
+setLights :: Camera -> Light -> Light -> IO ()
+setLights cam first second
+    | camLedsEnabled cam = send cam (Cmd4 0x19 0x04 0x00 (bit 0x20 first .|. bit 0x02 second))
     | otherwise = pure ()
+  where
+    bit b On = b
+    bit _ Off = 0
+
+-- | An action to call as often as you like with the lights you want, which
+-- changes them once that choice has held for a quarter of a second.
+newLightKeeper :: Camera -> IO (Light -> Light -> IO ())
+newLightKeeper cam = do
+    shown <- newIORef (Off, Off)
+    wanted <- newIORef (0, (Off, Off))
+    pure $ \first second -> do
+        now <- getMonotonicTime
+        (since, was) <- readIORef wanted
+        let want = (first, second)
+        if want /= was
+            then writeIORef wanted (now, want)
+            else do
+                current <- readIORef shown
+                when (want /= current && now - since > 0.25) $ do
+                    uncurry (setLights cam) want
+                    writeIORef shown want
 
 -- | Discard anything the camera has queued.
 drain :: Camera -> IO ()

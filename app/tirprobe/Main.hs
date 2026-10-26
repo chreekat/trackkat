@@ -128,18 +128,7 @@ run opts cam = do
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
     tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts))
-    -- First green light shows whether we're tracking, once that has held
-    -- steady for a moment.
-    ledOn <- newIORef False
-    ledSince <- newIORef (0, False)
-    let updateLed tracking = do
-            now <- getMonotonicTime
-            (since, was) <- readIORef ledSince
-            when (tracking /= was) $ writeIORef ledSince (now, tracking)
-            shown <- readIORef ledOn
-            when (tracking == was && tracking /= shown && now - since > 0.25) $ do
-                setLeds cam tracking False
-                writeIORef ledOn tracking
+    lights <- newLightKeeper cam
     let console = do
             eof <- isEOF
             unless eof $ do
@@ -162,7 +151,7 @@ run opts cam = do
                 case p of
                     Frame n stripes -> do
                         tracked <- if optBlobs opts then pure (Lost 0) else track stripes
-                        when (not (optBlobs opts)) $ updateLed (isTracked tracked)
+                        when (not (optBlobs opts)) $ lights (if isTracked tracked then On else Off) Off
                         modifyIORef' frames (+ 1)
                         now <- getMonotonicTime
                         t0 <- readIORef lastPrint
