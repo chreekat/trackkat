@@ -6,12 +6,13 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), withAsync)
-import Control.Exception (Handler (..), catches, displayException)
+import Control.Exception (Handler (..), IOException, catch, catches, displayException)
 import Control.Monad (forM_, forever, unless, when)
 import Data.IORef
+import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
 import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, getModificationTime)
 import System.Environment (getExecutablePath)
 import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
@@ -41,7 +42,8 @@ main = do
     unless first $ do
         putStrLn "trackkat is already running."
         exitFailure
-    config <- loadConfig (dir </> "trackkat.conf")
+    let settingsFile = dir </> "trackkat.conf"
+    (config, stamp) <- loadConfig settingsFile
     openShared >>= either (\e -> putStrLn ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
     publish still
     setNPClientPath dir >>= \case
@@ -55,7 +57,7 @@ main = do
         (renderBinding (recenterKey config))
         (renderBinding (pauseKey config))
     session <- newSession (response config)
-    withAsync (console session) $ \_ -> forever $ do
+    withAsync (console session) $ \_ -> withAsync (watchSettings settingsFile session stamp config) $ \_ -> forever $ do
         (USB.withContext $ \ctx -> withCamera ctx (putStrLn . ("# " ++)) defaultSettings (track session))
             `catches` [ Handler $ \e -> putStrLn (explain e)
                       , Handler $ \e -> putStrLn ("USB error: " ++ displayException (e :: USB.USBError))
@@ -65,21 +67,54 @@ main = do
         putStrLn "Trying the camera again in 3 seconds."
         threadDelay 3000000
 
--- | Read the settings file, creating it with the defaults if there is none.
-loadConfig :: FilePath -> IO Config
+-- | Read the settings file, creating it with the defaults if there is none,
+-- along with the modification time of what was read.
+loadConfig :: FilePath -> IO (Config, Maybe UTCTime)
 loadConfig path = do
     exists <- doesFileExist path
     if not exists
         then do
             writeFile path (renderConfig defaultConfig)
             putStrLn ("Wrote default settings to " ++ path)
-            pure defaultConfig
-        else
-            parseConfig <$> readFile path >>= \case
-                Right c -> pure c
+            (defaultConfig,) <$> modificationTime path
+        else do
+            stamp <- modificationTime path
+            readSettings path >>= \case
+                Right c -> pure (c, stamp)
                 Left err -> do
                     putStrLn (path ++ ": " ++ err)
                     exitFailure
+
+-- | Parse the settings file, reading it whole so editors can replace it.
+readSettings :: FilePath -> IO (Either String Config)
+readSettings path = (parseConfig <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException)))
+
+-- | Nothing while the file is missing.
+modificationTime :: FilePath -> IO (Maybe UTCTime)
+modificationTime path = (Just <$> getModificationTime path) `catch` \e -> const (pure Nothing) (e :: IOException)
+
+-- | Apply the settings file each time it is saved. A file that is missing
+-- or doesn't parse leaves the settings as they were; an editor still
+-- writing it changes its time again when done, so it is read again then.
+watchSettings :: FilePath -> Session -> Maybe UTCTime -> Config -> IO ()
+watchSettings path s = go
+  where
+    go stamp config = do
+        threadDelay 500000
+        stamp' <- modificationTime path
+        case stamp' of
+            Just _
+                | stamp' /= stamp ->
+                    readSettings path >>= \case
+                        Left err -> do
+                            putStrLn (path ++ ": " ++ err ++ "; keeping the previous settings.")
+                            go stamp' config
+                        Right new -> do
+                            writeIORef (sResponse s) (response new)
+                            rebindHotkeys (recenterKey new) (pauseKey new)
+                            putStrLn (describeChanges config new)
+                            go stamp' new
+            _ -> go stamp config
 
 explain :: OpenError -> String
 explain NoCamera = "No TrackIR 5 found. Is it plugged in?"
@@ -93,7 +128,8 @@ data Clip = ClipSeen | ClipLost
 -- | State that outlives any one connection to the camera.
 data Session = Session
     { sTracker :: IORef Tracker
-    , sResponse :: Response
+    , sResponse :: IORef Response
+    -- ^ replaced when the settings file is saved
     , sShaper :: IORef Shaper
     , sClip :: IORef Clip
     , sPaused :: IORef (Maybe GamePose)
@@ -106,7 +142,7 @@ newSession :: Response -> IO Session
 newSession r =
     Session
         <$> newIORef (newTracker defaultIntrinsics defaultClip)
-        <*> pure r
+        <*> newIORef r
         <*> newIORef newShaper
         <*> newIORef ClipLost
         <*> newIORef Nothing
@@ -158,8 +194,9 @@ track s cam = do
                 case outcome of
                     Tracked hp _ _ -> do
                         writeIORef (sClip s) ClipSeen
+                        r <- readIORef (sResponse s)
                         shaped <- atomicModifyIORef' (sShaper s) $ \sh ->
-                            let (p, sh') = shape (sResponse s) now hp sh in (sh', p)
+                            let (p, sh') = shape r now hp sh in (sh', p)
                         writeIORef (sLatest s) (toGamePose shaped)
                     Lost _ -> writeIORef (sClip s) ClipLost
                 paused <- readIORef (sPaused s)

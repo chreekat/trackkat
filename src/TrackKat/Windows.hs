@@ -9,6 +9,7 @@ module TrackKat.Windows (
     setNPClientPath,
     Hotkey (..),
     startHotkeys,
+    rebindHotkeys,
     takeHotkeys,
 ) where
 
@@ -27,6 +28,7 @@ foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
 foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
 foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: CUInt -> CUInt -> CUInt -> CUInt -> IO CInt
+foreign import ccall unsafe "hts_hotkeys_rebind" c_hotkeys_rebind :: CUInt -> CUInt -> CUInt -> CUInt -> IO ()
 foreign import ccall unsafe "hts_hotkeys_take" c_hotkeys_take :: IO CInt
 
 -- | Create the shared memory games read from. Left is a Windows error code.
@@ -67,13 +69,20 @@ data Hotkey = RecenterKey | PauseKey
 -- hiding them from other programs. Left is a Windows error code.
 startHotkeys :: Binding -> Binding -> IO (Either Int ())
 startHotkeys recenter pause = do
-    rc <-
-        c_hotkeys_start
-            (fromIntegral (modifierMask recenter))
-            (fromIntegral (virtualKey recenter))
-            (fromIntegral (modifierMask pause))
-            (fromIntegral (virtualKey pause))
+    rc <- withCodes c_hotkeys_start recenter pause
     pure (if rc == 0 then Right () else Left (fromIntegral rc))
+
+-- | Change the recenter and pause hotkeys.
+rebindHotkeys :: Binding -> Binding -> IO ()
+rebindHotkeys = withCodes c_hotkeys_rebind
+
+withCodes :: (CUInt -> CUInt -> CUInt -> CUInt -> a) -> Binding -> Binding -> a
+withCodes f recenter pause =
+    f
+        (fromIntegral (modifierMask recenter))
+        (fromIntegral (virtualKey recenter))
+        (fromIntegral (modifierMask pause))
+        (fromIntegral (virtualKey pause))
 
 -- | Hotkeys pressed since the last call.
 takeHotkeys :: IO [Hotkey]

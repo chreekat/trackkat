@@ -145,7 +145,8 @@ int hts_set_npclient_path(const wchar_t *dir)
 #define HK_WIN 0x8
 
 static volatile LONG hotkey_presses;
-static UINT recenter_mods, recenter_vk, pause_mods, pause_vk;
+/* Each binding packed as mods << 16 | vk, so it changes in one atomic step. */
+static volatile LONG recenter_binding, pause_binding;
 static volatile LONG hotkey_status; /* 0 starting, 1 running, 2 failed */
 static volatile LONG hotkey_error;
 static DWORD held_vk; /* a bound key now held down, so repeats are ignored */
@@ -170,11 +171,11 @@ static LRESULT CALLBACK keyboard_hook(int code, WPARAM wparam, LPARAM lparam)
         const KBDLLHOOKSTRUCT *k = (const KBDLLHOOKSTRUCT *)lparam;
         if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
             if (k->vkCode != held_vk) {
-                UINT mods = modifiers_held();
+                LONG pressed = (LONG)(modifiers_held() << 16 | k->vkCode);
                 LONG hit = 0;
-                if (k->vkCode == recenter_vk && mods == recenter_mods)
+                if (pressed == InterlockedCompareExchange(&recenter_binding, 0, 0))
                     hit |= HOTKEY_RECENTER;
-                if (k->vkCode == pause_vk && mods == pause_mods)
+                if (pressed == InterlockedCompareExchange(&pause_binding, 0, 0))
                     hit |= HOTKEY_PAUSE;
                 if (hit) {
                     held_vk = k->vkCode;
@@ -207,14 +208,18 @@ static DWORD WINAPI hotkey_thread(LPVOID unused)
     return 0;
 }
 
+/* Change the two hotkeys, whether or not they are being watched yet. */
+void hts_hotkeys_rebind(unsigned rmods, unsigned rvk, unsigned pmods, unsigned pvk)
+{
+    InterlockedExchange(&recenter_binding, (LONG)(rmods << 16 | rvk));
+    InterlockedExchange(&pause_binding, (LONG)(pmods << 16 | pvk));
+}
+
 /* Start watching for the two hotkeys on a thread of their own. Returns 0, or
  * a Windows error code if the keyboard can't be watched. */
 int hts_hotkeys_start(unsigned rmods, unsigned rvk, unsigned pmods, unsigned pvk)
 {
-    recenter_mods = rmods;
-    recenter_vk = rvk;
-    pause_mods = pmods;
-    pause_vk = pvk;
+    hts_hotkeys_rebind(rmods, rvk, pmods, pvk);
     HANDLE t = CreateThread(NULL, 0, hotkey_thread, NULL, 0, NULL);
     if (!t)
         return (int)GetLastError();
