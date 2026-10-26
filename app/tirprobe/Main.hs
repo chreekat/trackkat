@@ -63,8 +63,8 @@ main = do
 
 explain :: OpenError -> String
 explain NoCamera = "No TrackIR 5 (USB 131D:0159) found. Is it plugged in?"
-explain WrongDriver =
-  "Found the TrackIR, but it is not using the WinUSB driver.\n\
+explain (WrongDriver err) =
+  "Found the TrackIR, but it is not using the WinUSB driver (" ++ err ++ ").\n\
   \Use Zadig to switch it to WinUSB (see README)."
 explain InUse =
   "The TrackIR is in use by another program. Quit the NaturalPoint\n\
