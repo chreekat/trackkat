@@ -14,6 +14,7 @@ import System.IO
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 
+import TrackKat.Calibration
 import TrackKat.Camera
 import TrackKat.Frame
 import TrackKat.Pose
@@ -127,7 +128,7 @@ run opts cam = do
     putStrLn "# tracking; Enter recenters, c Enter calibrates level, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
-    tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts))
+    tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts) defaultCalibration)
     let console = do
             eof <- isEOF
             unless eof $ do
@@ -177,9 +178,11 @@ describeEvent :: Event -> String
 describeEvent Recentered = "# recentered"
 describeEvent CalibrationStarted = "# calibrating: turn your head left and right"
 describeEvent CalibrationFailed = "# calibration failed: not enough turning, try again"
-describeEvent (Calibrated l) =
-    let (down, right) = cameraTilt l
+describeEvent (Calibrated c) =
+    let (down, right) = cameraTilt (estimatedLevel c)
      in printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right" down right
+describeEvent (Refined LevelRefined c) = "# " ++ describeLevel c
+describeEvent (Refined PivotRefined c) = "# " ++ describePivot c
 
 showOutcome :: Outcome -> String
 showOutcome (Lost n) = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"

@@ -7,12 +7,16 @@ module TrackKat.Linear (
     dot,
     cross,
     norm,
+    normalize,
+    angleBetween,
     M33 (..),
     identity,
     transpose,
     mulMV,
     mulMM,
     rodrigues,
+    rotationVector,
+    rotateToward,
     solveLinear,
 ) where
 
@@ -39,6 +43,14 @@ cross (V3 a b c) (V3 x y z) = V3 (b * z - c * y) (c * x - a * z) (a * y - b * x)
 
 norm :: V3 -> Double
 norm v = sqrt (dot v v)
+
+-- | The unit vector in the same direction; the zero vector stays zero.
+normalize :: V3 -> V3
+normalize v = let n = norm v in if n == 0 then v else (1 / n) *^ v
+
+-- | Radians between two non-zero vectors.
+angleBetween :: V3 -> V3 -> Double
+angleBetween a b = atan2 (norm (cross a b)) (dot a b)
 
 -- | Rows.
 data M33 = M33 !V3 !V3 !V3
@@ -75,6 +87,26 @@ rodrigues w
     c = cos theta
     s = sin theta
     k = 1 - c
+
+-- | The axis-angle vector of a rotation, the inverse of 'rodrigues' for
+-- rotations short of half a turn.
+rotationVector :: M33 -> V3
+rotationVector (M33 (V3 r00 r01 r02) (V3 r10 r11 r12) (V3 r20 r21 r22))
+    | s < 1e-12 = V3 0 0 0
+    | otherwise = (theta / s) *^ v
+  where
+    -- 2 sin(angle) times the axis.
+    v = V3 (r21 - r12) (r02 - r20) (r10 - r01)
+    s = norm v
+    theta = acos (max (-1) (min 1 ((r00 + r11 + r22 - 1) / 2)))
+
+-- | Turn a unit vector toward another, by at most the given radians.
+rotateToward :: Double -> V3 -> V3 -> V3
+rotateToward limit from to
+    | angle <= limit = to
+    | otherwise = mulMV (rodrigues (limit *^ normalize (cross from to))) from
+  where
+    angle = angleBetween from to
 
 -- | Solve the square system @a x = b@ by Gaussian elimination with partial
 -- pivoting. Nothing if (numerically) singular.
