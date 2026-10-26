@@ -10,6 +10,8 @@ Roughly in order.
 - Estimate the neck pivot from movement, so translation means leaning.
 - Optional slow drift of the centre toward where the head rests.
 - Joystick/HOTAS buttons for recenter and pause.
+- When a game starts trackkat, run it in the system tray rather than a
+  console window.
 - A GUI like TrackIR's: live view of the head pose, binding settings, and
   statistics on the automatic calibration.
 - Estimate the clip's shape from movement, for clips other than the
