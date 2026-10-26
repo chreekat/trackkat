@@ -43,8 +43,11 @@ static unsigned cksum(unsigned char buf[], unsigned size)
     int c = size;
     int a0, a2;
     while (rounds != 0) {
-        a0 = *(short int *)buf;
-        a2 = *(short int *)(buf + 2);
+        short lo, hi; /* memcpy: reading the record through a short pointer breaks strict aliasing */
+        memcpy(&lo, buf, 2);
+        memcpy(&hi, buf + 2, 2);
+        a0 = lo;
+        a2 = hi;
         buf += 4;
         c += a0;
         a2 ^= (c << 5);
