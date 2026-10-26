@@ -67,7 +67,7 @@ data Joystick = Joystick String Int
     deriving (Eq, Show)
 
 -- | The highest joystick button number trackkat watches, as
--- MAX_BUTTONS in cbits/windows.c.
+-- MAX_BUTTONS in cbits/joystick.c.
 maxButton :: Int
 maxButton = 256
 

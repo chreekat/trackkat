@@ -1,4 +1,5 @@
--- | trackkat.exe's Windows plumbing: see cbits/windows.c.
+-- | trackkat.exe's Windows plumbing: see cbits/windows.c and
+-- cbits/joystick.c.
 module TrackKat.Windows (
     openShared,
     publish,
@@ -110,7 +111,7 @@ takeHotkeys = do
     pressed <- c_hotkeys_take
     pure [k | k <- [RecenterKey, PauseKey], pressed .&. hotkeyBit k /= 0]
 
--- | How cbits/windows.c numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE.
+-- | How cbits/joystick.h numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE.
 hotkeyBit :: Hotkey -> CInt
 hotkeyBit RecenterKey = 1
 hotkeyBit PauseKey = 2
@@ -133,5 +134,5 @@ takeJoystickEvents = allocaArray nameLength $ \name -> alloca $ \index -> alloca
                 _ -> pure []
     next
   where
-    -- As NAME_LEN in cbits/windows.c.
+    -- As JOYSTICK_NAME_LEN in cbits/joystick.h.
     nameLength = 128
