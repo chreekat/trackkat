@@ -3,9 +3,6 @@
 Roughly in order.
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
-- Save the level calibration, and keep refining it from everyday head
-  movement.
-- Estimate the neck pivot from movement, so translation means leaning.
 - Optional slow drift of the centre toward where the head rests.
 - When a game starts trackkat, run it in the system tray rather than a
   console window.

@@ -16,6 +16,8 @@ module TrackKat.Pose (
     solvePose,
     Level,
     cameraLevel,
+    levelFromUp,
+    levelUp,
     levelFromYaws,
     cameraTilt,
     HeadPose (..),
@@ -47,8 +49,6 @@ data Model = Model
     -- ^ lower reflector that appears on the right
     , mTop :: V3
     -- ^ the raised reflector
-    , mPivot :: V3
-    -- ^ point the head turns about, for reporting translation
     }
     deriving (Show)
 
@@ -60,7 +60,6 @@ trackClip =
         { mLeft = V3 (-67) 0 0
         , mRight = V3 67 0 0
         , mTop = V3 0 (-54) 96
-        , mPivot = V3 0 160 50
         }
 
 -- | A headset clip from the three distances between reflectors, in mm: left
@@ -70,7 +69,7 @@ trackClip =
 -- Only the triangle's shape affects the angles, and its size only scales
 -- the distance estimate. The lean doesn't need to be accurate: it picks which
 -- of the two mirror-image solutions the solver starts near, and recentering
--- absorbs the rest. The pivot is put 170 mm below the headband.
+-- absorbs the rest.
 triangle :: Double -> Double -> Double -> Double -> Maybe Model
 triangle lean lr lt rt
     | lr <= 0 || h2 <= 0 = Nothing
@@ -80,7 +79,6 @@ triangle lean lr lt rt
                 { mLeft = V3 (-a) 0 0
                 , mRight = V3 a 0 0
                 , mTop = V3 x (negate (h * cos theta)) (h * sin theta)
-                , mPivot = V3 0 170 0
                 }
   where
     a = lr / 2
@@ -183,6 +181,20 @@ newtype Level = Level M33
 cameraLevel :: Level
 cameraLevel = Level identity
 
+-- | Level axes with the given vertical, in camera axes, pointing up; their
+-- forward is as close to the camera's line of sight as level allows.
+levelFromUp :: V3 -> Level
+levelFromUp up = Level (M33 right down forward)
+  where
+    down = (-1) *^ normalize up
+    ahead = V3 0 0 1 ^-^ (dot (V3 0 0 1) down *^ down)
+    forward = normalize ahead
+    right = cross down forward
+
+-- | The vertical of level axes, in camera axes, pointing up.
+levelUp :: Level -> V3
+levelUp (Level (M33 _ down _)) = (-1) *^ down
+
 -- | Level axes whose vertical is the axis of the given head rotations
 -- (relative to a reference, in camera axes), as from turning the head left
 -- and right. Small rotations count for little; the result is Nothing if
@@ -190,7 +202,7 @@ cameraLevel = Level identity
 levelFromYaws :: [M33] -> Maybe Level
 levelFromYaws rots
     | norm total < 0.5 = Nothing
-    | otherwise = Just (Level (M33 right down forward))
+    | otherwise = Just (levelFromUp total)
   where
     -- 2 sin(angle) times the axis of each rotation, pointing up.
     axis (M33 (V3 _ r01 r02) (V3 r10 _ r12) (V3 r20 r21 _)) =
@@ -198,10 +210,6 @@ levelFromYaws rots
          in if dot v cameraUp < 0 then (-1) *^ v else v
     total = foldr ((^+^) . axis) (V3 0 0 0) rots
     cameraUp = V3 0 (-1) 0
-    down = (-1 / norm total) *^ total
-    ahead = V3 0 0 1 ^-^ (dot (V3 0 0 1) down *^ down)
-    forward = (1 / norm ahead) *^ ahead
-    right = cross down forward
 
 -- | How far the camera is tipped down, and to its right, from the given
 -- level, in degrees.
@@ -228,18 +236,20 @@ data HeadPose = HeadPose
     deriving (Show)
 
 -- | The current pose relative to a reference pose, measured about the given
--- level axes, with translation taken at the model's pivot.
+-- level axes, with translation taken at the given pivot: the point, in the
+-- model's axes, that the head turns about, so that turning alone doesn't
+-- count as movement.
 --
 -- Using axes fixed to the camera rather than to the clip means the result
 -- depends only on the clip triangle's shape, not on how the clip sits on the
 -- head, provided the user faces the camera when the reference is taken.
-relativePose :: Model -> Level -> Pose -> Pose -> HeadPose
-relativePose m (Level toLevel) (Pose r0 t0) (Pose r t) =
+relativePose :: Level -> V3 -> Pose -> Pose -> HeadPose
+relativePose (Level toLevel) pivotPoint (Pose r0 t0) (Pose r t) =
     HeadPose (deg a) (deg b) (deg c) x y z
   where
     toCamera = transpose toLevel
     (a, b, c) = eulerYXZ (toLevel `mulMM` mulMM r (transpose r0) `mulMM` toCamera)
-    pivot rot trans = mulMV rot (mPivot m) ^+^ trans
+    pivot rot trans = mulMV rot pivotPoint ^+^ trans
     V3 x y z = mulMV toLevel (pivot r t ^-^ pivot r0 t0)
     deg = (* (180 / pi))
 
