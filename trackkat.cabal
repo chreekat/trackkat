@@ -21,6 +21,7 @@ library
     TrackKat.Linear
     TrackKat.Pose
     TrackKat.Protocol
+    TrackKat.Tracker
     TrackKat.USB
   build-depends:
     , array       ^>=0.5.4

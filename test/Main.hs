@@ -11,6 +11,7 @@ import TrackKat.Frame
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
+import TrackKat.Tracker
 
 main :: IO ()
 main = do
@@ -157,6 +158,28 @@ main = do
                             ("levelled pose " ++ show (y, p, r) ++ " got " ++ show hp)
                             (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
     check "too little turning" $ isNothing (levelFromYaws [identity, rotYXZ 2 0 0])
+
+    -- Tracker: requests wait for a tracked frame; losing the clip is reported.
+    let square (u, v) =
+            [ Stripe line (round u - 2) 5 (10 * 50) (5 * 50)
+            | line <- [round v - 2 .. round v + 2]
+            ]
+        clipAt pose = concatMap (square . project defaultIntrinsics pose) [mLeft headset, mRight headset, mTop headset]
+        facing = Pose identity (V3 0 0 700)
+        turned = Pose (rotYXZ 20 0 0) (V3 0 0 700)
+        t0 = newTracker defaultIntrinsics headset
+        (t1, firstOut, firstEvents) = step 0 (clipAt facing) t0
+        (t2, lostOut, lostEvents) = step 0.1 (take 5 (clipAt facing)) (request Recenter t1)
+        (_, laterOut, laterEvents) = step 0.2 (clipAt turned) t2
+    check ("first frame recenters: " ++ show (firstOut, firstEvents)) $ case (firstOut, firstEvents) of
+        (Tracked hp _ _, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
+        _ -> False
+    check ("one blob is lost: " ++ show (lostOut, lostEvents)) $ case (lostOut, lostEvents) of
+        (Lost 1, []) -> True
+        _ -> False
+    check ("pending recenter waits for tracking: " ++ show (laterOut, laterEvents)) $ case (laterOut, laterEvents) of
+        (Tracked hp _ _, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
+        _ -> False
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
