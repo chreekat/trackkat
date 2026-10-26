@@ -9,7 +9,7 @@ module TrackKat.Frame
   ( Stripe (..)
   , Packet (..)
   , Blob (..)
-  , parseTransfer
+  , parseStream
   , decodeStripe
   , encodeStripe
   , stripesToBlobs
@@ -47,24 +47,87 @@ data Packet
   | Corrupt String B.ByteString
   deriving (Show)
 
--- | Split one USB transfer into packets.
-parseTransfer :: B.ByteString -> [Packet]
-parseTransfer bs
-  | B.length bs < 2 = []
+-- | Cut as many complete packets as possible off the front of the camera's
+-- byte stream, returning them and the incomplete remainder to prepend to the
+-- next transfer. See Note [Camera byte stream].
+parseStream :: B.ByteString -> ([Packet], B.ByteString)
+parseStream bs
+  | B.length bs < 4 = ([], bs)
+  | isFrameHeader bs = case frameEnd bs of
+      Complete n -> emit (parseFrame (B.take n bs)) (B.drop n bs)
+      Incomplete
+        | B.length bs > maxFrameBytes -> resync "frame too long"
+        | otherwise -> ([], bs)
+      Interrupted -> resync "frame interrupted by the next one"
   | otherwise = case B.index bs 1 of
-      0x10 | B.length bs > 2, B.index bs 2 `elem` [0, 5] -> [parseFrame bs]
-      t | t `elem` [0x10, 0x20, 0x40, 0x1C] ->
-        let n = fromIntegral (B.index bs 0)
-            (pkt, rest) = B.splitAt n bs
-            this = case t of
-              0x20 -> StatusReply pkt
-              0x40 -> DevInfoReply pkt
-              _ -> Unknown pkt
-         in if n == 0 then [Unknown bs] else this : parseTransfer rest
-      _ -> [Unknown bs]
+      t | t `elem` [0x10, 0x20, 0x40, 0x1C], n > 0 ->
+        if n > B.length bs then ([], bs) else emit (reply t (B.take n bs)) (B.drop n bs)
+        where n = fromIntegral (B.index bs 0)
+      _ -> resync "unrecognised bytes"
+  where
+    emit p rest = let (ps, r) = parseStream rest in (p : ps, r)
+    resync why = case findFrameHeader 1 (const True) bs of
+      Just j -> emit (Corrupt why (B.take j bs)) (B.drop j bs)
+      -- Keep a tail that could be the start of a header.
+      Nothing -> ([Corrupt why (B.dropEnd 3 bs)], B.takeEnd 3 bs)
+    reply t = case t of
+      0x20 -> StatusReply
+      0x40 -> DevInfoReply
+      _ -> Unknown
 
--- A frame fills the whole transfer: a 4-byte header whose bytes XOR to 0xAA,
--- the stripes, and a big-endian 32-bit length of the stripes.
+-- Note [Camera byte stream]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~
+-- The camera's output is a byte stream that USB delivers in arbitrary
+-- chunks: one transfer can hold several packets, and a packet can be split
+-- across transfers. Replies to commands start with their length and a type
+-- byte. Frames have no length up front: a 4-byte header (counter, 0x10,
+-- stripe format, check byte; the four XOR to 0xAA), the stripes, and then a
+-- big-endian 32-bit count of stripe bytes. So a frame ends at the first
+-- stripe boundary where that count matches, followed by the end of the data
+-- or the next packet. If the next frame's header turns up first, the frame
+-- lost its tail and is reported corrupt.
+
+maxFrameBytes :: Int
+maxFrameBytes = 65536
+
+data FrameEnd = Complete Int | Incomplete | Interrupted
+
+isFrameHeader :: B.ByteString -> Bool
+isFrameHeader b =
+  B.length b >= 4
+    && B.index b 1 == 0x10
+    && B.index b 2 `elem` [0, 5]
+    && foldl' xor 0 (B.unpack (B.take 4 b)) == 0xAA
+
+-- | Offset of the first frame header at or after the given offset whose
+-- counter satisfies the predicate.
+findFrameHeader :: Int -> (Word8 -> Bool) -> B.ByteString -> Maybe Int
+findFrameHeader from ok b =
+  case filter (\j -> let h = B.drop j b in isFrameHeader h && ok (B.index h 0)) [from .. B.length b - 4] of
+    j : _ -> Just j
+    [] -> Nothing
+
+-- | Where the frame at the start of the stream ends.
+frameEnd :: B.ByteString -> FrameEnd
+frameEnd b = go 4
+  where
+    stripeBytes = if B.index b 2 == 5 then 8 else 4
+    successor = findFrameHeader 4 (== B.index b 0 + 1) b
+    limit = maybe (B.length b) id successor
+    go k
+      | k + 4 > limit = maybe Incomplete (const Interrupted) successor
+      | be32 (B.drop k b) == k - 4 =
+          let rest = B.drop (k + 4) b
+           in if B.null rest || isFrameHeader rest || isReplyStart rest
+                then Complete (k + 4)
+                else if B.length rest < 4 then Incomplete else go (k + stripeBytes)
+      | otherwise = go (k + stripeBytes)
+    isReplyStart r = B.length r >= 2 && B.index r 1 `elem` [0x20, 0x40]
+
+be32 :: B.ByteString -> Int
+be32 = foldl' (\acc w -> acc `shiftL` 8 .|. fromIntegral w) 0 . B.unpack . B.take 4
+
+-- | Decode one complete frame. See Note [Camera byte stream].
 parseFrame :: B.ByteString -> Packet
 parseFrame bs
   | len < 8 = Corrupt "short frame" bs
@@ -73,7 +136,7 @@ parseFrame bs
   | otherwise = Frame (B.index bs 0) (stripes (B.take (len - 8) (B.drop 4 bs)))
   where
     len = B.length bs
-    trailer = foldl' (\acc w -> acc `shiftL` 8 .|. fromIntegral w) 0 (B.unpack (B.drop (len - 4) bs))
+    trailer = be32 (B.drop (len - 4) bs)
     stripeSize = if B.index bs 2 == 5 then 8 else 4
     decode = if stripeSize == 8 then decodeStripe else decodeShortStripe
     stripes p
