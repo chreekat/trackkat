@@ -17,7 +17,7 @@ module TrackKat.Camera (
     withPackets,
     Light (..),
     setLights,
-    newLightKeeper,
+    withLights,
     Log,
     hex,
 ) where
@@ -27,10 +27,10 @@ import Control.Concurrent.Async (link, withAsync)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (Exception, bracket_, finally, throwIO, try)
-import Control.Monad (forever, replicateM_, unless, void, when)
+import Control.Monad (forever, replicateM_, unless, void)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString as B
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Word (Word16, Word8)
 import GHC.Clock (getMonotonicTime, getMonotonicTimeNSec)
 import System.Timeout (timeout)
@@ -212,23 +212,24 @@ setLights cam first second
     bit b On = b
     bit _ Off = 0
 
--- | An action to call as often as you like with the lights you want, which
--- changes them once that choice has held for a quarter of a second.
-newLightKeeper :: Camera -> IO (Light -> Light -> IO ())
-newLightKeeper cam = do
-    shown <- newIORef (Off, Off)
+-- | Run the action with a way to say which lights you want, as often as you
+-- like. A thread of its own changes them once a choice has held for a
+-- quarter of a second, so the caller never waits on the camera.
+withLights :: Camera -> ((Light -> Light -> IO ()) -> IO a) -> IO a
+withLights cam act = do
     wanted <- newIORef (0, (Off, Off))
-    pure $ \first second -> do
-        now <- getMonotonicTime
-        (since, was) <- readIORef wanted
-        let want = (first, second)
-        if want /= was
-            then writeIORef wanted (now, want)
-            else do
-                current <- readIORef shown
-                when (want /= current && now - since > 0.25) $ do
-                    uncurry (setLights cam) want
-                    writeIORef shown want
+    let want first second = do
+            now <- getMonotonicTime
+            modifyIORef' wanted $ \old@(_, was) ->
+                if was == (first, second) then old else (now, (first, second))
+        keep shown = do
+            threadDelay 20000
+            now <- getMonotonicTime
+            (since, desired) <- readIORef wanted
+            if desired /= shown && now - since > 0.25
+                then uncurry (setLights cam) desired >> keep desired
+                else keep shown
+    withAsync (keep (Off, Off)) $ \keeper -> link keeper >> act want
 
 -- | Discard anything the camera has queued.
 drain :: Camera -> IO ()
