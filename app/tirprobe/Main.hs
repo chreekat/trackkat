@@ -16,8 +16,8 @@ import Text.Read (readMaybe)
 
 import TrackKat.Camera
 import TrackKat.Frame
-import TrackKat.Linear (mulMM, norm, transpose)
 import TrackKat.Pose
+import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 
 data Options = Options
@@ -122,24 +122,12 @@ splitOn c str = case break (== c) str of
     (a, []) -> [a]
     (a, _ : rest) -> a : splitOn c rest
 
--- | What the user asked for at the console.
-data Request = Recenter | Calibrate
-
--- | Seconds of head turning to calibrate level from.
-calibrationSeconds :: Double
-calibrationSeconds = 5
-
 run :: Options -> Camera -> IO ()
 run opts cam = do
     putStrLn "# tracking; Enter recenters, c Enter calibrates level, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
-    previous <- newIORef Nothing
-    reference <- newIORef Nothing
-    requests <- newIORef [Recenter]
-    level <- newIORef cameraLevel
-    -- Deadline and the rotations seen so far, while calibrating.
-    calibration <- newIORef Nothing
+    tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts))
     -- First green light shows whether we're tracking, once that has held
     -- steady for a moment.
     ledOn <- newIORef False
@@ -157,53 +145,24 @@ run opts cam = do
             unless eof $ do
                 line <- getLine
                 case line of
-                    "" -> modifyIORef' requests (++ [Recenter])
-                    "c" -> modifyIORef' requests (++ [Calibrate])
+                    "" -> modifyIORef' tracker (request Recenter)
+                    "c" -> modifyIORef' tracker (request Calibrate)
                     _ -> putStrLn "# Enter recenters; c Enter calibrates level"
                 console
-    let intrinsics = defaultIntrinsics{focal = optFocal opts}
-        model = optModel opts
-        track stripes = do
-            let blobs = stripesToBlobs 15 2500 stripes
-            guess <- readIORef previous
-            case identify [(blobX b, blobY b) | b <- blobs] >>= solvePose intrinsics model guess of
-                Nothing -> do
-                    writeIORef previous Nothing
-                    pure (Left (length blobs))
-                Just (pose, err) -> do
-                    writeIORef previous (Just pose)
-                    now <- getMonotonicTime
-                    asked <- atomicModifyIORef' requests (\rs -> ([], rs))
-                    forM_ asked $ \case
-                        Recenter -> do
-                            writeIORef reference (Just pose)
-                            putStrLn "# recentered"
-                        Calibrate -> do
-                            writeIORef calibration (Just (now + calibrationSeconds, []))
-                            putStrLn "# calibrating: turn your head left and right"
-                    ref <- maybe pose id <$> readIORef reference
-                    calibrating <- readIORef calibration
-                    forM_ calibrating $ \(deadline, rots) ->
-                        if now < deadline
-                            then writeIORef calibration (Just (deadline, poseR pose `mulMM` transpose (poseR ref) : rots))
-                            else do
-                                writeIORef calibration Nothing
-                                case levelFromYaws rots of
-                                    Nothing -> putStrLn "# calibration failed: not enough turning, try again"
-                                    Just l -> do
-                                        writeIORef level l
-                                        let (down, right) = cameraTilt l
-                                        printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right\n" down right
-                    lvl <- readIORef level
-                    pure (Right (relativePose model lvl ref pose, norm (poseT pose), err))
-        loop next = do
+    let track stripes = do
+            now <- getMonotonicTime
+            (outcome, events) <- atomicModifyIORef' tracker $ \t ->
+                let (t', o, evs) = step now stripes t in (t', (o, evs))
+            mapM_ (putStrLn . describeEvent) events
+            pure outcome
+    let loop next = do
             pkts <- next
             forM_ pkts $ \p -> do
                 when (optRaw opts) $ putStrLn ("raw " ++ describeRaw p)
                 case p of
                     Frame n stripes -> do
-                        tracked <- if optBlobs opts then pure (Left 0) else track stripes
-                        when (not (optBlobs opts)) $ updateLed (either (const False) (const True) tracked)
+                        tracked <- if optBlobs opts then pure (Lost 0) else track stripes
+                        when (not (optBlobs opts)) $ updateLed (isTracked tracked)
                         modifyIORef' frames (+ 1)
                         now <- getMonotonicTime
                         t0 <- readIORef lastPrint
@@ -216,17 +175,27 @@ run opts cam = do
                             putStrLn $
                                 if optBlobs opts
                                     then summary n fps blobs
-                                    else either lost showPose tracked
+                                    else showOutcome tracked
                     Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
                     _ -> pure ()
             loop next
     withAsync console $ \_ -> withPackets cam loop
 
-lost :: Int -> String
-lost n = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
+isTracked :: Outcome -> Bool
+isTracked Tracked{} = True
+isTracked Lost{} = False
 
-showPose :: (HeadPose, Double, Double) -> String
-showPose (hp, dist, err) =
+describeEvent :: Event -> String
+describeEvent Recentered = "# recentered"
+describeEvent CalibrationStarted = "# calibrating: turn your head left and right"
+describeEvent CalibrationFailed = "# calibration failed: not enough turning, try again"
+describeEvent (Calibrated l) =
+    let (down, right) = cameraTilt l
+     in printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right" down right
+
+showOutcome :: Outcome -> String
+showOutcome (Lost n) = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
+showOutcome (Tracked hp dist err) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
         (yaw hp)
