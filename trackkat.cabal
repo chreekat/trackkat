@@ -1,0 +1,47 @@
+cabal-version:      3.0
+name:               trackkat
+version:            0.1.0.0
+synopsis:           Replacement driver and control software for the TrackIR 5
+license:            MIT
+author:             chreekat
+maintainer:         b@chreekat.net
+build-type:         Simple
+extra-doc-files:    README.md
+
+common shared
+  default-language: Haskell2010
+  ghc-options:      -Wall
+
+library
+  import:           shared
+  hs-source-dirs:   src
+  exposed-modules:
+    TrackKat.Camera
+    TrackKat.Frame
+    TrackKat.Protocol
+    TrackKat.USB
+  build-depends:
+    , array       >=0.5
+    , base        >=4.17 && <5
+    , bytestring  >=0.11
+  c-sources:        cbits/usb_shim.c
+  extra-libraries:  usb-1.0
+
+executable tirprobe
+  import:           shared
+  hs-source-dirs:   app/tirprobe
+  main-is:          Main.hs
+  ghc-options:      -threaded
+  build-depends:
+    , base
+    , trackkat
+
+test-suite tests
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  build-depends:
+    , base
+    , bytestring
+    , trackkat
