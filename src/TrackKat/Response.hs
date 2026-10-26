@@ -1,10 +1,12 @@
 -- | Shaping the head pose for games: rejecting impossible jumps, smoothing,
--- and per-axis response curves.
+-- per-axis response curves, and turning leans to follow the view.
 module TrackKat.Response (
     Curve (..),
     applyCurve,
     Smoothing (..),
     tuned,
+    Lean (..),
+    leanWithView,
     Response (..),
     Shaper,
     newShaper,
@@ -54,9 +56,35 @@ tuned steadiness responsiveness =
         , beta = 0.001 * 1000 ** (responsiveness / 100)
         }
 
+-- | Which way leaning moves the game's head.
+data Lean
+    = -- | Relative to the view: the lean is turned by the yaw the game shows.
+      LeanWithView
+    | -- | Relative to the screen, whichever way the view looks.
+      LeanWithScreen
+    deriving (Eq, Show)
+
+-- | Turn a pose's horizontal movement by its yaw, so that it is relative to
+-- where the view looks rather than to the screen: with the view turned to
+-- look behind, a lean to the left, which is to the left of the screen, moves
+-- the head to the left of the view, out of the right side of the cockpit.
+--
+-- Only yaw counts. When you look around a real cockpit your body turns with
+-- your gaze, but it stays upright when you look up or down; following pitch
+-- would make a lean toward the screen dive the head into the panel while
+-- you look down at it, and would carry the pitch's jitter, multiplied by its
+-- gain, into the movement.
+leanWithView :: HeadPose -> HeadPose
+leanWithView p = p{tx = tx p * c + tz p * s, tz = tz p * c - tx p * s}
+  where
+    -- Yaw is positive to the user's right, x to their left, z behind them.
+    c = cos (yaw p * pi / 180)
+    s = sin (yaw p * pi / 180)
+
 data Response = Response
     { smoothing :: Smoothing
     , yawCurve, pitchCurve, rollCurve, xCurve, yCurve, zCurve :: Curve
+    , lean :: Lean
     }
     deriving (Eq, Show)
 
@@ -87,7 +115,8 @@ jumpPersistence = 3
 
 -- | Shape a pose seen at the given time in seconds. Impossible jumps are
 -- ignored unless they persist, then each axis is smoothed and put through
--- its curve.
+-- its curve, and leaning follows the view if the response says so. Leaning
+-- is turned last, by the yaw the game will show.
 shape :: Response -> Double -> HeadPose -> Shaper -> (HeadPose, Shaper)
 shape r now pose s = case shLast s of
     Just (_, previous)
@@ -105,15 +134,19 @@ shape r now pose s = case shLast s of
         _ -> [Axis v 0 | v <- values pose]
     output axes fallback = case maybe (values fallback) (map (\(Axis v _) -> v)) axes of
         [y, p, ro, x, yy, z] ->
-            HeadPose
-                { yaw = applyCurve (yawCurve r) y
-                , pitch = applyCurve (pitchCurve r) p
-                , roll = applyCurve (rollCurve r) ro
-                , tx = applyCurve (xCurve r) x
-                , ty = applyCurve (yCurve r) yy
-                , tz = applyCurve (zCurve r) z
-                }
+            leaning
+                HeadPose
+                    { yaw = applyCurve (yawCurve r) y
+                    , pitch = applyCurve (pitchCurve r) p
+                    , roll = applyCurve (rollCurve r) ro
+                    , tx = applyCurve (xCurve r) x
+                    , ty = applyCurve (yCurve r) yy
+                    , tz = applyCurve (zCurve r) z
+                    }
         _ -> fallback
+    leaning = case lean r of
+        LeanWithView -> leanWithView
+        LeanWithScreen -> id
 
 -- | One step of the 1€ filter.
 oneEuro :: Double -> Double -> Double -> Axis -> Double -> Axis
