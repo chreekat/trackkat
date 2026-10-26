@@ -14,6 +14,10 @@ module TrackKat.Pose (
     project,
     identify,
     solvePose,
+    Level,
+    cameraLevel,
+    levelFromYaws,
+    cameraTilt,
     HeadPose (..),
     relativePose,
     eulerYXZ,
@@ -171,26 +175,72 @@ levenbergMarquardt residuals = go (50 :: Int) 1e-3
       where
         c0 = cost p
 
--- | Head pose relative to a reference pose, about the camera's axes. Angles
--- in degrees: yaw about the vertical, pitch about left-right, roll about
--- the line of sight. Translation in mm, of the model's pivot point.
---
--- Using the camera's axes (rather than the clip's) means the result doesn't
--- depend on how the clip is oriented on the head, only on the shape of its
--- triangle, provided the user faces the camera when recentering.
+-- | Rotation from the camera's axes to level axes facing the camera.
+newtype Level = Level M33
+    deriving (Show)
+
+-- | Level axes for a camera that is itself level.
+cameraLevel :: Level
+cameraLevel = Level identity
+
+-- | Level axes whose vertical is the axis of the given head rotations
+-- (relative to a reference, in camera axes), as from turning the head left
+-- and right. Small rotations count for little; the result is Nothing if
+-- there was too little turning to tell.
+levelFromYaws :: [M33] -> Maybe Level
+levelFromYaws rots
+    | norm total < 0.5 = Nothing
+    | otherwise = Just (Level (M33 right down forward))
+  where
+    -- 2 sin(angle) times the axis of each rotation, pointing up.
+    axis (M33 (V3 _ r01 r02) (V3 r10 _ r12) (V3 r20 r21 _)) =
+        let v = V3 (r21 - r12) (r02 - r20) (r10 - r01)
+         in if dot v cameraUp < 0 then (-1) *^ v else v
+    total = foldr ((^+^) . axis) (V3 0 0 0) rots
+    cameraUp = V3 0 (-1) 0
+    down = (-1 / norm total) *^ total
+    ahead = V3 0 0 1 ^-^ (dot (V3 0 0 1) down *^ down)
+    forward = (1 / norm ahead) *^ ahead
+    right = cross down forward
+
+-- | How far the camera is tipped down, and to its right, from the given
+-- level, in degrees.
+cameraTilt :: Level -> (Double, Double)
+cameraTilt (Level (M33 _ (V3 dx dy dz) _)) =
+    (atan2 dz (sqrt (dx * dx + dy * dy)) * 180 / pi, atan2 (negate dx) dy * 180 / pi)
+
+-- | A head's rotation and movement from a reference pose, in a level frame:
+-- x to the camera's right, y down, z away from the camera.
 data HeadPose = HeadPose
-    { yaw, pitch, roll :: Double
-    , tx, ty, tz :: Double
+    { yaw :: Double
+    -- ^ degrees about the vertical
+    , pitch :: Double
+    -- ^ degrees about the left-right axis
+    , roll :: Double
+    -- ^ degrees about the front-back axis
+    , tx :: Double
+    -- ^ mm
+    , ty :: Double
+    -- ^ mm
+    , tz :: Double
+    -- ^ mm
     }
     deriving (Show)
 
-relativePose :: Model -> Pose -> Pose -> HeadPose
-relativePose m (Pose r0 t0) (Pose r t) =
+-- | The current pose relative to a reference pose, measured about the given
+-- level axes, with translation taken at the model's pivot.
+--
+-- Using axes fixed to the camera rather than to the clip means the result
+-- depends only on the clip triangle's shape, not on how the clip sits on the
+-- head, provided the user faces the camera when the reference is taken.
+relativePose :: Model -> Level -> Pose -> Pose -> HeadPose
+relativePose m (Level toLevel) (Pose r0 t0) (Pose r t) =
     HeadPose (deg a) (deg b) (deg c) x y z
   where
-    (a, b, c) = eulerYXZ (mulMM r (transpose r0))
+    toCamera = transpose toLevel
+    (a, b, c) = eulerYXZ (toLevel `mulMM` mulMM r (transpose r0) `mulMM` toCamera)
     pivot rot trans = mulMV rot (mPivot m) ^+^ trans
-    V3 x y z = pivot r t ^-^ pivot r0 t0
+    V3 x y z = mulMV toLevel (pivot r t ^-^ pivot r0 t0)
     deg = (* (180 / pi))
 
 -- | Decompose @R = Ry(yaw) Rx(pitch) Rz(roll)@, in radians.

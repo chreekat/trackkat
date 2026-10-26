@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 -- | tirprobe: talk to a TrackIR 5 and print what it sees.
 module Main (main) where
 
@@ -14,7 +16,7 @@ import Text.Read (readMaybe)
 
 import TrackKat.Camera
 import TrackKat.Frame
-import TrackKat.Linear (norm)
+import TrackKat.Linear (mulMM, norm, transpose)
 import TrackKat.Pose
 import qualified TrackKat.USB as USB
 
@@ -35,6 +37,8 @@ usage =
         , "       tirprobe --list"
         , ""
         , "Shows head pose relative to where you were when you last pressed Enter."
+        , "Type c and Enter, then turn your head left and right for a few seconds,"
+        , "to calibrate which way is up."
         , ""
         , "  --blobs           show the raw blob positions instead of the pose"
         , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, left-right,"
@@ -118,14 +122,24 @@ splitOn c str = case break (== c) str of
     (a, []) -> [a]
     (a, _ : rest) -> a : splitOn c rest
 
+-- | What the user asked for at the console.
+data Request = Recenter | Calibrate
+
+-- | Seconds of head turning to calibrate level from.
+calibrationSeconds :: Double
+calibrationSeconds = 5
+
 run :: Options -> Camera -> IO ()
 run opts cam = do
-    putStrLn "# tracking; press Enter to recenter, Ctrl-C to stop"
+    putStrLn "# tracking; Enter recenters, c Enter calibrates level, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
     previous <- newIORef Nothing
     reference <- newIORef Nothing
-    recenter <- newIORef True
+    requests <- newIORef [Recenter]
+    level <- newIORef cameraLevel
+    -- Deadline and the rotations seen so far, while calibrating.
+    calibration <- newIORef Nothing
     -- First green light shows whether we're tracking, once that has held
     -- steady for a moment.
     ledOn <- newIORef False
@@ -138,9 +152,15 @@ run opts cam = do
             when (tracking == was && tracking /= shown && now - since > 0.25) $ do
                 setLeds cam tracking False
                 writeIORef ledOn tracking
-    let recenterOnEnter = do
+    let console = do
             eof <- isEOF
-            unless eof $ getLine >> writeIORef recenter True >> recenterOnEnter
+            unless eof $ do
+                line <- getLine
+                case line of
+                    "" -> modifyIORef' requests (++ [Recenter])
+                    "c" -> modifyIORef' requests (++ [Calibrate])
+                    _ -> putStrLn "# Enter recenters; c Enter calibrates level"
+                console
     let intrinsics = defaultIntrinsics{focal = optFocal opts}
         model = optModel opts
         track stripes = do
@@ -152,12 +172,30 @@ run opts cam = do
                     pure (Left (length blobs))
                 Just (pose, err) -> do
                     writeIORef previous (Just pose)
-                    again <- atomicModifyIORef' recenter (\r -> (False, r))
-                    when again $ do
-                        writeIORef reference (Just pose)
-                        putStrLn "# recentered"
+                    now <- getMonotonicTime
+                    asked <- atomicModifyIORef' requests (\rs -> ([], rs))
+                    forM_ asked $ \case
+                        Recenter -> do
+                            writeIORef reference (Just pose)
+                            putStrLn "# recentered"
+                        Calibrate -> do
+                            writeIORef calibration (Just (now + calibrationSeconds, []))
+                            putStrLn "# calibrating: turn your head left and right"
                     ref <- maybe pose id <$> readIORef reference
-                    pure (Right (relativePose model ref pose, norm (poseT pose), err))
+                    calibrating <- readIORef calibration
+                    forM_ calibrating $ \(deadline, rots) ->
+                        if now < deadline
+                            then writeIORef calibration (Just (deadline, poseR pose `mulMM` transpose (poseR ref) : rots))
+                            else do
+                                writeIORef calibration Nothing
+                                case levelFromYaws rots of
+                                    Nothing -> putStrLn "# calibration failed: not enough turning, try again"
+                                    Just l -> do
+                                        writeIORef level l
+                                        let (down, right) = cameraTilt l
+                                        printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right\n" down right
+                    lvl <- readIORef level
+                    pure (Right (relativePose model lvl ref pose, norm (poseT pose), err))
         loop = do
             pkts <- readPackets cam
             forM_ pkts $ \p -> do
@@ -182,7 +220,7 @@ run opts cam = do
                     Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
                     _ -> pure ()
             loop
-    withAsync recenterOnEnter (const loop)
+    withAsync console (const loop)
 
 lost :: Int -> String
 lost n = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
