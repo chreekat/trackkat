@@ -108,6 +108,12 @@ one with the new settings documented.
   Past the last point the curve carries straight on, so one point makes a
   straight line: the defaults multiply yaw by 6, pitch 7, roll 4, x 3, y 4
   and z 2.5.
+- `lean = view`: leaning moves you relative to where you look in the game.
+  With the view turned to look behind you, leaning left (toward the left of
+  the screen) leans out of the right side of the cockpit, as your body would
+  if it turned with your gaze. Only turning left and right counts: your body
+  stays upright when you look up or down. `lean = screen` moves you the same
+  way whichever way you look.
 
 Single-frame jumps no head could make are ignored.
 

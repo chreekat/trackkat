@@ -49,6 +49,7 @@ defaultConfig =
                 , xCurve = gain 3
                 , yCurve = gain 4
                 , zCurve = gain 2.5
+                , lean = LeanWithView
                 }
         }
   where
@@ -121,6 +122,7 @@ parseConfig str = do
                 "x" -> curve (\cv x -> x{xCurve = cv})
                 "y" -> curve (\cv x -> x{yCurve = cv})
                 "z" -> curve (\cv x -> x{zCurve = cv})
+                "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
                 _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
@@ -165,6 +167,13 @@ renderConfig c =
         , "x = " ++ renderCurve (xCurve r)
         , "y = " ++ renderCurve (yCurve r)
         , "z = " ++ renderCurve (zCurve r)
+        , ""
+        , "# lean = view: leaning moves you relative to where you look in the"
+        , "# game, so with the view turned to look behind you, leaning left looks"
+        , "# out of the right side. Only turning left and right counts, not"
+        , "# looking up or down. lean = screen: leaning moves you the same way"
+        , "# whichever way you look."
+        , "lean = " ++ renderLean (lean r)
         ]
   where
     r = response c
@@ -186,6 +195,16 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
+                ++ [("lean", renderLean (lean r))]
+
+parseLean :: String -> Either String Lean
+parseLean "view" = Right LeanWithView
+parseLean "screen" = Right LeanWithScreen
+parseLean _ = Left "lean is view or screen"
+
+renderLean :: Lean -> String
+renderLean LeanWithView = "view"
+renderLean LeanWithScreen = "screen"
 
 -- | Read curve points like @0.5:0 1.5:1@, inputs increasing from zero.
 parseCurve :: String -> Either String Curve
