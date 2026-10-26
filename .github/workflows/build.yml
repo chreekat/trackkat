@@ -28,8 +28,16 @@ jobs:
         shell: msys2 {0}
         run: |
           flags="-std=c11 -Wall -Wextra -Werror -O2 -s -shared -static-libgcc -Wl,--kill-at"
-          /ucrt64/bin/gcc $flags -o NPClient64.dll npclient/npclient.c
-          /mingw32/bin/gcc $flags -o NPClient.dll npclient/npclient.c
+          # Report compiler output as annotations, which are readable without
+          # access to the log.
+          build() {
+            if ! out=$("$@" 2>&1); then
+              printf '%s\n' "$out" | sed 's/^/::error::/'
+              return 1
+            fi
+          }
+          build /ucrt64/bin/gcc $flags -o NPClient64.dll npclient/npclient.c
+          build /mingw32/bin/gcc $flags -o NPClient.dll npclient/npclient.c
 
       - uses: haskell-actions/setup@v2
         id: haskell
