@@ -2,8 +2,7 @@
 
 Roughly in order.
 
-- Measure latency from frame arrival to pose publication, and GC pauses;
-  show them in the status line. Tune the RTS only if they show a need.
+- Tune the RTS only if the status line's latency and GC figures show a need.
 - Per-axis response curves, deadzones and smoothing; reject implausible jumps
   (anatomical limits, maximum head speed).
 - Save the level calibration, and keep refining it from everyday head
