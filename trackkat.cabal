@@ -17,7 +17,9 @@ library
   hs-source-dirs:   src
   exposed-modules:
     TrackKat.Camera
+    TrackKat.Config
     TrackKat.Frame
+    TrackKat.GamePose
     TrackKat.Linear
     TrackKat.Pose
     TrackKat.Protocol
@@ -31,6 +33,12 @@ library
   c-sources:        cbits/usb_shim.c
   extra-libraries:  usb-1.0
 
+  if os(windows)
+    exposed-modules: TrackKat.Windows
+    c-sources:       cbits/windows.c
+    include-dirs:    cbits
+    extra-libraries: advapi32 user32
+
 executable tirprobe
   import:           shared
   hs-source-dirs:   app/tirprobe
@@ -40,6 +48,21 @@ executable tirprobe
     , async
     , base
     , trackkat
+
+executable trackkat
+  import:           shared
+  hs-source-dirs:   app/trackkat
+  main-is:          Main.hs
+  ghc-options:      -threaded
+  build-depends:
+    , async
+    , base
+    , directory
+    , filepath
+    , trackkat
+
+  if !os(windows)
+    buildable: False
 
 test-suite tests
   import:           shared
