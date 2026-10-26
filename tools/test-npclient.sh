@@ -11,7 +11,7 @@ cd "$work"
 cc=x86_64-w64-mingw32-gcc
 flags="-std=c11 -Wall -Wextra -Werror -O2"
 $cc $flags -s -shared -static-libgcc -Wl,--kill-at -o NPClient64.dll "$src/npclient/npclient.c"
-$cc $flags -static -I"$src/cbits" -o fakepose.exe "$src/tools/fakepose.c" "$src/cbits/windows.c" -ladvapi32 -luser32
+$cc $flags -static -I"$src/cbits" -o fakepose.exe "$src/tools/fakepose.c" "$src/cbits/windows.c" "$src/cbits/joystick.c" -lhid -ladvapi32 -luser32
 $cc $flags -static -o npgame.exe "$src/tools/npgame.c" -ladvapi32
 
 export WINEDEBUG=-all WINEPREFIX="$work/prefix"
