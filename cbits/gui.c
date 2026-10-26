@@ -33,9 +33,9 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 #define FIELD_MAX 256
 
 /* The settings the window edits, by their names in trackkat.conf. */
-enum { F_RECENTER, F_PAUSE, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"smoothing", L"steadiness",
-                                                    L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z"};
+                                                    L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean"};
 
 typedef struct State {
     int camera;
@@ -172,14 +172,17 @@ void hts_gui_set_setting(const wchar_t *name, const wchar_t *value)
     ReleaseSRWLockExclusive(&lock);
 }
 
-/* A setting's value as the user last asked to save it, or "" for an unknown
- * name. */
-void hts_gui_saved_setting(const wchar_t *name, wchar_t *buf, int size)
+/* A setting's value as the user last asked to save it. Returns 0, leaving
+ * buf alone, for a setting the window doesn't show. */
+int hts_gui_saved_setting(const wchar_t *name, wchar_t *buf, int size)
 {
     int i = field_index(name);
+    if (i < 0)
+        return 0;
     AcquireSRWLockExclusive(&lock);
-    copy_text(buf, (size_t)size, i < 0 ? L"" : saved[i]);
+    copy_text(buf, (size_t)size, saved[i]);
     ReleaseSRWLockExclusive(&lock);
+    return 1;
 }
 
 /* What the user asked for since the last call, as ACT_* bits. */
@@ -802,7 +805,9 @@ static int slider_field(int i) { return i == F_STEADINESS || i == F_RESPONSIVENE
 static void show_field(int i, const wchar_t *value)
 {
     copy_text(field_text[i], FIELD_MAX, value);
-    if (i == F_SMOOTHING) {
+    if (i == F_LEAN)
+        SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"screen") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+    else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
         SendMessageW(field_ctl[i], BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
         EnableWindow(field_ctl[F_STEADINESS], on);
@@ -823,7 +828,7 @@ static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
     for (int i = 0; i < F_COUNT; i++)
-        if (i == F_SMOOTHING || slider_field(i))
+        if (i == F_SMOOTHING || i == F_LEAN || slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
         else
             GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
@@ -984,8 +989,8 @@ static HWND edit(int field, int x, int y, int w)
 
 /* Layout, in pixels at 96 dpi. The log box takes what height is left. */
 #define CLIENT_W 720
-#define CLIENT_H 790
-#define LOG_TOP 598
+#define CLIENT_H 816
+#define LOG_TOP 644
 
 static void build_window(void)
 {
@@ -999,10 +1004,10 @@ static void build_window(void)
                         218, 30, 0);
     SendMessageW(hint, WM_SETFONT, (WPARAM)small_font, FALSE);
 
-    calibration_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 36, 0);
+    calibration_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 52, 0);
 
     for (int i = 0; i < 2; i++) {
-        int y = 390 + i * 30;
+        int y = 406 + i * 30;
         label(i ? L"Pause" : L"Recenter", 22, y, 80);
         field_ctl[F_RECENTER + i] = edit(F_RECENTER + i, 104, y, 470);
         add_button[i] = control(L"BUTTON", L"Add key or button…", WS_TABSTOP | BS_PUSHBUTTON, 580, y - 1, 120,
@@ -1011,15 +1016,15 @@ static void build_window(void)
     }
 
     field_ctl[F_SMOOTHING] =
-        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 456, 92, 22, ID_FIELD + F_SMOOTHING);
-    label(L"Steadiness", 120, 456, 70);
-    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 454, 140, 26,
+        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 472, 92, 22, ID_FIELD + F_SMOOTHING);
+    label(L"Steadiness", 120, 472, 70);
+    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 470, 140, 26,
                                       ID_FIELD + F_STEADINESS);
-    slider_value[0] = label(L"", 330, 456, 40);
-    label(L"Responsiveness", 380, 456, 96);
-    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 454, 140,
+    slider_value[0] = label(L"", 330, 472, 40);
+    label(L"Responsiveness", 380, 472, 96);
+    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 470, 140,
                                           26, ID_FIELD + F_RESPONSIVENESS);
-    slider_value[1] = label(L"", 618, 456, 40);
+    slider_value[1] = label(L"", 618, 472, 40);
     for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++) {
         SendMessageW(field_ctl[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
         SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
@@ -1027,13 +1032,16 @@ static void build_window(void)
 
     static const wchar_t *const curve_labels[6] = {L"Yaw", L"Pitch", L"Roll", L"X", L"Y", L"Z"};
     for (int i = 0; i < 6; i++) {
-        int x = 22 + (i % 3) * 226, y = 492 + (i / 3) * 30;
+        int x = 22 + (i % 3) * 226, y = 508 + (i / 3) * 30;
         label(curve_labels[i], x, y, 40);
         field_ctl[F_YAW + i] = edit(F_YAW + i, x + 40, y, 170);
     }
 
-    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 554, 90, 26, IDOK);
-    settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 558, 578, 20, 0);
+    field_ctl[F_LEAN] = control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
+                                WS_TABSTOP | BS_AUTOCHECKBOX, 22, 568, 500, 22, ID_FIELD + F_LEAN);
+
+    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 600, 90, 26, IDOK);
+    settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 604, 578, 20, 0);
 
     log_hint = control(L"STATIC", L"Everything trackkat prints. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
                        460, 20, 0);
@@ -1045,8 +1053,8 @@ static void build_window(void)
     SendMessageW(log_box, EM_SETLIMITTEXT, LOG_MAX * 2, 0);
 
     /* Group boxes last, beneath the controls they frame. */
-    control(L"BUTTON", L"Level calibration", BS_GROUPBOX, 10, 298, 700, 62, 0);
-    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 368, 700, 220, 0);
+    control(L"BUTTON", L"Calibration", BS_GROUPBOX, 10, 298, 700, 78, 0);
+    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 384, 700, 250, 0);
     log_group = control(L"BUTTON", L"Log", BS_GROUPBOX, 10, LOG_TOP, 700, CLIENT_H - LOG_TOP - 10, 0);
 }
 
@@ -1081,6 +1089,10 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_COPY_LOG:
             copy_log();
             return 0;
+        case ID_FIELD + F_LEAN:
+            copy_text(field_text[F_LEAN], FIELD_MAX,
+                      SendMessageW(field_ctl[F_LEAN], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"view" : L"screen");
+            return 0;
         case ID_FIELD + F_SMOOTHING:
             show_field(F_SMOOTHING,
                        SendMessageW(field_ctl[F_SMOOTHING], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
@@ -1113,7 +1125,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         layout(LOWORD(lp), HIWORD(lp));
         return 0;
     case WM_GETMINMAXINFO: {
-        RECT r = {0, 0, S(CLIENT_W), S(LOG_TOP + 160)};
+        RECT r = {0, 0, S(CLIENT_W), S(LOG_TOP + 120)};
         AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
         MINMAXINFO *mm = (MINMAXINFO *)lp;
         mm->ptMinTrackSize.x = r.right - r.left;
@@ -1263,9 +1275,13 @@ static int create_windows(void)
         return 0;
     RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    main_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_window", L"trackkat",
-                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                                r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
+    /* No taller than the screen; the log box gives up the height. */
+    RECT work;
+    int height = r.bottom - r.top;
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) && height > work.bottom - work.top)
+        height = work.bottom - work.top;
+    main_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_window", L"trackkat", WS_OVERLAPPEDWINDOW,
+                                CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, height, NULL, NULL, inst, NULL);
     if (!main_hwnd)
         return 0;
     build_window();

@@ -57,7 +57,7 @@ foreign import ccall unsafe "hts_gui_stats" c_stats :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_settings_message" c_settings_message :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_set_setting" c_set_setting :: CWString -> CWString -> IO ()
-foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString -> CWString -> CInt -> IO ()
+foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString -> CWString -> CInt -> IO CInt
 
 -- | Whether the window opens at start; the tray icon always shows.
 data WindowAtStart = WindowShown | WindowHidden
@@ -185,10 +185,12 @@ showSetting name value = withCWString name $ \n -> withCWString value (c_set_set
 showSettingsMessage :: String -> IO ()
 showSettingsMessage s = withCWString s c_settings_message
 
--- | The named settings' values as the user last saved them.
+-- | The named settings' values as the user last saved them, leaving out
+-- those the window doesn't show.
 savedSettings :: [String] -> IO [(String, String)]
-savedSettings = mapM $ \name -> withCWString name $ \n -> allocaArray size $ \buf -> do
-    c_saved_setting n buf (fromIntegral size)
-    (,) name <$> peekCWString buf
+savedSettings names = concat <$> mapM saved names
   where
+    saved name = withCWString name $ \n -> allocaArray size $ \buf -> do
+        shown <- c_saved_setting n buf (fromIntegral size)
+        if shown /= 0 then (\v -> [(name, v)]) <$> peekCWString buf else pure []
     size = 256
