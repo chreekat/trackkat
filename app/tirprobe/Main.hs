@@ -1,9 +1,9 @@
 -- | tirprobe: talk to a TrackIR 5 and print what it sees.
 module Main (main) where
 
-import Control.Concurrent (forkIO)
-import Control.Exception (IOException, catch, handle)
-import Control.Monad (forM_, forever, void, when)
+import Control.Concurrent.Async (withAsync)
+import Control.Exception (catch)
+import Control.Monad (forM_, unless, when)
 import Data.IORef
 import GHC.Clock (getMonotonicTime)
 import System.Environment (getArgs)
@@ -132,9 +132,9 @@ run opts cam = do
         when (tracking == was && tracking /= shown && now - since > 0.25) $ do
           setLeds cam tracking False
           writeIORef ledOn tracking
-  -- Stops quietly when stdin closes (as it does on Ctrl-C).
-  void . forkIO . handle (\e -> const (pure ()) (e :: IOException)) . forever $
-    getLine >> writeIORef recenter True
+  let recenterOnEnter = do
+        eof <- isEOF
+        unless eof $ getLine >> writeIORef recenter True >> recenterOnEnter
   let intrinsics = defaultIntrinsics {focal = optFocal opts}
       model = optModel opts
       track stripes = do
@@ -176,7 +176,7 @@ run opts cam = do
             Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
             _ -> pure ()
         loop
-  loop
+  withAsync recenterOnEnter (const loop)
 
 lost :: Int -> String
 lost n = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
