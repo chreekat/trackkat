@@ -51,8 +51,9 @@ tracked.
 Options:
 
 - `--clip LR,LT,RT`: your clip's reflector spacing in mm, centre to centre:
-  left–right, left–top, right–top (as seen from the camera). The angles
-  depend on the shape of this triangle, so measuring your clip is worthwhile.
+  left–right (the two on the headband), left–top, right–top, as seen from the
+  camera. The top reflector's post is assumed to lean back. The angles depend
+  on the shape of this triangle, so measure your clip. Default: `70,116,116`.
 - `--focal F`: camera focal length in pixels (default 660, from the 51.7°
   field of view). Only affects the distance and the size of the angles.
 - `--blobs`: show raw blob positions instead of the pose.

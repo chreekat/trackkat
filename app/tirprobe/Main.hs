@@ -39,7 +39,7 @@ usage =
     , "  --blobs           show the raw blob positions instead of the pose"
     , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, left-right,"
     , "                    left-top, right-top, with the top reflector's post"
-    , "                    leaning back (default: linuxtrack's cap TrackClip)"
+    , "                    leaning back (default: 70,116,116)"
     , "  --focal F         camera focal length in pixels (default 660)"
     , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
     , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
@@ -70,7 +70,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   args <- getArgs
-  opts <- case parseArgs args (Options defaultSettings False False False trackClip (focal defaultIntrinsics)) of
+  opts <- case parseArgs args (Options defaultSettings False False False defaultClip (focal defaultIntrinsics)) of
     Right o -> pure o
     Left err -> hPutStrLn stderr (err ++ "\n\n" ++ usage) >> exitFailure
   let logger = putStrLn . ("# " ++)
@@ -102,6 +102,10 @@ listAll ctx = do
         else ("cannot open: " ++) <$> USB.errorName (USB.devOpenResult d)
     printf "%04X:%04X  %s%s\n" (USB.devVendor d) (USB.devProduct d) status
       (if USB.devVendor d == vendorId then "   <-- NaturalPoint" else "" :: String)
+
+-- | The headset clip this was developed with.
+defaultClip :: Model
+defaultClip = maybe (error "defaultClip") id (triangle 45 70 116 116)
 
 splitOn :: Char -> String -> [String]
 splitOn c str = case break (== c) str of
