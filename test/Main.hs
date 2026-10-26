@@ -189,9 +189,32 @@ main = do
     check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
     check "bindings" $
         parseConfig "# comment\nrecenter = ctrl + shift+f12\n\npause=Pause # TrackIR style\n"
-            == Right defaultConfig{recenterKey = Binding [Ctrl, Shift] "F12", pauseKey = Binding [] "Pause"}
-    check "binding codes" $
-        fmap (\b -> (modifierMask b, virtualKey b, renderBinding b)) (parseBinding "Alt+Ctrl+NumPad5") == Right (3, 0x65, "Ctrl+Alt+NumPad5")
+            == Right defaultConfig{recenterBindings = [Key [Ctrl, Shift] "F12"], pauseBindings = [Key [] "Pause"]}
+    check "binding codes" $ case parseBinding "Alt+Ctrl+NumPad5" of
+        Right b@(Key mods k) -> (modifierMask mods, virtualKey k, renderBinding b) == (3, 0x65, "Ctrl+Alt+NumPad5")
+        _ -> False
+    let warthog = Joystick "Throttle - HOTAS Warthog"
+    check "joystick button" $
+        parseConfig "recenter = Throttle - HOTAS Warthog  button 23\npause = F9, Joystick - HOTAS Warthog (2) Button 4, Ctrl+P\n"
+            == Right
+                defaultConfig
+                    { recenterBindings = [JoystickButton (warthog 1) 23]
+                    , pauseBindings = [Key [] "F9", JoystickButton (Joystick "Joystick - HOTAS Warthog" 2) 4, Key [Ctrl] "P"]
+                    }
+    forM_
+        [ [JoystickButton (warthog 1) 1]
+        , [JoystickButton (warthog 3) 128, Key [Alt] "F1"]
+        , [JoystickButton (Joystick "Controller (Xbox One For Windows)" 1) 7]
+        , [JoystickButton (Joystick "T.16000M (HID)" 2) 256, JoystickButton (Joystick "VPC Stick MT-50CM2 + 3D" 1) 31]
+        ]
+        $ \bs -> check ("bindings round-trip: " ++ renderBindings bs) $ parseBindings (renderBindings bs) == Right bs
+    check "rendered button" $ renderBindings [Key [] "F12", JoystickButton (warthog 2) 23] == "F12, Throttle - HOTAS Warthog (2) button 23"
+    check "button out of range" $ parseConfig "pause = Stick button 257" == Left "line 1: joystick buttons are numbered from 1 to 256"
+    check "button zero" $ parseBinding "Stick button 0" == Left "joystick buttons are numbered from 1 to 256"
+    check "button without number" $ parseBinding "Stick button" == Left "joystick buttons are numbered from 1 to 256"
+    check "button without joystick" $
+        parseBinding "button 3" == Left "a joystick button needs the joystick's name, like Throttle - HOTAS Warthog button 23"
+    check "empty binding in a list" $ parseBindings "F12, " == Left "empty key binding"
     check "unknown key reported" $ parseConfig "recenter = F99\n" == Left "line 1: unknown key \"F99\""
     check "unknown setting reported" $ parseConfig "\nfoo = F1\n" == Left "line 2: unknown setting \"foo\""
 
@@ -259,6 +282,8 @@ main = do
     check ("changes described: " ++ show (reloaded "pause = Ctrl+F9\nsteadiness = 80\nyaw = 10:10 45:120\n")) $
         reloaded "pause = Ctrl+F9\nsteadiness = 80\nyaw = 10:10 45:120\n"
             == Right "Settings reloaded: pause = Ctrl+F9, steadiness = 80, yaw = 10:10 45:120"
+    check "button change described" $
+        reloaded "recenter = F12, Stick button 2\n" == Right "Settings reloaded: recenter = F12, Stick button 2"
     check "smoothing turned off" $ reloaded "smoothing = off\nsteadiness = 80\n" == Right "Settings reloaded: smoothing = off"
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))

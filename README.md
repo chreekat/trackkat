@@ -53,6 +53,9 @@ Keys work from anywhere, including inside games:
 - **F12** recenters. A game's own "recenter TrackIR" binding does too.
 - **F9** pauses: games see your head held still until you press it again.
 
+Either can be a joystick or HOTAS button instead, or as well; see
+[Settings](#settings).
+
 Recentering while the clip is out of sight centres the view at once; the
 pose you hold when the clip comes back becomes the new centre.
 
@@ -69,15 +72,28 @@ NPClient, as a game would; **Esc** quits.
 
 ### Settings
 
-`trackkat.conf`, beside `trackkat.exe`, holds the keys, smoothing and
-response curves; it explains its own format. Changes apply as soon as you
+`trackkat.conf`, beside `trackkat.exe`, holds the keys and buttons,
+smoothing and response curves; it explains its own format. Changes apply as soon as you
 save the file, while trackkat runs, so you can tune smoothing and curves
 while you play. If the file has a mistake, trackkat names the
 line and carries on with the settings it had. If you had trackkat before
 smoothing and curves existed, delete the file and trackkat writes a fresh
 one with the new settings documented.
 
-- `recenter = F12`, `pause = Ctrl+F9`: keys.
+- `recenter = F12`, `pause = Ctrl+F9`: keys, or joystick buttons such as
+  `recenter = Throttle - HOTAS Warthog button 23`. Separate several with
+  commas: `pause = F9, Joystick - HOTAS Warthog button 5`. For a minute after
+  it starts, and for a minute after you type `j` and Enter in its window,
+  trackkat prints each joystick button you press, ready to copy:
+
+  ```
+  Joystick button pressed: Throttle - HOTAS Warthog button 23
+  ```
+
+  Joysticks are named as Windows names them; if two attached have the same
+  name, the second is `Name (2)`. trackkat also prints when a joystick is
+  connected or disconnected. Joysticks plugged in while it runs, or that
+  come back after sleep, work straight away.
 - `steadiness = 90`, from 0 to 100: how still the view stays while your
   head is still. Raise it if the view jitters; lower it if the view feels
   floaty or drifts into place.

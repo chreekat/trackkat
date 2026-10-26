@@ -39,7 +39,7 @@ library
     exposed-modules: TrackKat.Windows
     c-sources:       cbits/windows.c
     include-dirs:    cbits
-    extra-libraries: advapi32 user32
+    extra-libraries: advapi32 user32 hid
 
 executable tirprobe
   import:           shared
