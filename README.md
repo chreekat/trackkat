@@ -106,7 +106,8 @@ Ctrl-C stops the camera cleanly.
 
 ## Building
 
-Needs GHC ≥ 9.4, cabal and libusb-1.0 headers.
+Needs GHC 9.14, cabal and libusb-1.0 headers. Dependencies are frozen in
+`cabal.project.freeze`.
 
 ```
 cabal build all --enable-tests && cabal test
