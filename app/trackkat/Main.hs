@@ -49,15 +49,17 @@ main = do
     setNPClientPath dir >>= \case
         Right () -> putStrLn ("Games will load NPClient from " ++ dir)
         Left e -> putStrLn ("Can't point games at NPClient (registry error " ++ show e ++ ").")
-    startHotkeys (recenterKey config) (pauseKey config) >>= \case
-        Right () -> pure ()
-        Left e -> putStrLn ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
+    unwatched <- startHotkeys (recenterBindings config) (pauseBindings config)
+    forM_ unwatched $ \case
+        (Keyboard, e) -> putStrLn ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
+        (Joysticks, e) -> putStrLn ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
     printf
         "Recenter: %s   Pause: %s   (Enter also recenters, c Enter calibrates level)\n"
-        (renderBinding (recenterKey config))
-        (renderBinding (pauseKey config))
+        (renderBindings (recenterBindings config))
+        (renderBindings (pauseBindings config))
     session <- newSession (response config)
-    withAsync (console session) $ \_ -> withAsync (watchSettings settingsFile session stamp config) $ \_ -> forever $ do
+    showButtons session
+    withAsync (console session) $ \_ -> withAsync (watchSettings settingsFile session stamp config) $ \_ -> withAsync (joysticks session) $ \_ -> forever $ do
         (USB.withContext $ \ctx -> withCamera ctx (putStrLn . ("# " ++)) defaultSettings (track session))
             `catches` [ Handler $ \e -> putStrLn (explain e)
                       , Handler $ \e -> putStrLn ("USB error: " ++ displayException (e :: USB.USBError))
@@ -111,7 +113,7 @@ watchSettings path s = go
                             go stamp' config
                         Right new -> do
                             writeIORef (sResponse s) (response new)
-                            rebindHotkeys (recenterKey new) (pauseKey new)
+                            rebindHotkeys (recenterBindings new) (pauseBindings new)
                             putStrLn (describeChanges config new)
                             go stamp' new
             _ -> go stamp config
@@ -136,6 +138,8 @@ data Session = Session
     -- ^ the pose games see while paused
     , sLatest :: IORef GamePose
     -- ^ the last pose sent
+    , sButtonsShown :: IORef Double
+    -- ^ until when joystick button presses are printed, in monotonic seconds
     }
 
 newSession :: Response -> IO Session
@@ -147,6 +151,7 @@ newSession r =
         <*> newIORef ClipLost
         <*> newIORef Nothing
         <*> newIORef still
+        <*> newIORef 0
 
 -- | Recenter on the next frame that shows the clip. If the clip is out of
 -- sight, games see the view centred straight away.
@@ -167,8 +172,30 @@ console s = do
         case line of
             "" -> recenter s
             "c" -> modifyIORef' (sTracker s) (request Calibrate)
-            _ -> putStrLn "Enter recenters; c Enter calibrates level"
+            "j" -> showButtons s
+            _ -> putStrLn "Enter recenters; c Enter calibrates level; j Enter shows joystick buttons"
         console s
+
+-- | Print joystick button presses for the next minute, so they can be
+-- copied into the settings file.
+showButtons :: Session -> IO ()
+showButtons s = do
+    now <- getMonotonicTime
+    writeIORef (sButtonsShown s) (now + 60)
+    putStrLn "For the next minute, joystick buttons you press are named here, ready to bind in trackkat.conf."
+
+-- | Report joysticks coming and going, and the buttons pressed while
+-- 'sButtonsShown' says to.
+joysticks :: Session -> IO ()
+joysticks s = forever $ do
+    threadDelay 100000
+    events <- takeJoystickEvents
+    now <- getMonotonicTime
+    shownUntil <- readIORef (sButtonsShown s)
+    forM_ events $ \case
+        Connected j -> putStrLn ("Joystick connected: " ++ renderJoystick j)
+        Disconnected j -> putStrLn ("Joystick disconnected: " ++ renderJoystick j)
+        Pressed j n -> when (now < shownUntil) $ putStrLn ("Joystick button pressed: " ++ renderBinding (JoystickButton j n))
 
 -- | Track until the camera goes away.
 track :: Session -> Camera -> IO ()

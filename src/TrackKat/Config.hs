@@ -1,5 +1,5 @@
--- | trackkat's settings file, as @name = value@ lines: hotkey bindings,
--- smoothing and response curves.
+-- | trackkat's settings file, as @name = value@ lines: hotkey and joystick
+-- button bindings, smoothing and response curves.
 module TrackKat.Config (
     Config (..),
     defaultConfig,
@@ -8,8 +8,13 @@ module TrackKat.Config (
     describeChanges,
     Binding (..),
     Modifier (..),
+    Joystick (..),
+    maxButton,
     parseBinding,
+    parseBindings,
     renderBinding,
+    renderBindings,
+    renderJoystick,
     modifierMask,
     virtualKey,
 ) where
@@ -22,8 +27,8 @@ import Text.Printf (printf)
 import TrackKat.Response
 
 data Config = Config
-    { recenterKey :: Binding
-    , pauseKey :: Binding
+    { recenterBindings :: [Binding]
+    , pauseBindings :: [Binding]
     , response :: Response
     }
     deriving (Eq, Show)
@@ -33,8 +38,8 @@ data Config = Config
 defaultConfig :: Config
 defaultConfig =
     Config
-        { recenterKey = Binding [] "F12"
-        , pauseKey = Binding [] "F9"
+        { recenterBindings = [Key [] "F12"]
+        , pauseBindings = [Key [] "F9"]
         , response =
             Response
                 { smoothing = knobSmoothing defaultKnobs
@@ -49,12 +54,22 @@ defaultConfig =
   where
     gain g = Curve [(1, g)]
 
--- | A key, with modifiers held.
-data Binding = Binding [Modifier] String
+-- | A key with modifiers held, or a joystick button numbered from 1.
+data Binding = Key [Modifier] String | JoystickButton Joystick Int
     deriving (Eq, Show)
 
 data Modifier = Ctrl | Alt | Shift | Win
     deriving (Eq, Show, Enum, Bounded)
+
+-- | A game controller: its product name, as Windows reports it, and which
+-- of the attached controllers with that name it is, from 1.
+data Joystick = Joystick String Int
+    deriving (Eq, Show)
+
+-- | The highest joystick button number trackkat watches, as
+-- MAX_BUTTONS in cbits/windows.c.
+maxButton :: Int
+maxButton = 256
 
 -- | The smoothing settings as written: on or off, then steadiness and
 -- responsiveness, each 0 to 100.
@@ -92,8 +107,8 @@ parseConfig str = do
         let resp = response c
             curve f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve value
          in case name of
-                "recenter" -> (\b -> (c{recenterKey = b}, k)) <$> parseBinding value
-                "pause" -> (\b -> (c{pauseKey = b}, k)) <$> parseBinding value
+                "recenter" -> (\b -> (c{recenterBindings = b}, k)) <$> parseBindings value
+                "pause" -> (\b -> (c{pauseBindings = b}, k)) <$> parseBindings value
                 "smoothing" -> case value of
                     "on" -> Right (c, Knobs True s r)
                     "off" -> Right (c, Knobs False s r)
@@ -113,9 +128,15 @@ renderConfig c =
     unlines
         [ "# trackkat settings."
         , "#"
-        , "# Keys are like F12, Ctrl+F9, Alt+Shift+P, NumPad5."
-        , "recenter = " ++ renderBinding (recenterKey c)
-        , "pause = " ++ renderBinding (pauseKey c)
+        , "# Keys are like F12, Ctrl+F9, Alt+Shift+P, NumPad5. Joystick buttons"
+        , "# are like Throttle - HOTAS Warthog button 23: trackkat prints the"
+        , "# buttons you press for a minute after it starts, and for a minute"
+        , "# after you type j and Enter in its window, ready to copy here. Two"
+        , "# controllers with the same name are told apart as Name (2), and so on."
+        , "# Separate several keys or buttons with commas:"
+        , "#   recenter = F12, Throttle - HOTAS Warthog button 23"
+        , "recenter = " ++ renderBindings (recenterBindings c)
+        , "pause = " ++ renderBindings (pauseBindings c)
         , ""
         , "# Smoothing calms the view while your head is still, at the cost of"
         , "# some lag when you move. Both settings run from 0 to 100."
@@ -157,7 +178,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
   where
     settings c =
         let r = response c
-         in [("recenter", renderBinding (recenterKey c)), ("pause", renderBinding (pauseKey c))]
+         in [("recenter", renderBindings (recenterBindings c)), ("pause", renderBindings (pauseBindings c))]
                 ++ ( case smoothingKnobs (smoothing r) of
                         Knobs False _ _ -> [("smoothing", "off")]
                         Knobs True s rs -> [("smoothing", "on"), ("steadiness", renderNumber s), ("responsiveness", renderNumber rs)]
@@ -213,16 +234,32 @@ renderNumber x =
         trimmed = reverse (dropWhile (== '0') (reverse fixed))
      in if last trimmed == '.' then init trimmed else trimmed
 
--- | Read a binding such as @Ctrl+Shift+F12@: modifiers, then one key.
+-- | Read bindings separated by commas, such as
+-- @F12, Throttle - HOTAS Warthog button 23@.
+parseBindings :: String -> Either String [Binding]
+parseBindings = traverse parseBinding . splitOn ','
+
+renderBindings :: [Binding] -> String
+renderBindings = intercalate ", " . map renderBinding
+
+-- | Read a binding: a key such as @Ctrl+Shift+F12@, modifiers then one key,
+-- or a joystick button such as @Throttle - HOTAS Warthog (2) button 23@.
 parseBinding :: String -> Either String Binding
-parseBinding s = case splitPlus s of
-    [] -> Left "empty key binding"
-    parts -> do
-        mods <- traverse modifier (init parts)
-        let k = last parts
-        case lookupKey k of
-            Just (canonical, _) -> Right (Binding (nub mods) canonical)
-            Nothing -> Left ("unknown key " ++ show k)
+parseBinding s = case joystickButton (trim s) of
+    Just (name, number) -> do
+        j <- parseJoystick name
+        n <- case number of
+            Just n | n >= 1, n <= toInteger maxButton -> Right (fromInteger n)
+            _ -> Left ("joystick buttons are numbered from 1 to " ++ show maxButton)
+        Right (JoystickButton j n)
+    Nothing -> case splitPlus s of
+        [] -> Left "empty key binding"
+        parts -> do
+            mods <- traverse modifier (init parts)
+            let k = last parts
+            case lookupKey k of
+                Just (canonical, _) -> Right (Key (nub mods) canonical)
+                Nothing -> Left ("unknown key " ++ show k)
   where
     splitPlus str = case break (== '+') str of
         (a, []) -> [trim a | not (all isSpace a)]
@@ -236,20 +273,48 @@ parseBinding s = case splitPlus s of
         _ -> Left ("unknown modifier " ++ show m)
 
 renderBinding :: Binding -> String
-renderBinding (Binding mods k) = intercalate "+" (map show [m | m <- [minBound ..], m `elem` mods] ++ [k])
+renderBinding (Key mods k) = intercalate "+" (map show [m | m <- [minBound ..], m `elem` mods] ++ [k])
+renderBinding (JoystickButton j n) = renderJoystick j ++ " button " ++ show n
+
+-- | Split a binding ending in @button N@ into the joystick's name and the
+-- button number, if it has one.
+joystickButton :: String -> Maybe (String, Maybe Integer)
+joystickButton s =
+    let (number, beforeNumber) = span isDigit (reverse s)
+        (gap, beforeGap) = span isSpace beforeNumber
+        (word, name) = splitAt (length "button") beforeGap
+     in if map toLower (reverse word) == "button" && all isSpace (take 1 name) && (not (null gap) || null number)
+            then Just (trim (reverse name), if null number then Nothing else Just (decimal (reverse number)))
+            else Nothing
+
+-- | Read a joystick's name, perhaps followed by which of those with that
+-- name it is, as in @Throttle - HOTAS Warthog (2)@.
+parseJoystick :: String -> Either String Joystick
+parseJoystick name = case reverse name of
+    [] -> Left "a joystick button needs the joystick's name, like Throttle - HOTAS Warthog button 23"
+    ')' : rest
+        | (index@(_ : _), '(' : beforeIndex) <- span isDigit rest
+        , let n = decimal (reverse index)
+        , n >= 1
+        , not (null (trim beforeIndex)) ->
+            Right (Joystick (trim (reverse beforeIndex)) (fromInteger n))
+    _ -> Right (Joystick name 1)
+
+renderJoystick :: Joystick -> String
+renderJoystick (Joystick name index) = name ++ (if index > 1 then " (" ++ show index ++ ")" else "")
 
 -- | The modifier flags Windows' RegisterHotKey takes.
-modifierMask :: Binding -> Int
-modifierMask (Binding mods _) = foldl (.|.) 0 (map bit mods)
+modifierMask :: [Modifier] -> Int
+modifierMask mods = foldl (.|.) 0 (map bit mods)
   where
     bit Alt = 0x1
     bit Ctrl = 0x2
     bit Shift = 0x4
     bit Win = 0x8
 
--- | The Windows virtual-key code of a binding's key.
-virtualKey :: Binding -> Int
-virtualKey (Binding _ k) = maybe 0 snd (lookupKey k)
+-- | The Windows virtual-key code of a key.
+virtualKey :: String -> Int
+virtualKey k = maybe 0 snd (lookupKey k)
 
 -- | A key's canonical name and virtual-key code, ignoring case.
 lookupKey :: String -> Maybe (String, Int)
@@ -284,3 +349,12 @@ keys =
 
 trim :: String -> String
 trim = f . f where f = reverse . dropWhile isSpace
+
+splitOn :: Char -> String -> [String]
+splitOn c str = case break (== c) str of
+    (a, []) -> [a]
+    (a, _ : rest) -> a : splitOn c rest
+
+-- | The number a string of decimal digits spells.
+decimal :: String -> Integer
+decimal = foldl (\acc d -> acc * 10 + toInteger (digitToInt d)) 0

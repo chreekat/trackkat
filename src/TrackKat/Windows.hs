@@ -8,16 +8,23 @@ module TrackKat.Windows (
     singleInstance,
     setNPClientPath,
     Hotkey (..),
+    Watched (..),
     startHotkeys,
     rebindHotkeys,
     takeHotkeys,
+    JoystickEvent (..),
+    takeJoystickEvents,
 ) where
 
-import Data.Bits (testBit)
-import Foreign.C.String (CWString, withCWString)
+import Data.Bits ((.&.))
+import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..))
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray)
+import Foreign.Ptr (Ptr)
+import Foreign.Storable (peek)
 
-import TrackKat.Config (Binding, modifierMask, virtualKey)
+import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
 import TrackKat.GamePose
 
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
@@ -27,9 +34,13 @@ foreign import ccall unsafe "hts_game_reads" c_game_reads :: IO CLong
 foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
 foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
-foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: CUInt -> CUInt -> CUInt -> CUInt -> IO CInt
-foreign import ccall unsafe "hts_hotkeys_rebind" c_hotkeys_rebind :: CUInt -> CUInt -> CUInt -> CUInt -> IO ()
+foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
+foreign import ccall unsafe "hts_bind_key" c_bind_key :: CInt -> CUInt -> CUInt -> IO ()
+foreign import ccall unsafe "hts_bind_button" c_bind_button :: CInt -> CWString -> CInt -> CInt -> IO ()
+foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
+foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> IO CInt
 foreign import ccall unsafe "hts_hotkeys_take" c_hotkeys_take :: IO CInt
+foreign import ccall unsafe "hts_joystick_event" c_joystick_event :: CWString -> CInt -> Ptr CInt -> Ptr CInt -> IO CInt
 
 -- | Create the shared memory games read from. Left is a Windows error code.
 openShared :: IO (Either Int ())
@@ -62,30 +73,65 @@ setNPClientPath dir =
     withCWString (if last dir == '\\' then dir else dir ++ "\\") $ \p ->
         (\rc -> if rc == 0 then Right () else Left (fromIntegral rc)) <$> c_set_npclient_path p
 
+-- | An action bound to keys and joystick buttons.
 data Hotkey = RecenterKey | PauseKey
     deriving (Eq, Show)
 
--- | Watch for the recenter and pause hotkeys anywhere in Windows, without
--- hiding them from other programs. Left is a Windows error code.
-startHotkeys :: Binding -> Binding -> IO (Either Int ())
+-- | What is watched for hotkeys.
+data Watched = Keyboard | Joysticks
+    deriving (Eq, Show)
+
+-- | Bind the recenter and pause hotkeys, and watch for them anywhere in
+-- Windows without hiding them from other programs. Returns what can't be
+-- watched, with Windows error codes.
+startHotkeys :: [Binding] -> [Binding] -> IO [(Watched, Int)]
 startHotkeys recenter pause = do
-    rc <- withCodes c_hotkeys_start recenter pause
-    pure (if rc == 0 then Right () else Left (fromIntegral rc))
+    rebindHotkeys recenter pause
+    alloca $ \joystickError -> do
+        keyboardError <- c_hotkeys_start joystickError
+        jerr <- peek joystickError
+        pure [(w, fromIntegral e) | (w, e) <- [(Keyboard, keyboardError), (Joysticks, jerr)], e /= 0]
 
 -- | Change the recenter and pause hotkeys.
-rebindHotkeys :: Binding -> Binding -> IO ()
-rebindHotkeys = withCodes c_hotkeys_rebind
-
-withCodes :: (CUInt -> CUInt -> CUInt -> CUInt -> a) -> Binding -> Binding -> a
-withCodes f recenter pause =
-    f
-        (fromIntegral (modifierMask recenter))
-        (fromIntegral (virtualKey recenter))
-        (fromIntegral (modifierMask pause))
-        (fromIntegral (virtualKey pause))
+rebindHotkeys :: [Binding] -> [Binding] -> IO ()
+rebindHotkeys recenter pause = do
+    c_bindings_clear
+    mapM_ (bind RecenterKey) recenter
+    mapM_ (bind PauseKey) pause
+    c_bindings_apply
+  where
+    bind k (Key mods key) = c_bind_key (hotkeyBit k) (fromIntegral (modifierMask mods)) (fromIntegral (virtualKey key))
+    bind k (JoystickButton (Joystick name index) n) =
+        withCWString name $ \p -> c_bind_button (hotkeyBit k) p (fromIntegral index) (fromIntegral n)
 
 -- | Hotkeys pressed since the last call.
 takeHotkeys :: IO [Hotkey]
 takeHotkeys = do
     pressed <- c_hotkeys_take
-    pure [k | (k, b) <- [(RecenterKey, 0), (PauseKey, 1)], testBit pressed b]
+    pure [k | k <- [RecenterKey, PauseKey], pressed .&. hotkeyBit k /= 0]
+
+-- | How cbits/windows.c numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE.
+hotkeyBit :: Hotkey -> CInt
+hotkeyBit RecenterKey = 1
+hotkeyBit PauseKey = 2
+
+-- | Something that happened to a joystick: it was attached (or found at
+-- start), detached, or one of its buttons was pressed.
+data JoystickEvent = Connected Joystick | Disconnected Joystick | Pressed Joystick Int
+    deriving (Eq, Show)
+
+-- | Joystick events since the last call, oldest first.
+takeJoystickEvents :: IO [JoystickEvent]
+takeJoystickEvents = allocaArray nameLength $ \name -> alloca $ \index -> alloca $ \button -> do
+    let next = do
+            kind <- c_joystick_event name (fromIntegral nameLength) index button
+            let joystick = Joystick <$> peekCWString name <*> (fromIntegral <$> peek index)
+            case kind of
+                1 -> (:) <$> (Connected <$> joystick) <*> next
+                2 -> (:) <$> (Disconnected <$> joystick) <*> next
+                3 -> (:) <$> (Pressed <$> joystick <*> (fromIntegral <$> peek button)) <*> next
+                _ -> pure []
+    next
+  where
+    -- As NAME_LEN in cbits/windows.c.
+    nameLength = 128
