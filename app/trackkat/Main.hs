@@ -9,6 +9,7 @@ import Control.Exception (Handler (..), catches, displayException)
 import Control.Monad (forM_, forever, unless, when)
 import Data.IORef
 import GHC.Clock (getMonotonicTime)
+import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
 import System.Directory (doesFileExist)
 import System.Environment (getExecutablePath)
 import System.Exit (exitFailure)
@@ -21,6 +22,7 @@ import TrackKat.Config
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
 import TrackKat.Pose
+import TrackKat.Stats
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 import TrackKat.Windows
@@ -119,8 +121,11 @@ track s cam = do
     seenReads <- newIORef =<< gameReads
     lastRead <- newIORef 0
     lastStatus <- newIORef 0
+    lastArrival <- newIORef Nothing
+    window <- newIORef emptyWindow
+    gcsSeen <- newIORef =<< gcCount
     withPackets cam $ \next -> forever $ do
-        packets <- next
+        (arrived, packets) <- next
         forM_ packets $ \case
             Frame _ stripes -> do
                 now <- getMonotonicTime
@@ -133,6 +138,10 @@ track s cam = do
                     Lost _ -> pure ()
                 paused <- readIORef (sPaused s)
                 publish =<< maybe (readIORef (sLatest s)) pure paused
+                published <- getMonotonicTime
+                previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
+                modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous))
+                noteGCs gcsSeen window
 
                 readsNow <- gameReads
                 before <- atomicModifyIORef' seenReads (\b -> (readsNow, b))
@@ -144,9 +153,31 @@ track s cam = do
                 shown <- readIORef lastStatus
                 when (now - shown >= 1) $ do
                     writeIORef lastStatus now
-                    putStrLn (status outcome paused gameConnected)
-            Corrupt why _ -> putStrLn ("# dropped a corrupt packet: " ++ why)
+                    w <- atomicModifyIORef' window (\w -> (emptyWindow, w))
+                    putStrLn (status outcome paused gameConnected ++ "   " ++ summary w)
+            Corrupt why _ -> do
+                putStrLn ("# dropped a corrupt packet: " ++ why)
+                modifyIORef' window sawCorrupt
             _ -> pure ()
+
+-- | Garbage collections so far, if the runtime is counting (+RTS -T).
+gcCount :: IO Int
+gcCount = do
+    enabled <- getRTSStatsEnabled
+    if enabled then fromIntegral . gcs <$> getRTSStats else pure 0
+
+-- | Count collections since the last call, with the latest one's pause.
+-- Sampled every frame, so a pause hidden behind a later one in the same
+-- frame is missed.
+noteGCs :: IORef Int -> IORef Window -> IO ()
+noteGCs seen window = do
+    enabled <- getRTSStatsEnabled
+    when enabled $ do
+        stats <- getRTSStats
+        let n = fromIntegral (gcs stats)
+        before <- atomicModifyIORef' seen (\b -> (n, b))
+        when (n /= before) $
+            modifyIORef' window (sawGCs (n - before) (fromIntegral (gcdetails_elapsed_ns (gc stats)) / 1e9))
 
 -- | Act on hotkeys and on recenter requests from games.
 handleControls :: Session -> IORef Int -> IO ()

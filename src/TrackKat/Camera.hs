@@ -128,14 +128,15 @@ withCamera ctx logger settings act = do
 
 -- | Start video and run the action with a source of the camera's packets.
 -- The source blocks until a USB transfer arrives (or a second passes) and
--- returns the packets it completes. It throws 'CameraSilent' once
--- 'silenceLimit' seconds pass without data.
+-- returns the packets it completes, with the time it arrived (as
+-- 'getMonotonicTime'). It throws 'CameraSilent' once 'silenceLimit' seconds
+-- pass without data.
 --
 -- The camera drops data when its own buffer fills, so reads are queued with
 -- it before video starts, and kept queued by a thread that does nothing else.
 -- Each read takes about one frame, so 32 cover a quarter of a second of that
 -- thread being held up.
-withPackets :: Camera -> (IO [Packet] -> IO a) -> IO a
+withPackets :: Camera -> (IO (Double, [Packet]) -> IO a) -> IO a
 withPackets cam act = do
     chunks <- newChan
     pending <- newIORef B.empty
@@ -144,7 +145,10 @@ withPackets cam act = do
     let reader =
             USB.withStream (camContext cam) (camHandle cam) inEp 32 16384 $ \stream -> do
                 putMVar reading ()
-                forever (USB.pump stream 1000 >>= writeChan chunks)
+                forever $ do
+                    chunk <- USB.pump stream 1000
+                    arrived <- getMonotonicTime
+                    writeChan chunks (arrived, chunk)
         -- Timed here rather than trusting the reader to keep returning:
         -- after sleep, a USB read might never come back at all.
         next = do
@@ -152,10 +156,10 @@ withPackets cam act = do
             now <- getMonotonicTime
             -- A negative timeout would mean none at all.
             waited <- timeout (max 0 (ceiling ((since + silenceLimit - now) * 1e6))) (readChan chunks)
-            chunk <- maybe (throwIO CameraSilent) pure waited
-            unless (B.null chunk) $ writeIORef lastData =<< getMonotonicTime
+            (arrived, chunk) <- maybe (throwIO CameraSilent) pure waited
+            unless (B.null chunk) $ writeIORef lastData arrived
             atomicModifyIORef' pending $ \p ->
-                let (packets, rest) = parseStream (p <> chunk) in (rest, packets)
+                let (packets, rest) = parseStream (p <> chunk) in (rest, (arrived, packets))
     withAsync reader $ \r -> do
         link r
         takeMVar reading
