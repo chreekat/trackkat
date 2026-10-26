@@ -18,7 +18,7 @@ typedef struct FTData {
     int32_t CamWidth;
     int32_t CamHeight;
     float Yaw;   /* radians, positive to the left */
-    float Pitch; /* radians, positive up */
+    float Pitch; /* radians, positive down */
     float Roll;  /* radians, positive to the left */
     float X;     /* mm */
     float Y;

@@ -12,7 +12,7 @@ data GamePose = GamePose
     { gpYaw :: Float
     -- ^ radians, positive to the left
     , gpPitch :: Float
-    -- ^ radians, positive up
+    -- ^ radians, positive down
     , gpRoll :: Float
     -- ^ radians, positive to the left
     , gpX :: Float
@@ -24,14 +24,13 @@ data GamePose = GamePose
     }
     deriving (Eq, Show)
 
--- | Convert a head pose. The rotation signs follow FreeTrack's documented
--- conventions; the translation signs are a best guess pending testing in
--- games.
+-- | Convert a head pose. Yaw and pitch signs are as DCS expects; roll and
+-- translation signs are a best guess pending testing in games.
 toGamePose :: HeadPose -> GamePose
 toGamePose hp =
     GamePose
         { gpYaw = rad (negate (yaw hp))
-        , gpPitch = rad (negate (pitch hp))
+        , gpPitch = rad (pitch hp)
         , gpRoll = rad (roll hp)
         , gpX = realToFrac (negate (tx hp))
         , gpY = realToFrac (negate (ty hp))
