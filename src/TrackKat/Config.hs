@@ -28,7 +28,7 @@ data Config = Config
     }
     deriving (Eq, Show)
 
--- | TrackIR's own keys; a small deadzone then 1:1 on every axis; moderate
+-- | TrackIR's own keys; linear curves with gains tuned in DCS; strong
 -- smoothing.
 defaultConfig :: Config
 defaultConfig =
@@ -38,17 +38,16 @@ defaultConfig =
         , response =
             Response
                 { smoothing = knobSmoothing defaultKnobs
-                , yawCurve = rotation
-                , pitchCurve = rotation
-                , rollCurve = rotation
-                , xCurve = translation
-                , yCurve = translation
-                , zCurve = translation
+                , yawCurve = gain 6
+                , pitchCurve = gain 7
+                , rollCurve = gain 4
+                , xCurve = gain 3
+                , yCurve = gain 4
+                , zCurve = gain 2.5
                 }
         }
   where
-    rotation = Curve [(0.5, 0), (1.5, 1)]
-    translation = Curve [(1, 0), (2, 1)]
+    gain g = Curve [(1, g)]
 
 -- | A key, with modifiers held.
 data Binding = Binding [Modifier] String
@@ -63,7 +62,7 @@ data Knobs = Knobs Bool Double Double
 
 -- | A cutoff of about 1 Hz and a beta of about 0.05.
 defaultKnobs :: Knobs
-defaultKnobs = Knobs True 65 57
+defaultKnobs = Knobs True 90 45
 
 knobSmoothing :: Knobs -> Smoothing
 knobSmoothing (Knobs on s r) = if on then tuned s r else NoSmoothing
