@@ -3,6 +3,8 @@
 Roughly in order.
 
 - Check the translation signs in DCS (lean left/right, up/down, forward/back).
+- Measure latency from frame arrival to pose publication, and GC pauses;
+  show them in the status line. Tune the RTS only if they show a need.
 - Per-axis response curves, deadzones and smoothing; reject implausible jumps
   (anatomical limits, maximum head speed).
 - Save the level calibration, and keep refining it from everyday head
