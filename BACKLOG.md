@@ -3,8 +3,6 @@
 Roughly in order.
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
-- Per-axis response curves, deadzones and smoothing; reject implausible jumps
-  (anatomical limits, maximum head speed).
 - Save the level calibration, and keep refining it from everyday head
   movement.
 - Estimate the neck pivot from movement, so translation means leaning.
@@ -16,5 +14,10 @@ Roughly in order.
   statistics on the automatic calibration.
 - Estimate the clip's shape from movement, for clips other than the
   developer's.
+- Find the source of the wiggle after a fast head turn (the view overshoots
+  and comes back): print, per snap, the overshoot in the raw pose, the fit
+  error during it, and the overshoot sent to the game. If the rebound is real
+  head motion, consider negative inertia (IBM TrackPoint) to make stops crisp;
+  if the fit worsens, the clip's post is swinging.
 - Head movements as desktop controls (switching virtual desktops or window
   manager panes), on Linux too.
