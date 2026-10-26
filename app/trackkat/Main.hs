@@ -227,9 +227,10 @@ saveCalibrations path pending = forever $ do
 -- | Read and parse the settings file, whole so editors can replace it.
 readSettings :: FilePath -> IO (Either String (String, Config))
 readSettings path =
-    (try (readFile' path) >>= \case
+    ( try (readFile' path) >>= \case
         Left e -> pure (Left (displayException (e :: IOException)))
-        Right text -> pure ((text,) <$> parseConfig text))
+        Right text -> pure ((text,) <$> parseConfig text)
+    )
 
 -- | Show the settings file's values in trackkat's window, as written.
 showSettings :: String -> IO ()
