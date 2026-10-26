@@ -56,6 +56,7 @@ main = do
             `catches` [ Handler $ \e -> putStrLn (explain e)
                       , Handler $ \e -> putStrLn ("USB error: " ++ displayException (e :: USB.USBError))
                       , Handler $ \(ExceptionInLinkedThread _ e) -> putStrLn ("Camera stopped: " ++ displayException e)
+                      , Handler $ \CameraSilent -> putStrLn "The camera went quiet, perhaps after sleep."
                       ]
         putStrLn "Trying the camera again in 3 seconds."
         threadDelay 3000000
