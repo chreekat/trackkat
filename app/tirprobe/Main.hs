@@ -37,8 +37,9 @@ usage =
     , "Shows head pose relative to where you were when you last pressed Enter."
     , ""
     , "  --blobs           show the raw blob positions instead of the pose"
-    , "  --clip LR,LT,RT   reflector spacing in mm: left-right, left-top,"
-    , "                    right-top (default: linuxtrack's TrackClip, 134,129,129)"
+    , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, left-right,"
+    , "                    left-top, right-top, with the top reflector's post"
+    , "                    leaning back (default: linuxtrack's cap TrackClip)"
     , "  --focal F         camera focal length in pixels (default 660)"
     , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
     , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
@@ -57,7 +58,7 @@ parseArgs ("--blobs" : r) o = parseArgs r o {optBlobs = True}
 parseArgs ("--focal" : n : r) o | Just v <- readMaybe n, v > 0 = parseArgs r o {optFocal = v}
 parseArgs ("--clip" : spec : r) o
   | [Just lr, Just lt, Just rt] <- map readMaybe (splitOn ',' spec)
-  , Just m <- triangle lr lt rt =
+  , Just m <- triangle 45 lr lt rt =
       parseArgs r o {optModel = m}
   | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
 parseArgs ("--no-status-led" : r) o = parseArgs r o {optSettings = (optSettings o) {statusLed = False}}

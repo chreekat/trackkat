@@ -87,6 +87,18 @@ main = do
                              (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
       Nothing -> check "cold start solved" False
 
+  -- Headset clip, post leaning back: from a cold start the solver should pick
+  -- the right one of the two mirror-image solutions.
+  let headset = maybe (error "bad test triangle") id (triangle 45 120 150 150)
+  forM_ [(0, 0, 0), (12, -8, 0), (-10, 10, 5)] $ \(y, p, r) -> do
+    let truth = Pose (rotYXZ y p r) (V3 20 (-150) 700)
+        img = (project defaultIntrinsics truth (mLeft headset), project defaultIntrinsics truth (mRight headset), project defaultIntrinsics truth (mTop headset))
+    case solvePose defaultIntrinsics headset Nothing img of
+      Just (sol, _) -> let hp = relativePose headset reference sol
+                        in check ("headset cold start " ++ show (y, p, r) ++ " got " ++ show hp)
+                             (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
+      Nothing -> check "headset cold start solved" False
+
   check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
   n <- readIORef failures
