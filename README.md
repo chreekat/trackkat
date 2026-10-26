@@ -45,6 +45,11 @@ second it prints your head pose relative to that position:
 yaw   +3.2  pitch   -1.0  roll   +0.4   x    +2  y    -1  z    +5 mm   distance  812 mm  fit 0.00 px
 ```
 
+Once per setup, calibrate which way is up: type `c`, press Enter, and turn
+your head left and right for five seconds. It prints the camera tilt it
+found. Until then, angles are measured about the camera's own axes, so a
+camera tipped downward mixes some yaw into roll.
+
 The first green light on the camera shows when all three reflectors are being
 tracked.
 
