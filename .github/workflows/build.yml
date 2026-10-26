@@ -29,8 +29,8 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-i686-gcc
 
-      # Games load these, 64- and 32-bit.
-      - name: Build NPClient DLLs
+      # Games load the DLLs, 64- and 32-bit; npgame stands in for a game.
+      - name: Build NPClient DLLs and npgame
         shell: pwsh
         run: |
           $msys = "${{ steps.msys2.outputs.msys2-location }}"
@@ -41,6 +41,9 @@ jobs:
             & gcc @flags -o $t.dll npclient/npclient.c
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          $env:PATH = "$msys\ucrt64\bin;$path"
+          & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:PATH = $path
 
       - uses: haskell-actions/setup@v2
@@ -81,7 +84,7 @@ jobs:
               --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
             Copy-Item $exe dist\
           }
-          Copy-Item NPClient.dll, NPClient64.dll dist\
+          Copy-Item NPClient.dll, NPClient64.dll, npgame.exe dist\
           Copy-Item "$env:USB_PREFIX\bin\libusb-1.0.dll" dist\
           Copy-Item README.md dist\
 

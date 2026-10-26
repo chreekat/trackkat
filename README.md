@@ -59,6 +59,16 @@ trackkat.
 If the camera is unplugged, or the PC sleeps, trackkat waits and picks it up
 again when it comes back.
 
+### When a game doesn't respond
+
+- `npclient.log`, beside the DLLs, records what each game asked NPClient for
+  and what it got.
+- `npgame` loads NPClient like a game does (DCS by default, or
+  `npgame <game id>`), unscrambles and checksums what it gets as a game
+  must, and prints the pose. Run it while trackkat is running.
+- `tools/test-npclient.sh` runs the same check under Wine, with a stand-in
+  for trackkat.
+
 ## Running the probe
 
 Open a terminal in the folder with `tirprobe.exe` and run `tirprobe`. Wear the
