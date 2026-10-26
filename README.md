@@ -83,6 +83,11 @@ again when it comes back.
 - `npgame` loads NPClient like a game does (as DCS, game 1003, by default,
   or `npgame <game id>`), unscrambles and checksums what it gets as a game
   must, and prints the pose. Run it while trackkat is running.
+- `trackdemo` is a quicker test than a real game: a window with a cockpit
+  view that follows your head, plus the pose, status and checksum counts.
+  NPClient starts trackkat if it isn't running; if NPClient can't be found
+  or trackkat isn't tracking, the demo says so and keeps trying. **C** sends
+  a recenter through NPClient, as a game would; **Esc** quits.
 - `tools/test-npclient.sh` runs the same check under Wine, with a stand-in
   for trackkat.
 
