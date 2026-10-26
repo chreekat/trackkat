@@ -4,10 +4,6 @@ Roughly in order.
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
 - Optional slow drift of the centre toward where the head rests.
-- When a game starts trackkat, run it in the system tray rather than a
-  console window.
-- A GUI like TrackIR's: live view of the head pose, binding settings, and
-  statistics on the automatic calibration.
 - Estimate the clip's shape from movement, for clips other than the
   developer's.
 - Find the source of the wiggle after a fast head turn (the view overshoots

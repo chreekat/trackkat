@@ -123,8 +123,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* Start trackkat.exe from this DLL's folder, minimized and without taking
- * focus from the game, unless it is already running. Tried once per process. */
+/* Start trackkat.exe from this DLL's folder, unless it is already running,
+ * telling it a game started it: it then shows only in the system tray, with
+ * no console window to take focus from the game, and quits once games are
+ * done with it. Tried once per process. */
 static void ensure_trackkat(void)
 {
     if (launch_attempted)
@@ -151,13 +153,15 @@ static void ensure_trackkat(void)
     wcscpy(dir, path);
     *slash = L'\\';
 
+    wchar_t command[MAX_PATH + 16];
+    _snwprintf(command, MAX_PATH + 16, L"\"%ls\" --by-game", path);
+    command[MAX_PATH + 15] = 0;
+
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si);
     si.cb = sizeof si;
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_SHOWMINNOACTIVE;
-    if (CreateProcessW(path, NULL, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, dir, &si, &pi)) {
+    if (CreateProcessW(path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, dir, &si, &pi)) {
         np_log("started trackkat.exe");
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);

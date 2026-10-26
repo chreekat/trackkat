@@ -59,6 +59,38 @@ Either can be a joystick or HOTAS button instead, or as well; see
 Recentering while the clip is out of sight centres the view at once; the
 pose you hold when the clip comes back becomes the new centre.
 
+### trackkat's window and tray icon
+
+trackkat shows an icon in the system tray: green while tracking, amber
+while the clip is out of sight, grey while looking for the camera, red
+without one. A white dot means a game is connected; white bars mean paused.
+Click it to open trackkat's window; right-click it to recenter, pause or
+quit.
+
+The window shows your head as games see it, with each axis as your head
+moves it and as games get it after the curves; whether the camera, the clip
+and games are connected; the latency figures; and what has been learnt in
+[calibration](#calibration). It has buttons to recenter, pause and
+calibrate, and edits the [settings](#settings). Its log shows everything
+trackkat prints; **Copy log** copies it, for bug reports. Closing the window
+keeps trackkat running in the tray.
+
+**Started by hand**, trackkat opens its window and keeps its console, where
+Enter recenters, `c` Enter calibrates and Ctrl-C quits. Running it again
+shows the window of the one already running.
+
+**Started by a game**, trackkat shows only its tray icon, with no console.
+Once no game has been tracking for a minute, and its window isn't open, it
+quits by itself, so a game restarted within the minute finds it still
+running. It prints when it starts counting down, and when it quits:
+
+```
+No game or window is using trackkat; quitting in 60 s unless one starts.
+Quitting: no game or window used trackkat for 60 s.
+```
+
+Quitting from the tray menu turns the camera's lights off and lets it go.
+
 ### Calibration
 
 trackkat learns two things from how you move your head, and keeps them in
@@ -77,8 +109,7 @@ left off:
 
 Both keep being refined while you play, with older movement counting less,
 so if you move the camera they follow within a few minutes of looking
-around (if you tip it by more than about 30 degrees, calibrate up again with
-`c`). Changes apply slowly enough not to move the view, and trackkat
+around (if you tip it by more than about 30 degrees, calibrate up again). Changes apply slowly enough not to move the view, and trackkat
 prints a line when one is worth mentioning:
 
 ```
@@ -86,8 +117,9 @@ Level learnt: camera tipped 14.2 degrees down and 1.3 to its right, from 900 deg
 Neck pivot learnt: 95 mm below the clip, 80 behind it and 60 to its right, from 40 head turns.
 ```
 
-To calibrate up at once, type `c` and Enter in trackkat's window, then turn
-your head left and right for five seconds. Delete `trackkat.calibration` to
+To calibrate up at once, click **Calibrate level** in trackkat's window (or
+type `c` and Enter in its console), then turn your head left and right for
+five seconds. Delete `trackkat.calibration` to
 start afresh; it explains its own format.
 
 ### Trying it out: trackdemo
@@ -104,18 +136,23 @@ NPClient, as a game would; **Esc** quits.
 ### Settings
 
 `trackkat.conf`, beside `trackkat.exe`, holds the keys and buttons,
-smoothing and response curves; it explains its own format. Changes apply as soon as you
-save the file, while trackkat runs, so you can tune smoothing and curves
-while you play. If the file has a mistake, trackkat names the
+smoothing and response curves; it explains its own format. Edit it in
+trackkat's window and click **Save**, or in any text editor. Changes apply
+as soon as the file is saved, while trackkat runs, so you can tune smoothing
+and curves while you play. Saving from the window changes only the settings
+you changed there, on their own lines, and keeps the rest of the file,
+comments included. If the file has a mistake, trackkat names the
 line and carries on with the settings it had. If you had trackkat before
 smoothing and curves existed, delete the file and trackkat writes a fresh
 one with the new settings documented.
 
 - `recenter = F12`, `pause = Ctrl+F9`: keys, or joystick buttons such as
   `recenter = Throttle - HOTAS Warthog button 23`. Separate several with
-  commas: `pause = F9, Joystick - HOTAS Warthog button 5`. For a minute after
-  it starts, and for a minute after you type `j` and Enter in its window,
-  trackkat prints each joystick button you press, ready to copy:
+  commas: `pause = F9, Joystick - HOTAS Warthog button 5`. In trackkat's
+  window, **Add key or button…** adds the next key or joystick button you
+  press. For a minute after it starts, and for a minute after you type `j`
+  and Enter in its console, trackkat prints each joystick button you press,
+  ready to copy:
 
   ```
   Joystick button pressed: Throttle - HOTAS Warthog button 23
