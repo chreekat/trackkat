@@ -6,6 +6,9 @@ module TrackKat.USB
   , USBError (..)
   , withContext
   , openFirst
+  , DeviceInfo (..)
+  , listDevices
+  , errorName
   , claim
   , release
   , close
@@ -26,7 +29,7 @@ import Data.Word (Word16, Word8)
 import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CInt (..), CUChar (..), CUInt (..))
 import Foreign.Marshal.Alloc (alloca, allocaBytes)
-import Foreign.Marshal.Array (withArrayLen)
+import Foreign.Marshal.Array (allocaArray, peekArray, withArrayLen)
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (peek)
 
@@ -61,6 +64,8 @@ foreign import ccall unsafe "libusb_error_name"
   c_error_name :: CInt -> IO CString
 foreign import ccall unsafe "hts_open_first"
   c_open_first :: Ptr CContext -> Word16 -> Ptr Word16 -> CInt -> Ptr Word16 -> Ptr (Ptr CHandle) -> IO CInt
+foreign import ccall unsafe "hts_list"
+  c_list :: Ptr CContext -> Ptr Word16 -> Ptr Word16 -> Ptr CInt -> CInt -> IO CInt
 foreign import ccall unsafe "libusb_close"
   c_close :: Ptr CHandle -> IO ()
 foreign import ccall unsafe "libusb_get_configuration"
@@ -82,8 +87,11 @@ check call rc = when (rc < 0) $ throwUSB call rc
 
 throwUSB :: String -> CInt -> IO a
 throwUSB call rc = do
-  name <- c_error_name rc >>= peekCString
+  name <- errorName (fromIntegral rc)
   throwIO (USBError call (fromIntegral rc) name)
+
+errorName :: Int -> IO String
+errorName rc = c_error_name (fromIntegral rc) >>= peekCString
 
 withContext :: (Context -> IO a) -> IO a
 withContext = bracket acquire (\(Context p) -> c_exit p)
@@ -102,6 +110,29 @@ openFirst (Context ctx) vid pids =
         c_open_first ctx vid pidsPtr (fromIntegral n) foundPtr hPtr
           >>= check "open"
         (,) <$> (Handle <$> peek hPtr) <*> peek foundPtr
+
+data DeviceInfo = DeviceInfo
+  { devVendor :: Word16
+  , devProduct :: Word16
+  , devOpenResult :: Int  -- ^ 0 if we could open it, else a libusb error
+  }
+  deriving (Show)
+
+-- | Every attached device, and whether we can open it. For diagnostics.
+listDevices :: Context -> IO [DeviceInfo]
+listDevices (Context ctx) =
+  allocaArray maxDevs $ \vids ->
+    allocaArray maxDevs $ \pids ->
+      allocaArray maxDevs $ \rcs -> do
+        n <- c_list ctx vids pids rcs (fromIntegral maxDevs)
+        check "list devices" n
+        let k = fromIntegral n
+        zipWith3 DeviceInfo
+          <$> peekArray k vids
+          <*> peekArray k pids
+          <*> (map fromIntegral <$> peekArray k rcs)
+  where
+    maxDevs = 256
 
 -- | Select configuration 1 if needed and claim interface 0.
 claim :: Handle -> IO ()
