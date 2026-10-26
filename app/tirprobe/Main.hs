@@ -2,7 +2,7 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO)
-import Control.Exception (catch)
+import Control.Exception (IOException, catch, handle)
 import Control.Monad (forM_, forever, void, when)
 import Data.IORef
 import GHC.Clock (getMonotonicTime)
@@ -127,7 +127,9 @@ run opts cam = do
         when (tracking == was && tracking /= shown && now - since > 0.25) $ do
           setLeds cam tracking False
           writeIORef ledOn tracking
-  void . forkIO . forever $ getLine >> writeIORef recenter True
+  -- Stops quietly when stdin closes (as it does on Ctrl-C).
+  void . forkIO . handle (\e -> const (pure ()) (e :: IOException)) . forever $
+    getLine >> writeIORef recenter True
   let intrinsics = defaultIntrinsics {focal = optFocal opts}
       model = optModel opts
       track stripes = do
@@ -166,7 +168,7 @@ run opts cam = do
                   if optBlobs opts
                     then summary n fps blobs
                     else either lost showPose tracked
-            Corrupt why _ -> putStrLn ("# corrupt packet: " ++ why)
+            Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
             _ -> pure ()
         loop
   loop
