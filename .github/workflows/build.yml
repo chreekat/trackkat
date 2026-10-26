@@ -45,9 +45,12 @@ jobs:
           $env:PATH = "$msys\ucrt64\bin;$path"
           & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c `
-            -lopengl32 -lgdi32 -luser32 -ladvapi32
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Compiler messages become annotations, which show without the log.
+          $out = & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c `
+            -lopengl32 -lgdi32 -luser32 -ladvapi32 2>&1
+          $rc = $LASTEXITCODE
+          $out | ForEach-Object { "::error::$_" }
+          if ($rc -ne 0) { exit $rc }
           $env:PATH = $path
 
       # These match what the runner image has installed, so this is quick.
