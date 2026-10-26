@@ -1,4 +1,5 @@
--- | trackkat's settings file: hotkey bindings, as @name = value@ lines.
+-- | trackkat's settings file, as @name = value@ lines: hotkey bindings,
+-- smoothing and response curves.
 module TrackKat.Config (
     Config (..),
     defaultConfig,
@@ -13,18 +14,40 @@ module TrackKat.Config (
 ) where
 
 import Data.Bits ((.|.))
-import Data.Char (isSpace, toLower)
+import Data.Char (digitToInt, isDigit, isSpace, toLower)
 import Data.List (intercalate, nub)
+import Text.Printf (printf)
+
+import TrackKat.Response
 
 data Config = Config
     { recenterKey :: Binding
     , pauseKey :: Binding
+    , response :: Response
     }
     deriving (Eq, Show)
 
--- | TrackIR's own defaults.
+-- | TrackIR's own keys; a small deadzone then 1:1 on every axis; moderate
+-- smoothing.
 defaultConfig :: Config
-defaultConfig = Config{recenterKey = Binding [] "F12", pauseKey = Binding [] "F9"}
+defaultConfig =
+    Config
+        { recenterKey = Binding [] "F12"
+        , pauseKey = Binding [] "F9"
+        , response =
+            Response
+                { smoothing = Smoothing{minCutoff = 1, beta = 0.05}
+                , yawCurve = rotation
+                , pitchCurve = rotation
+                , rollCurve = rotation
+                , xCurve = translation
+                , yCurve = translation
+                , zCurve = translation
+                }
+        }
+  where
+    rotation = Curve [(0.5, 0), (1.5, 1)]
+    translation = Curve [(1, 0), (2, 1)]
 
 -- | A key, with modifiers held.
 data Binding = Binding [Modifier] String
@@ -40,23 +63,109 @@ parseConfig = foldl line (Right defaultConfig) . zip [1 :: Int ..] . lines
   where
     line acc (n, l) =
         acc >>= \c -> case break (== '=') (takeWhile (/= '#') l) of
-            (name, '=' : value) -> case (trim name, parseBinding (trim value)) of
-                ("recenter", Right b) -> Right c{recenterKey = b}
-                ("pause", Right b) -> Right c{pauseKey = b}
-                (k, Left err) | k `elem` ["recenter", "pause"] -> Left (where_ n ++ err)
-                (k, _) -> Left (where_ n ++ "unknown setting " ++ show k)
+            (name, '=' : value) -> either (Left . (where_ n ++)) Right (setting c (trim name) (trim value))
             (blank, _)
                 | all isSpace blank -> Right c
                 | otherwise -> Left (where_ n ++ "expected name = value")
     where_ n = "line " ++ show n ++ ": "
+    setting c name value =
+        let r = response c
+            curve f = (\cv -> c{response = f cv r}) <$> parseCurve value
+         in case name of
+                "recenter" -> (\b -> c{recenterKey = b}) <$> parseBinding value
+                "pause" -> (\b -> c{pauseKey = b}) <$> parseBinding value
+                "smoothing" -> (\sm -> c{response = r{smoothing = sm}}) <$> parseSmoothing value
+                "yaw" -> curve (\cv x -> x{yawCurve = cv})
+                "pitch" -> curve (\cv x -> x{pitchCurve = cv})
+                "roll" -> curve (\cv x -> x{rollCurve = cv})
+                "x" -> curve (\cv x -> x{xCurve = cv})
+                "y" -> curve (\cv x -> x{yCurve = cv})
+                "z" -> curve (\cv x -> x{zCurve = cv})
+                _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
 renderConfig c =
     unlines
-        [ "# trackkat settings. Keys are like F12, Ctrl+F9, Alt+Shift+P, NumPad5."
+        [ "# trackkat settings."
+        , "#"
+        , "# Keys are like F12, Ctrl+F9, Alt+Shift+P, NumPad5."
         , "recenter = " ++ renderBinding (recenterKey c)
         , "pause = " ++ renderBinding (pauseKey c)
+        , ""
+        , "# Smoothing: cutoff in Hz (lower is steadier when still) and"
+        , "# responsiveness (higher lags less when moving), or \"off\"."
+        , "smoothing = " ++ renderSmoothing (smoothing r)
+        , ""
+        , "# Response curves, as input:output points: degrees for yaw, pitch and"
+        , "# roll, mm for x, y and z. Straight lines join the points, starting"
+        , "# from 0:0, and carry on past the last one. The same both sides of"
+        , "# centre. For example, a deadzone then 1:1 is 0.5:0 1.5:1, and"
+        , "# 10:10 45:120 looks well behind you when you turn your head 45 degrees."
+        , "yaw = " ++ renderCurve (yawCurve r)
+        , "pitch = " ++ renderCurve (pitchCurve r)
+        , "roll = " ++ renderCurve (rollCurve r)
+        , "x = " ++ renderCurve (xCurve r)
+        , "y = " ++ renderCurve (yCurve r)
+        , "z = " ++ renderCurve (zCurve r)
         ]
+  where
+    r = response c
+
+-- | Read curve points like @0.5:0 1.5:1@, inputs increasing from zero.
+parseCurve :: String -> Either String Curve
+parseCurve value = do
+    points <- traverse point (words value)
+    let inputs = map fst points
+    if null points
+        then Left "a curve needs at least one input:output point"
+        else
+            if or (zipWith (>=) (0 : inputs) inputs) || any ((< 0) . fst) points
+                then Left "curve inputs must be positive and increasing"
+                else Right (Curve points)
+  where
+    point w = case break (== ':') w of
+        (i, ':' : o) | Just a <- parseNumber i, Just b <- parseNumber o -> Right (a, b)
+        _ -> Left ("expected input:output, not " ++ show w)
+
+renderCurve :: Curve -> String
+renderCurve (Curve points) = unwords [renderNumber a ++ ":" ++ renderNumber b | (a, b) <- points]
+
+parseSmoothing :: String -> Either String Smoothing
+parseSmoothing value = case words value of
+    ["off"] -> Right NoSmoothing
+    [a, b]
+        | Just mc <- parseNumber a
+        , Just be <- parseNumber b
+        , mc > 0
+        , be >= 0 ->
+            Right (Smoothing mc be)
+    _ -> Left "smoothing wants a cutoff in Hz and a responsiveness, like 1 0.05, or off"
+
+renderSmoothing :: Smoothing -> String
+renderSmoothing NoSmoothing = "off"
+renderSmoothing (Smoothing mc be) = renderNumber mc ++ " " ++ renderNumber be
+
+-- | A decimal number such as @-12@, @0.5@ or @.25@.
+parseNumber :: String -> Maybe Double
+parseNumber ('-' : rest) = negate <$> parseNumber rest
+parseNumber str = case break (== '.') str of
+    (whole, frac)
+        | all isDigit whole
+        , fracDigits <- drop 1 frac
+        , all isDigit fracDigits
+        , not (null whole && null fracDigits)
+        , frac == "" || not (null fracDigits) ->
+            Just (digits whole + digits fracDigits / 10 ^^ length fracDigits)
+    _ -> Nothing
+  where
+    digits = foldl (\acc d -> acc * 10 + fromIntegral (digitToInt d)) 0
+
+-- | A number with no more decimals than it needs, up to four.
+renderNumber :: Double -> String
+renderNumber x =
+    let fixed = printf "%.4f" x :: String
+        trimmed = reverse (dropWhile (== '0') (reverse fixed))
+     in if last trimmed == '.' then init trimmed else trimmed
 
 -- | Read a binding such as @Ctrl+Shift+F12@: modifiers, then one key.
 parseBinding :: String -> Either String Binding

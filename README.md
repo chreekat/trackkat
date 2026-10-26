@@ -53,8 +53,25 @@ Keys work from anywhere, including inside games:
 - **F12** recenters. A game's own "recenter TrackIR" binding does too.
 - **F9** pauses: games see your head held still until you press it again.
 
-Change them in `trackkat.conf`, e.g. `pause = Ctrl+F9`, then restart
-trackkat.
+Recentering while the clip is out of sight centres the view at once; the
+pose you hold when the clip comes back becomes the new centre.
+
+### Settings
+
+`trackkat.conf`, beside `trackkat.exe`, holds the keys, smoothing and
+response curves; it explains its own format. Restart trackkat after editing
+it. If you had trackkat before smoothing and curves existed, delete the file
+and trackkat writes a fresh one with the new settings documented.
+
+- `recenter = F12`, `pause = Ctrl+F9`: keys.
+- `smoothing = 1 0.05`: how steady the view is when your head is still (the
+  first number; lower is steadier) and how little it lags when you move (the
+  second; higher lags less). `smoothing = off` turns it off.
+- `yaw = 0.5:0 1.5:1`, and likewise `pitch`, `roll`, `x`, `y`, `z`: response
+  curves as input:output points, in degrees or mm. For example
+  `yaw = 10:10 45:120` turns your view 120 degrees when you turn your head 45.
+
+Single-frame jumps no head could make are ignored.
 
 If the camera is unplugged, or the PC sleeps, trackkat waits and picks it up
 again when it comes back.

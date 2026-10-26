@@ -22,6 +22,7 @@ import TrackKat.Config
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
 import TrackKat.Pose
+import TrackKat.Response
 import TrackKat.Stats
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
@@ -52,7 +53,7 @@ main = do
         "Recenter: %s   Pause: %s   (Enter also recenters, c Enter calibrates level)\n"
         (renderBinding (recenterKey config))
         (renderBinding (pauseKey config))
-    session <- newSession
+    session <- newSession (response config)
     withAsync (console session) $ \_ -> forever $ do
         (USB.withContext $ \ctx -> withCamera ctx (putStrLn . ("# " ++)) defaultSettings (track session))
             `catches` [ Handler $ \e -> putStrLn (explain e)
@@ -85,21 +86,41 @@ explain (WrongDriver err) = "The TrackIR isn't using the WinUSB driver (" ++ err
 explain InUse = "The TrackIR is in use by another program, perhaps NaturalPoint's software."
 explain (OpenFailed e) = "USB error: " ++ show e
 
+-- | Whether the last frame showed the clip.
+data Clip = ClipSeen | ClipLost
+
 -- | State that outlives any one connection to the camera.
 data Session = Session
     { sTracker :: IORef Tracker
+    , sResponse :: Response
+    , sShaper :: IORef Shaper
+    , sClip :: IORef Clip
     , sPaused :: IORef (Maybe GamePose)
     -- ^ the pose games see while paused
     , sLatest :: IORef GamePose
     -- ^ the last pose sent
     }
 
-newSession :: IO Session
-newSession =
+newSession :: Response -> IO Session
+newSession r =
     Session
         <$> newIORef (newTracker defaultIntrinsics defaultClip)
+        <*> pure r
+        <*> newIORef newShaper
+        <*> newIORef ClipLost
         <*> newIORef Nothing
         <*> newIORef still
+
+-- | Recenter on the next frame that shows the clip. If the clip is out of
+-- sight, games see the view centred straight away.
+recenter :: Session -> IO ()
+recenter s = do
+    modifyIORef' (sTracker s) (request Recenter)
+    readIORef (sClip s) >>= \case
+        ClipSeen -> pure ()
+        ClipLost -> do
+            writeIORef (sShaper s) newShaper
+            writeIORef (sLatest s) still
 
 console :: Session -> IO ()
 console s = do
@@ -107,7 +128,7 @@ console s = do
     unless eof $ do
         line <- getLine
         case line of
-            "" -> modifyIORef' (sTracker s) (request Recenter)
+            "" -> recenter s
             "c" -> modifyIORef' (sTracker s) (request Calibrate)
             _ -> putStrLn "Enter recenters; c Enter calibrates level"
         console s
@@ -132,9 +153,15 @@ track s cam = do
                 (outcome, events) <- atomicModifyIORef' (sTracker s) $ \t ->
                     let (t', o, evs) = step now stripes t in (t', (o, evs))
                 mapM_ (putStrLn . describeEvent) events
+                -- A new centre or level is a jump the shaper must not smooth.
+                when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
                 case outcome of
-                    Tracked hp _ _ -> writeIORef (sLatest s) (toGamePose hp)
-                    Lost _ -> pure ()
+                    Tracked hp _ _ -> do
+                        writeIORef (sClip s) ClipSeen
+                        shaped <- atomicModifyIORef' (sShaper s) $ \sh ->
+                            let (p, sh') = shape (sResponse s) now hp sh in (sh', p)
+                        writeIORef (sLatest s) (toGamePose shaped)
+                    Lost _ -> writeIORef (sClip s) ClipLost
                 paused <- readIORef (sPaused s)
                 publish =<< maybe (readIORef (sLatest s)) pure paused
                 published <- getMonotonicTime
@@ -184,8 +211,7 @@ handleControls s seenRecenters = do
     keys <- takeHotkeys
     fromGames <- recenterCount
     before <- atomicModifyIORef' seenRecenters (\b -> (fromGames, b))
-    when (RecenterKey `elem` keys || fromGames /= before) $
-        modifyIORef' (sTracker s) (request Recenter)
+    when (RecenterKey `elem` keys || fromGames /= before) $ recenter s
     when (PauseKey `elem` keys) $ do
         paused <- readIORef (sPaused s)
         case paused of
@@ -193,6 +219,11 @@ handleControls s seenRecenters = do
             Nothing -> do
                 writeIORef (sPaused s) . Just =<< readIORef (sLatest s)
                 putStrLn "Paused: games see your head held still."
+
+resetsShaping :: Event -> Bool
+resetsShaping Recentered = True
+resetsShaping (Calibrated _) = True
+resetsShaping _ = False
 
 describeEvent :: Event -> String
 describeEvent Recentered = "Recentered."
