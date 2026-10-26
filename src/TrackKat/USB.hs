@@ -14,6 +14,9 @@ module TrackKat.USB (
     close,
     bulkWrite,
     bulkRead,
+    Stream,
+    withStream,
+    pump,
     errNotFound,
     errNotSupported,
     errAccess,
@@ -30,11 +33,12 @@ import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CInt (..), CUChar (..), CUInt (..))
 import Foreign.Marshal.Alloc (alloca, allocaBytes)
 import Foreign.Marshal.Array (allocaArray, peekArray, withArrayLen)
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 
 data CContext
 data CHandle
+data CStream
 
 newtype Context = Context (Ptr CContext)
 newtype Handle = Handle (Ptr CHandle)
@@ -78,6 +82,13 @@ foreign import ccall unsafe "libusb_claim_interface"
     c_claim_interface :: Ptr CHandle -> CInt -> IO CInt
 foreign import ccall unsafe "libusb_release_interface"
     c_release_interface :: Ptr CHandle -> CInt -> IO CInt
+
+foreign import ccall unsafe "hts_stream_open"
+    c_stream_open :: Ptr CContext -> Ptr CHandle -> CUChar -> CInt -> CInt -> Ptr CInt -> IO (Ptr CStream)
+foreign import ccall safe "hts_stream_close"
+    c_stream_close :: Ptr CStream -> IO ()
+foreign import ccall safe "hts_stream_pump"
+    c_stream_pump :: Ptr CStream -> CInt -> Ptr Word8 -> CInt -> IO CInt
 
 -- Blocks for up to the timeout, so it must be a safe call.
 foreign import ccall safe "libusb_bulk_transfer"
@@ -168,3 +179,27 @@ bulkRead (Handle h) ep size timeoutMs =
             unless (rc == 0 || fromIntegral rc == errTimeout) $ throwUSB "bulk read" rc
             n <- peek transferred
             B.packCStringLen (castPtr buf, fromIntegral n)
+
+-- | Reads from an endpoint that stay queued with the device.
+newtype Stream = Stream (Ptr CStream)
+
+-- | Keep @n@ reads of @size@ bytes queued on an endpoint for the duration of
+-- the action. Use the stream from one thread only.
+withStream :: Context -> Handle -> Word8 -> Int -> Int -> (Stream -> IO a) -> IO a
+withStream (Context ctx) (Handle h) ep n size = bracket open (\(Stream s) -> c_stream_close s)
+  where
+    open = alloca $ \rc -> do
+        s <- c_stream_open ctx h (fromIntegral ep) (fromIntegral n) (fromIntegral size) rc
+        when (s == nullPtr) $ peek rc >>= throwUSB "stream open"
+        pure (Stream s)
+
+-- | Wait up to the timeout in milliseconds for data, and return what has
+-- arrived, possibly nothing.
+pump :: Stream -> Int -> IO B.ByteString
+pump (Stream s) timeoutMs =
+    allocaBytes cap $ \buf -> do
+        n <- c_stream_pump s (fromIntegral timeoutMs) buf (fromIntegral cap)
+        when (n < 0) $ throwUSB "stream read" n
+        B.packCStringLen (castPtr buf, fromIntegral n)
+  where
+    cap = 65536

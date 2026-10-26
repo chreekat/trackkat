@@ -60,7 +60,8 @@ defaultSettings :: Settings
 defaultSettings = Settings{threshold = 140, irBrightness = 7, statusLed = True}
 
 data Camera = Camera
-    { camHandle :: USB.Handle
+    { camContext :: USB.Context
+    , camHandle :: USB.Handle
     , camSeed :: IORef Seed
     , camLog :: Log
     , camLedsEnabled :: Bool
@@ -83,7 +84,7 @@ withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
 withCamera ctx logger settings act = do
     (h, _) <- openOrExplain
     seed <- newIORef . newSeed =<< getMonotonicTimeNSec
-    let cam = Camera h seed logger (statusLed settings)
+    let cam = Camera ctx h seed logger (statusLed settings)
     (`finally` USB.close h) $ do
         explainClaim (USB.claim h)
         bracket_ (initialise cam settings >> start cam settings) (shutdown cam) (act cam)
@@ -118,14 +119,15 @@ withCamera ctx logger settings act = do
 -- until a USB transfer arrives (or a second passes) and returns the packets
 -- it completes.
 --
--- A separate thread does nothing but read, so that a read is always waiting
--- however long the action spends on each packet: the camera drops data when
--- its own buffer fills.
+-- The camera drops data when its own buffer fills, so several reads stay
+-- queued with it, kept going by a thread that does nothing else.
 withPackets :: Camera -> (IO [Packet] -> IO a) -> IO a
 withPackets cam act = do
     chunks <- newChan
     pending <- newIORef B.empty
-    let reader = forever (USB.bulkRead (camHandle cam) inEp 16384 1000 >>= writeChan chunks)
+    let reader =
+            USB.withStream (camContext cam) (camHandle cam) inEp 8 16384 $ \stream ->
+                forever (USB.pump stream 1000 >>= writeChan chunks)
         next = do
             chunk <- readChan chunks
             atomicModifyIORef' pending $ \p ->
