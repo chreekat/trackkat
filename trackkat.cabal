@@ -43,7 +43,7 @@ executable tirprobe
   import:           shared
   hs-source-dirs:   app/tirprobe
   main-is:          Main.hs
-  ghc-options:      -threaded
+  ghc-options:      -threaded -rtsopts
   build-depends:
     , async
     , base
@@ -53,7 +53,7 @@ executable trackkat
   import:           shared
   hs-source-dirs:   app/trackkat
   main-is:          Main.hs
-  ghc-options:      -threaded
+  ghc-options:      -threaded -rtsopts
   build-depends:
     , async
     , base
