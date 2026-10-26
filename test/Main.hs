@@ -13,6 +13,7 @@ import TrackKat.GamePose
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
+import TrackKat.Stats
 import TrackKat.Tracker
 
 main :: IO ()
@@ -197,6 +198,12 @@ main = do
     check "game pose signs" $
         toGamePose (HeadPose{yaw = 90, pitch = 90, roll = 90, tx = 1, ty = 2, tz = 3})
             == GamePose (realToFrac (-pi / 2 :: Double)) (realToFrac (pi / 2 :: Double)) (realToFrac (pi / 2 :: Double)) 1 (-2) 3
+
+    -- Performance window: means, maxima and the summary line.
+    let w = sawGCs 2 0.00015 (sawCorrupt (sawFrame 0.0002 0.009 (sawFrame 0.0004 0.008 emptyWindow)))
+    check ("stats summary: " ++ summary w) $
+        summary w == "latency 0.30 ms (max 0.40)  gap max 9 ms  GC 2 (max 0.15 ms)  corrupt 1"
+    check "empty stats" $ summary emptyWindow == "latency 0.00 ms (max 0.00)  gap max 0 ms  GC 0 (max 0.00 ms)"
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 

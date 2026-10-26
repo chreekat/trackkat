@@ -145,7 +145,7 @@ run opts cam = do
             mapM_ (putStrLn . describeEvent) events
             pure outcome
     let loop next = do
-            pkts <- next
+            (_, pkts) <- next
             forM_ pkts $ \p -> do
                 when (optRaw opts) $ putStrLn ("raw " ++ describeRaw p)
                 case p of
