@@ -4,6 +4,7 @@ module TrackKat.Windows (
     publish,
     recenterCount,
     gameReads,
+    gamesTracking,
     singleInstance,
     setNPClientPath,
     Hotkey (..),
@@ -22,6 +23,7 @@ foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
 foreign import ccall unsafe "hts_publish" c_publish :: CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_recenter_count" c_recenter_count :: IO CLong
 foreign import ccall unsafe "hts_game_reads" c_game_reads :: IO CLong
+foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
 foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
 foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: CUInt -> CUInt -> CUInt -> CUInt -> IO CInt
@@ -42,6 +44,10 @@ recenterCount = fromIntegral <$> c_recenter_count
 -- | Poses games have read so far.
 gameReads :: IO Int
 gameReads = fromIntegral <$> c_game_reads
+
+-- | Games that have started head tracking and are still running.
+gamesTracking :: IO Int
+gamesTracking = fromIntegral <$> c_games_tracking
 
 -- | Claim the right to be the one running trackkat; False if another is.
 singleInstance :: IO Bool

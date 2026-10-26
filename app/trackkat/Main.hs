@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | trackkat: track the head and serve the pose to games.
 module Main (main) where
@@ -138,8 +139,7 @@ track :: Session -> Camera -> IO ()
 track s cam = do
     putStrLn "Tracking."
     seenRecenters <- newIORef =<< recenterCount
-    seenReads <- newIORef =<< gameReads
-    lastRead <- newIORef 0
+    games <- newIORef (0, 0)
     lastStatus <- newIORef 0
     lastArrival <- newIORef Nothing
     window <- newIORef emptyWindow
@@ -169,11 +169,11 @@ track s cam = do
                 modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
                 noteGCs gcsSeen window
 
-                readsNow <- gameReads
-                before <- atomicModifyIORef' seenReads (\b -> (readsNow, b))
-                when (readsNow /= before) $ writeIORef lastRead now
-                lastGame <- readIORef lastRead
-                let gameConnected = now - lastGame < 1
+                -- Checking game processes is a few system calls; twice a
+                -- second is plenty.
+                (checked, _) <- readIORef games
+                when (now - checked >= 0.5) $ writeIORef games . (now,) =<< gamesTracking
+                gameConnected <- (> 0) . snd <$> readIORef games
                 lights (case outcome of Tracked{} -> On; Lost _ -> Off) (if gameConnected then On else Off)
 
                 shown <- readIORef lastStatus

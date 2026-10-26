@@ -26,4 +26,5 @@ cat fakepose.out
 grep -q 'status 0 frame 1 checksum ok .*pitch  +10.00 roll   -5.00 deg  x  +12.0 y  -34.0 z  +56.0 mm' npgame.out
 grep -q '^0 bad checksums' npgame.out
 grep -q 'asked to recenter 1 times' fakepose.out
+grep -q 'at most 1 games tracking, 0 at the end' fakepose.out
 echo "NPClient OK"
