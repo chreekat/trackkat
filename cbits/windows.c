@@ -209,9 +209,11 @@ void hts_bindings_apply(void)
     ReleaseSRWLockExclusive(&bindings_lock);
 }
 
-static UINT modifiers_held(void)
+/* The modifiers held now, as RegisterHotKey's flags. Also used by the
+ * window's key boxes (cbits/gui.c). */
+unsigned hts_modifiers_held(void)
 {
-    UINT m = 0;
+    unsigned m = 0;
     if (GetAsyncKeyState(VK_MENU) & 0x8000)
         m |= HK_ALT;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
@@ -229,7 +231,7 @@ static LRESULT CALLBACK keyboard_hook(int code, WPARAM wparam, LPARAM lparam)
         const KBDLLHOOKSTRUCT *k = (const KBDLLHOOKSTRUCT *)lparam;
         if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
             if (k->vkCode != held_vk) {
-                LONG pressed = (LONG)(modifiers_held() << 16 | k->vkCode);
+                LONG pressed = (LONG)(hts_modifiers_held() << 16 | k->vkCode);
                 LONG hit = 0;
                 AcquireSRWLockShared(&bindings_lock);
                 for (int i = 0; i < binding_count; i++)
