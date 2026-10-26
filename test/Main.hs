@@ -7,7 +7,9 @@ import Data.IORef
 import Data.Maybe (isNothing)
 import System.Exit (exitFailure)
 
+import TrackKat.Config
 import TrackKat.Frame
+import TrackKat.GamePose
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
@@ -180,6 +182,21 @@ main = do
     check ("pending recenter waits for tracking: " ++ show (laterOut, laterEvents)) $ case (laterOut, laterEvents) of
         (Tracked hp _ _, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
+
+    -- Settings and key bindings.
+    check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
+    check "bindings" $
+        parseConfig "# comment\nrecenter = ctrl + shift+f12\n\npause=Pause # TrackIR style\n"
+            == Right Config{recenterKey = Binding [Ctrl, Shift] "F12", pauseKey = Binding [] "Pause"}
+    check "binding codes" $
+        fmap (\b -> (modifierMask b, virtualKey b, renderBinding b)) (parseBinding "Alt+Ctrl+NumPad5") == Right (3, 0x65, "Ctrl+Alt+NumPad5")
+    check "unknown key reported" $ parseConfig "recenter = F99\n" == Left "line 1: unknown key \"F99\""
+    check "unknown setting reported" $ parseConfig "\nfoo = F1\n" == Left "line 2: unknown setting \"foo\""
+
+    -- Game conventions: yaw and roll positive to the left, pitch positive up.
+    check "game pose signs" $
+        toGamePose (HeadPose{yaw = 90, pitch = 90, roll = 90, tx = 1, ty = 2, tz = 3})
+            == GamePose (realToFrac (-pi / 2 :: Double)) (realToFrac (-pi / 2 :: Double)) (realToFrac (pi / 2 :: Double)) (-1) (-2) 3
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
