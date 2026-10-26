@@ -5,6 +5,7 @@ module TrackKat.Config (
     defaultConfig,
     parseConfig,
     renderConfig,
+    describeChanges,
     Binding (..),
     Modifier (..),
     parseBinding,
@@ -148,6 +149,23 @@ renderConfig c =
   where
     r = response c
     Knobs on s rs = smoothingKnobs (smoothing r)
+
+-- | A line for the console saying which settings differ in the new config.
+describeChanges :: Config -> Config -> String
+describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup n (settings old) /= Just v] of
+    [] -> "Settings reloaded."
+    changes -> "Settings reloaded: " ++ intercalate ", " changes
+  where
+    settings c =
+        let r = response c
+         in [("recenter", renderBinding (recenterKey c)), ("pause", renderBinding (pauseKey c))]
+                ++ ( case smoothingKnobs (smoothing r) of
+                        Knobs False _ _ -> [("smoothing", "off")]
+                        Knobs True s rs -> [("smoothing", "on"), ("steadiness", renderNumber s), ("responsiveness", renderNumber rs)]
+                   )
+                ++ [ (name, renderCurve (f r))
+                   | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
+                   ]
 
 -- | Read curve points like @0.5:0 1.5:1@, inputs increasing from zero.
 parseCurve :: String -> Either String Curve

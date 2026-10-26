@@ -61,6 +61,7 @@ executable trackkat
     , base
     , directory
     , filepath
+    , time
     , trackkat
 
   if !os(windows)

@@ -59,9 +59,12 @@ pose you hold when the clip comes back becomes the new centre.
 ### Settings
 
 `trackkat.conf`, beside `trackkat.exe`, holds the keys, smoothing and
-response curves; it explains its own format. Restart trackkat after editing
-it. If you had trackkat before smoothing and curves existed, delete the file
-and trackkat writes a fresh one with the new settings documented.
+response curves; it explains its own format. Changes apply as soon as you
+save the file, while trackkat runs, so you can tune smoothing and curves
+while you play. If the file has a mistake, trackkat names the
+line and carries on with the settings it had. If you had trackkat before
+smoothing and curves existed, delete the file and trackkat writes a fresh
+one with the new settings documented.
 
 - `recenter = F12`, `pause = Ctrl+F9`: keys.
 - `steadiness = 65`, from 0 to 100: how still the view stays while your
