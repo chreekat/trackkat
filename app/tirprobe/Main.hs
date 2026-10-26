@@ -129,8 +129,12 @@ data Request = Recenter | Calibrate
 calibrationSeconds :: Double
 calibrationSeconds = 5
 
+-- | Where details of dropped packets go, rather than slowing the console.
+logFile :: FilePath
+logFile = "tirprobe.log"
+
 run :: Options -> Camera -> IO ()
-run opts cam = do
+run opts cam = withFile logFile AppendMode $ \logH -> do
     putStrLn "# tracking; Enter recenters, c Enter calibrates level, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
@@ -196,8 +200,8 @@ run opts cam = do
                                         printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right\n" down right
                     lvl <- readIORef level
                     pure (Right (relativePose model lvl ref pose, norm (poseT pose), err))
-        loop = do
-            pkts <- readPackets cam
+        loop next = do
+            pkts <- next
             forM_ pkts $ \p -> do
                 when (optRaw opts) $ putStrLn ("raw " ++ describeRaw p)
                 case p of
@@ -217,10 +221,12 @@ run opts cam = do
                                 if optBlobs opts
                                     then summary n fps blobs
                                     else either lost showPose tracked
-                    Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
+                    Corrupt why bytes -> do
+                        putStrLn ("# dropped a corrupt packet (" ++ why ++ "), bytes in " ++ logFile)
+                        hPutStrLn logH ("corrupt (" ++ why ++ "): " ++ hex bytes) >> hFlush logH
                     _ -> pure ()
-            loop
-    withAsync console (const loop)
+            loop next
+    withAsync console $ \_ -> withPackets cam loop
 
 lost :: Int -> String
 lost n = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"

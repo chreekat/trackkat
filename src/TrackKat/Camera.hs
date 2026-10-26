@@ -13,15 +13,17 @@ module TrackKat.Camera (
     vendorId,
     productIdV3,
     withCamera,
-    readPackets,
+    withPackets,
     setLeds,
     Log,
     hex,
 ) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (link, withAsync)
+import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Exception (Exception, bracket_, finally, throwIO, try)
-import Control.Monad (replicateM_, void)
+import Control.Monad (forever, replicateM_, void)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString as B
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -60,8 +62,6 @@ data Camera = Camera
     , camSeed :: IORef Seed
     , camLog :: Log
     , camLedsEnabled :: Bool
-    , camPending :: IORef B.ByteString
-    -- ^ start of a packet that a transfer cut off
     }
 
 data OpenError
@@ -81,8 +81,7 @@ withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
 withCamera ctx logger settings act = do
     (h, _) <- openOrExplain
     seed <- newIORef . newSeed =<< getMonotonicTimeNSec
-    pending <- newIORef B.empty
-    let cam = Camera h seed logger (statusLed settings) pending
+    let cam = Camera h seed logger (statusLed settings)
     (`finally` USB.close h) $ do
         explainClaim (USB.claim h)
         bracket_ (initialise cam settings >> start cam settings) (shutdown cam) (act cam)
@@ -113,13 +112,23 @@ withCamera ctx logger settings act = do
                 | USB.usbCode e == USB.errNotSupported -> throwIO (WrongDriver (USB.usbName e))
                 | otherwise -> throwIO (OpenFailed e)
 
--- | Wait for the next USB transfer (up to 1 s) and return the packets it
--- completes.
-readPackets :: Camera -> IO [Packet]
-readPackets cam = do
-    chunk <- USB.bulkRead (camHandle cam) inEp 16384 1000
-    atomicModifyIORef' (camPending cam) $ \pending ->
-        let (packets, rest) = parseStream (pending <> chunk) in (rest, packets)
+-- | Run the action with a source of the camera's packets. The source blocks
+-- until a USB transfer arrives (or a second passes) and returns the packets
+-- it completes.
+--
+-- A separate thread does nothing but read, so that a read is always waiting
+-- however long the action spends on each packet: the camera drops data when
+-- its own buffer fills.
+withPackets :: Camera -> (IO [Packet] -> IO a) -> IO a
+withPackets cam act = do
+    chunks <- newChan
+    pending <- newIORef B.empty
+    let reader = forever (USB.bulkRead (camHandle cam) inEp 16384 1000 >>= writeChan chunks)
+        next = do
+            chunk <- readChan chunks
+            atomicModifyIORef' pending $ \p ->
+                let (packets, rest) = parseStream (p <> chunk) in (rest, packets)
+    withAsync reader $ \r -> link r >> act next
 
 send :: Camera -> Command -> IO ()
 send cam cmd = do
