@@ -59,7 +59,7 @@ data Camera = Camera
 
 data OpenError
   = NoCamera
-  | WrongDriver   -- ^ present, but not bound to WinUSB
+  | WrongDriver String  -- ^ present, but not bound to WinUSB (libusb's error)
   | InUse         -- ^ another program has it open
   | OpenFailed USB.USBError
   deriving (Show)
@@ -82,18 +82,25 @@ withCamera ctx logger settings act = do
       r <- try (USB.openFirst ctx vendorId [productIdV3])
       case r of
         Right x -> pure x
-        Left e
-          | USB.usbCode e == USB.errNotFound -> throwIO NoCamera
-          | USB.usbCode e == USB.errNotSupported -> throwIO WrongDriver
-          | USB.usbCode e == USB.errAccess -> throwIO InUse
-          | otherwise -> throwIO (OpenFailed e)
+        Left e -> do
+          -- libusb's open can fail with NOT_FOUND even when the device is
+          -- attached (on Windows, depending on the state of the vendor
+          -- driver), so check whether it is really there.
+          attached <- any isCamera <$> USB.listDevices ctx
+          throwIO $ case () of
+            _
+              | not attached -> NoCamera
+              | USB.usbCode e `elem` [USB.errNotFound, USB.errNotSupported] -> WrongDriver (USB.usbName e)
+              | USB.usbCode e == USB.errAccess -> InUse
+              | otherwise -> OpenFailed e
+    isCamera d = USB.devVendor d == vendorId && USB.devProduct d == productIdV3
     explainClaim io = do
       r <- try io
       case r of
         Right () -> pure ()
         Left e
           | USB.usbCode e `elem` [USB.errBusy, USB.errAccess] -> throwIO InUse
-          | USB.usbCode e == USB.errNotSupported -> throwIO WrongDriver
+          | USB.usbCode e == USB.errNotSupported -> throwIO (WrongDriver (USB.usbName e))
           | otherwise -> throwIO (OpenFailed e)
 
 -- | Wait for the next USB transfer (up to 1 s) and decode it.
