@@ -39,9 +39,13 @@ typedef struct FTHeap {
     int32_t GameID2;
 } FTHeap;
 
+#define TRACKKAT_MAX_GAMES 8
+
 typedef struct TrackKatControl {
     volatile long recenter_requests; /* bumped by the DLL on NP_ReCenter */
     volatile long game_reads;        /* bumped by the DLL on NP_GetData */
+    /* Process IDs of games that have started head tracking, 0 in free slots. */
+    volatile long games[TRACKKAT_MAX_GAMES];
 } TrackKatControl;
 
 #endif

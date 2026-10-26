@@ -79,6 +79,28 @@ long hts_game_reads(void)
     return InterlockedCompareExchange(&control->game_reads, 0, 0);
 }
 
+/* How many games have started head tracking and are still running. Slots
+ * of games that have exited, perhaps by crashing, are freed. */
+int hts_games_tracking(void)
+{
+    int n = 0;
+    for (int i = 0; i < TRACKKAT_MAX_GAMES; i++) {
+        long pid = InterlockedCompareExchange(&control->games[i], 0, 0);
+        if (pid == 0)
+            continue;
+        DWORD code = 0;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+        int alive = p && GetExitCodeProcess(p, &code) && code == STILL_ACTIVE;
+        if (p)
+            CloseHandle(p);
+        if (alive)
+            n++;
+        else
+            InterlockedCompareExchange(&control->games[i], 0, pid);
+    }
+    return n;
+}
+
 /* ---- Single instance ---------------------------------------------------- */
 
 /* Nonzero if this process now holds the trackkat instance mutex, which our

@@ -97,6 +97,8 @@ static void open_log(void)
     np_log("loaded (%d-bit) into %s", (int)sizeof(void *) * 8, exe);
 }
 
+static void unregister_game(void);
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     (void)reserved;
@@ -106,6 +108,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         open_log();
     } else if (reason == DLL_PROCESS_DETACH) {
         np_log("unloaded");
+        unregister_game();
         if (log_file != INVALID_HANDLE_VALUE)
             CloseHandle(log_file);
         if (heap)
@@ -161,6 +164,32 @@ static void ensure_trackkat(void)
     } else {
         np_log("could not start trackkat.exe (error %lu)", GetLastError());
     }
+}
+
+static bool registered;
+
+/* Record this process among the games tracking, for trackkat to watch. */
+static void register_game(void)
+{
+    if (registered || !control)
+        return;
+    long pid = (long)GetCurrentProcessId();
+    for (int i = 0; i < TRACKKAT_MAX_GAMES; i++)
+        if (InterlockedCompareExchange(&control->games[i], pid, 0) == 0) {
+            registered = true;
+            return;
+        }
+    LOG_FIRST(1, "no free slot to register this game in");
+}
+
+static void unregister_game(void)
+{
+    if (!registered || !control)
+        return;
+    long pid = (long)GetCurrentProcessId();
+    for (int i = 0; i < TRACKKAT_MAX_GAMES; i++)
+        InterlockedCompareExchange(&control->games[i], 0, pid);
+    registered = false;
 }
 
 static bool map_shared(void)
@@ -274,6 +303,7 @@ NP_EXPORT(int) NP_GetData(tir_data_t *data)
     ensure_trackkat();
     if (map_shared()) {
         InterlockedIncrement(&control->game_reads);
+        register_game();
 
         unsigned id = heap->data.DataID;
         ULONGLONG now = GetTickCount64();
@@ -398,8 +428,19 @@ NP_EXPORT(int) NP_UnregisterWindowHandle(void) { LOG_FIRST(5, "NP_UnregisterWind
 NP_EXPORT(int) NP_RequestData(unsigned short req) { LOG_FIRST(5, "NP_RequestData(0x%x)", req); return 0; }
 NP_EXPORT(int) NP_StartCursor(void) { LOG_FIRST(5, "NP_StartCursor"); return 0; }
 NP_EXPORT(int) NP_StopCursor(void) { LOG_FIRST(5, "NP_StopCursor"); return 0; }
-NP_EXPORT(int) NP_StartDataTransmission(void) { LOG_FIRST(5, "NP_StartDataTransmission"); return 0; }
-NP_EXPORT(int) NP_StopDataTransmission(void) { LOG_FIRST(5, "NP_StopDataTransmission"); return 0; }
+NP_EXPORT(int) NP_StartDataTransmission(void)
+{
+    LOG_FIRST(5, "NP_StartDataTransmission");
+    if (map_shared())
+        register_game();
+    return 0;
+}
+NP_EXPORT(int) NP_StopDataTransmission(void)
+{
+    LOG_FIRST(5, "NP_StopDataTransmission");
+    unregister_game();
+    return 0;
+}
 NP_EXPORT(int) NPPriv_ClientNotify(void) { return 0; }
 NP_EXPORT(int) NPPriv_GetLastError(void) { return 0; }
 NP_EXPORT(int) NPPriv_SetData(void) { return 0; }
