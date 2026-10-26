@@ -65,7 +65,7 @@ starts trackkat if it isn't running; if NPClient can't be found or trackkat
 isn't tracking, it says so and keeps trying. **C** sends a recenter through
 NPClient, as a game would; **Esc** quits.
 
-![trackdemo: the pose overlay above a cockpit view](docs/trackdemo.png)
+![trackdemo looking around its cockpit, driven by a scripted pose](docs/trackdemo.gif)
 
 ### Settings
 
