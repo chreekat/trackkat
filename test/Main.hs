@@ -236,7 +236,21 @@ main = do
     check "curve and smoothing settings" $
         fmap response (parseConfig "yaw = 10:10 45:120\nsmoothing = off\n")
             == Right ((response defaultConfig){smoothing = NoSmoothing, yawCurve = lookBehind})
-    check "smoothing setting" $ fmap (smoothing . response) (parseConfig "smoothing = 0.8 .1") == Right (Smoothing 0.8 0.1)
+    let smoothingOf = fmap (smoothing . response) . parseConfig
+        closeSmoothing (Smoothing a b) (Smoothing c d) = close a c && close b d
+        closeSmoothing a b = a == b
+    check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
+    check "smoothing endpoints" $
+        closeSmoothing (tuned 0 0) (Smoothing 20 0.001) && closeSmoothing (tuned 100 100) (Smoothing 0.2 1)
+    check ("default smoothing: " ++ show (smoothing (response defaultConfig))) $ case smoothing (response defaultConfig) of
+        Smoothing mc b -> abs (mc - 1) < 0.01 && abs (b - 0.05) < 0.002
+        NoSmoothing -> False
+    check "steadiness and responsiveness" $ smoothingOf "steadiness = 100\nresponsiveness = 0" == Right (tuned 100 0)
+    check "smoothing off whatever the order" $ smoothingOf "smoothing = off\nsteadiness = 80" == Right NoSmoothing
+    check "smoothing back on" $ smoothingOf "smoothing = off\nsmoothing = on\nsteadiness = 80" == Right (tuned 80 57)
+    check "steadiness out of range" $ parseConfig "\nsteadiness = 101" == Left "line 2: steadiness is a number from 0 to 100"
+    check "responsiveness not a number" $ parseConfig "responsiveness = lots" == Left "line 1: responsiveness is a number from 0 to 100"
+    check "old smoothing form rejected" $ parseConfig "smoothing = 1 0.05" == Left "line 1: smoothing is on or off"
     check "curve inputs must increase" $ parseConfig "pitch = 5:5 3:9" == Left "line 1: curve inputs must be positive and increasing"
     check "curve points must be numbers" $ parseConfig "z = 1:x" == Left "line 1: expected input:output, not \"1:x\""
 
