@@ -6,12 +6,6 @@
 
 #include "trackkat_shared.h"
 
-/* Windows 7's no-repeat flag, for toolchains whose headers target older
- * Windows. */
-#ifndef MOD_NOREPEAT
-#define MOD_NOREPEAT 0x4000
-#endif
-
 /* ---- FreeTrack shared memory ------------------------------------------- */
 
 static HANDLE ft_mapping;
@@ -115,34 +109,84 @@ int hts_set_npclient_path(const wchar_t *dir)
 
 /* ---- Global hotkeys ------------------------------------------------------ */
 
+/* Watched with a low-level keyboard hook rather than RegisterHotKey, which
+ * refuses F12 (reserved for debuggers) and swallows the key, hiding it from
+ * games bound to the same key. */
+
 #define HOTKEY_RECENTER 1
 #define HOTKEY_PAUSE 2
 
+/* Modifier flags, as RegisterHotKey numbers them. */
+#define HK_ALT 0x1
+#define HK_CTRL 0x2
+#define HK_SHIFT 0x4
+#define HK_WIN 0x8
+
 static volatile LONG hotkey_presses;
 static UINT recenter_mods, recenter_vk, pause_mods, pause_vk;
-static volatile LONG hotkey_status;
+static volatile LONG hotkey_status; /* 0 starting, 1 running, 2 failed */
+static volatile LONG hotkey_error;
+static DWORD held_vk; /* a bound key now held down, so repeats are ignored */
+
+static UINT modifiers_held(void)
+{
+    UINT m = 0;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+        m |= HK_ALT;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        m |= HK_CTRL;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        m |= HK_SHIFT;
+    if ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000)
+        m |= HK_WIN;
+    return m;
+}
+
+static LRESULT CALLBACK keyboard_hook(int code, WPARAM wparam, LPARAM lparam)
+{
+    if (code == HC_ACTION) {
+        const KBDLLHOOKSTRUCT *k = (const KBDLLHOOKSTRUCT *)lparam;
+        if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
+            if (k->vkCode != held_vk) {
+                UINT mods = modifiers_held();
+                LONG hit = 0;
+                if (k->vkCode == recenter_vk && mods == recenter_mods)
+                    hit |= HOTKEY_RECENTER;
+                if (k->vkCode == pause_vk && mods == pause_mods)
+                    hit |= HOTKEY_PAUSE;
+                if (hit) {
+                    held_vk = k->vkCode;
+                    InterlockedOr(&hotkey_presses, hit);
+                }
+            }
+        } else if ((wparam == WM_KEYUP || wparam == WM_SYSKEYUP) && k->vkCode == held_vk) {
+            held_vk = 0;
+        }
+    }
+    return CallNextHookEx(NULL, code, wparam, lparam);
+}
 
 static DWORD WINAPI hotkey_thread(LPVOID unused)
 {
     (void)unused;
-    LONG status = 0;
-    if (!RegisterHotKey(NULL, HOTKEY_RECENTER, recenter_mods | MOD_NOREPEAT, recenter_vk))
-        status |= 1;
-    if (!RegisterHotKey(NULL, HOTKEY_PAUSE, pause_mods | MOD_NOREPEAT, pause_vk))
-        status |= 2;
-    InterlockedExchange(&hotkey_status, status | 4);
+    HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboard_hook, GetModuleHandleW(NULL), 0);
+    if (!hook) {
+        InterlockedExchange(&hotkey_error, (LONG)GetLastError());
+        InterlockedExchange(&hotkey_status, 2);
+        return 0;
+    }
+    InterlockedExchange(&hotkey_status, 1);
 
+    /* The hook runs only while this thread pumps messages. */
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        if (msg.message == WM_HOTKEY && (msg.wParam == HOTKEY_RECENTER || msg.wParam == HOTKEY_PAUSE))
-            InterlockedOr(&hotkey_presses, (LONG)msg.wParam);
     }
+    UnhookWindowsHookEx(hook);
     return 0;
 }
 
-/* Start listening for the two hotkeys on a thread of their own. Returns a
- * bitmask of hotkeys that could not be registered (1 recenter, 2 pause),
- * typically because another program already has them. */
+/* Start watching for the two hotkeys on a thread of their own. Returns 0, or
+ * a Windows error code if the keyboard can't be watched. */
 int hts_hotkeys_start(unsigned rmods, unsigned rvk, unsigned pmods, unsigned pvk)
 {
     recenter_mods = rmods;
@@ -151,11 +195,11 @@ int hts_hotkeys_start(unsigned rmods, unsigned rvk, unsigned pmods, unsigned pvk
     pause_vk = pvk;
     HANDLE t = CreateThread(NULL, 0, hotkey_thread, NULL, 0, NULL);
     if (!t)
-        return 3;
+        return (int)GetLastError();
     CloseHandle(t);
-    while (!(InterlockedCompareExchange(&hotkey_status, 0, 0) & 4))
+    while (InterlockedCompareExchange(&hotkey_status, 0, 0) == 0)
         Sleep(1);
-    return (int)(hotkey_status & 3);
+    return hotkey_status == 1 ? 0 : (int)hotkey_error;
 }
 
 /* Hotkeys pressed since the last call: bit 1 recenter, bit 2 pause. */

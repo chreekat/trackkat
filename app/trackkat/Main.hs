@@ -43,9 +43,9 @@ main = do
     setNPClientPath dir >>= \case
         Right () -> putStrLn ("Games will load NPClient from " ++ dir)
         Left e -> putStrLn ("Can't point games at NPClient (registry error " ++ show e ++ ").")
-    failed <- startHotkeys (recenterKey config) (pauseKey config)
-    forM_ failed $ \k ->
-        putStrLn ("Can't use the " ++ hotkeyName k ++ " key " ++ renderBinding (bindingFor config k) ++ ": another program has it.")
+    startHotkeys (recenterKey config) (pauseKey config) >>= \case
+        Right () -> pure ()
+        Left e -> putStrLn ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
     printf
         "Recenter: %s   Pause: %s   (Enter also recenters, c Enter calibrates level)\n"
         (renderBinding (recenterKey config))
@@ -59,14 +59,6 @@ main = do
                       ]
         putStrLn "Trying the camera again in 3 seconds."
         threadDelay 3000000
-
-hotkeyName :: Hotkey -> String
-hotkeyName RecenterKey = "recenter"
-hotkeyName PauseKey = "pause"
-
-bindingFor :: Config -> Hotkey -> Binding
-bindingFor c RecenterKey = recenterKey c
-bindingFor c PauseKey = pauseKey c
 
 -- | Read the settings file, creating it with the defaults if there is none.
 loadConfig :: FilePath -> IO Config

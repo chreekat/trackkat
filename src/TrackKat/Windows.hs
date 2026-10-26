@@ -57,18 +57,17 @@ setNPClientPath dir =
 data Hotkey = RecenterKey | PauseKey
     deriving (Eq, Show)
 
--- | Listen for the recenter and pause hotkeys anywhere in Windows. Returns
--- those that couldn't be registered, usually because another program holds
--- them.
-startHotkeys :: Binding -> Binding -> IO [Hotkey]
+-- | Watch for the recenter and pause hotkeys anywhere in Windows, without
+-- hiding them from other programs. Left is a Windows error code.
+startHotkeys :: Binding -> Binding -> IO (Either Int ())
 startHotkeys recenter pause = do
-    failed <-
+    rc <-
         c_hotkeys_start
             (fromIntegral (modifierMask recenter))
             (fromIntegral (virtualKey recenter))
             (fromIntegral (modifierMask pause))
             (fromIntegral (virtualKey pause))
-    pure [k | (k, b) <- [(RecenterKey, 0), (PauseKey, 1)], testBit failed b]
+    pure (if rc == 0 then Right () else Left (fromIntegral rc))
 
 -- | Hotkeys pressed since the last call.
 takeHotkeys :: IO [Hotkey]
