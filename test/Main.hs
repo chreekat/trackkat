@@ -216,7 +216,7 @@ main = do
     -- Shaping: jumps a head can't make are held off unless they persist;
     -- smoothing settles still jitter and follows steps.
     let linear = Curve [(1, 1)]
-        plain = Response NoSmoothing linear linear linear linear linear linear
+        plain = Response NoSmoothing linear linear linear linear linear linear LeanWithScreen
         smooth = plain{smoothing = Smoothing 1 0.05}
         at y = HeadPose{yaw = y, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0}
         run r frames = go newShaper (zip [0, 1 / 120 ..] frames)
@@ -260,6 +260,30 @@ main = do
         reloaded "pause = Ctrl+F9\nsteadiness = 80\nyaw = 10:10 45:120\n"
             == Right "Settings reloaded: pause = Ctrl+F9, steadiness = 80, yaw = 10:10 45:120"
     check "smoothing turned off" $ reloaded "smoothing = off\nsteadiness = 80\n" == Right "Settings reloaded: smoothing = off"
+
+    -- Leaning with the view: the view turned 160 degrees to the right, to
+    -- about 5 o'clock, and a lean to the user's left goes toward the
+    -- aircraft's right (out of the right side) and a little forward.
+    let lookingBack = toGamePose (leanWithView HeadPose{yaw = 160, pitch = 0, roll = 0, tx = 10, ty = 5, tz = 0})
+    check ("lean out of the right side " ++ show lookingBack) $
+        gpYaw lookingBack < 0
+            && abs (gpX lookingBack - realToFrac (10 * cos (deg 160))) < 1e-4
+            && gpX lookingBack < -9
+            && gpZ lookingBack < -3
+            && gpY lookingBack == -5
+    let lookingRight = leanWithView HeadPose{yaw = 90, pitch = 0, roll = 0, tx = 0, ty = 0, tz = -10}
+    check ("lean toward the screen while looking right goes right " ++ show lookingRight) $
+        abs (tx lookingRight + 10) < 1e-9 && abs (tz lookingRight) < 1e-9
+    let ahead = leanWithView HeadPose{yaw = 0, pitch = 30, roll = 0, tx = 4, ty = 0, tz = -7}
+    check "looking ahead, leaning is unchanged" $ abs (tx ahead - 4) < 1e-12 && abs (tz ahead + 7) < 1e-12
+    -- The lean turns by the yaw the game shows, after the curves.
+    let viewing = plain{yawCurve = Curve [(1, 6)], lean = LeanWithView}
+        (shapedBack, _) = shape viewing 0 HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+    check ("lean follows the curved yaw " ++ show shapedBack) $
+        abs (yaw shapedBack - 160) < 1e-9 && abs (tx shapedBack - 10 * cos (deg 160)) < 1e-9 && abs (tz shapedBack + 10 * sin (deg 160)) < 1e-9
+    check "lean setting" $ fmap (lean . response) (parseConfig "lean = screen\n") == Right LeanWithScreen
+    check "lean default" $ lean (response defaultConfig) == LeanWithView
+    check "bad lean" $ parseConfig "lean = sideways" == Left "line 1: lean is view or screen"
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
