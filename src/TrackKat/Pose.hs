@@ -54,25 +54,31 @@ trackClip =
     , mPivot = V3 0 160 50
     }
 
--- | A model from the three distances between reflectors, in mm: left to
--- right, left to top, right to top. Only the triangle's shape affects the
--- angles; its size only scales the distance estimate. The pivot is placed as
--- in 'trackClip'.
-triangle :: Double -> Double -> Double -> Maybe Model
-triangle lr lt rt
+-- | A headset clip from the three distances between reflectors, in mm: left
+-- to right, left to top, right to top. The top reflector is on a post that
+-- leans back (away from the camera) by @lean@ degrees from vertical.
+--
+-- Only the triangle's shape affects the angles, and its size only scales
+-- the distance estimate. The lean doesn't need to be accurate: it picks which
+-- of the two mirror-image solutions the solver starts near, and recentering
+-- absorbs the rest. The pivot is put 170 mm below the headband.
+triangle :: Double -> Double -> Double -> Double -> Maybe Model
+triangle lean lr lt rt
   | lr <= 0 || h2 <= 0 = Nothing
   | otherwise =
       Just
         Model
           { mLeft = V3 (-a) 0 0
           , mRight = V3 a 0 0
-          , mTop = V3 x (negate (sqrt h2)) 0
-          , mPivot = mPivot trackClip
+          , mTop = V3 x (negate (h * cos theta)) (h * sin theta)
+          , mPivot = V3 0 170 0
           }
   where
     a = lr / 2
     x = (lt * lt - rt * rt) / (2 * lr)
     h2 = lt * lt - (x + a) * (x + a)
+    h = sqrt h2
+    theta = lean * pi / 180
 
 data Pose = Pose {poseR :: M33, poseT :: V3}
   deriving (Show)
