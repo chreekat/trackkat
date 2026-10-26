@@ -56,6 +56,17 @@ Keys work from anywhere, including inside games:
 Recentering while the clip is out of sight centres the view at once; the
 pose you hold when the clip comes back becomes the new centre.
 
+### Trying it out: trackdemo
+
+`trackdemo.exe`, in the same zip, starts in a moment, where a game can take
+minutes: a cockpit view that follows your head, with the pose, status and
+checksum counts NPClient delivers. It loads NPClient as a game does, so it
+starts trackkat if it isn't running; if NPClient can't be found or trackkat
+isn't tracking, it says so and keeps trying. **C** sends a recenter through
+NPClient, as a game would; **Esc** quits.
+
+![trackdemo: the pose overlay above a cockpit view](docs/trackdemo.png)
+
 ### Settings
 
 `trackkat.conf`, beside `trackkat.exe`, holds the keys, smoothing and
@@ -91,11 +102,8 @@ again when it comes back.
 - `npgame` loads NPClient like a game does (as DCS, game 1003, by default,
   or `npgame <game id>`), unscrambles and checksums what it gets as a game
   must, and prints the pose. Run it while trackkat is running.
-- `trackdemo` is a quicker test than a real game: a window with a cockpit
-  view that follows your head, plus the pose, status and checksum counts.
-  NPClient starts trackkat if it isn't running; if NPClient can't be found
-  or trackkat isn't tracking, the demo says so and keeps trying. **C** sends
-  a recenter through NPClient, as a game would; **Esc** quits.
+- [`trackdemo`](#trying-it-out-trackdemo) is a quicker test than a real
+  game.
 - `tools/test-npclient.sh` runs the same check under Wine, with a stand-in
   for trackkat.
 
