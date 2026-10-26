@@ -128,7 +128,6 @@ run opts cam = do
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
     tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts))
-    lights <- newLightKeeper cam
     let console = do
             eof <- isEOF
             unless eof $ do
@@ -144,7 +143,7 @@ run opts cam = do
                 let (t', o, evs) = step now stripes t in (t', (o, evs))
             mapM_ (putStrLn . describeEvent) events
             pure outcome
-    let loop next = do
+    let loop lights next = do
             (_, pkts) <- next
             forM_ pkts $ \p -> do
                 when (optRaw opts) $ putStrLn ("raw " ++ describeRaw p)
@@ -167,8 +166,8 @@ run opts cam = do
                                     else showOutcome tracked
                     Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
                     _ -> pure ()
-            loop next
-    withAsync console $ \_ -> withPackets cam loop
+            loop lights next
+    withAsync console $ \_ -> withLights cam $ \lights -> withPackets cam (loop lights)
 
 isTracked :: Outcome -> Bool
 isTracked Tracked{} = True

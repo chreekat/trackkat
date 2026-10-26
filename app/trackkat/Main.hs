@@ -116,7 +116,6 @@ console s = do
 track :: Session -> Camera -> IO ()
 track s cam = do
     putStrLn "Tracking."
-    lights <- newLightKeeper cam
     seenRecenters <- newIORef =<< recenterCount
     seenReads <- newIORef =<< gameReads
     lastRead <- newIORef 0
@@ -124,7 +123,7 @@ track s cam = do
     lastArrival <- newIORef Nothing
     window <- newIORef emptyWindow
     gcsSeen <- newIORef =<< gcCount
-    withPackets cam $ \next -> forever $ do
+    withLights cam $ \lights -> withPackets cam $ \next -> forever $ do
         (arrived, packets) <- next
         forM_ packets $ \case
             Frame _ stripes -> do
@@ -140,7 +139,7 @@ track s cam = do
                 publish =<< maybe (readIORef (sLatest s)) pure paused
                 published <- getMonotonicTime
                 previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
-                modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous))
+                modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
                 noteGCs gcsSeen window
 
                 readsNow <- gameReads
