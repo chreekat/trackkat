@@ -24,14 +24,16 @@ jobs:
       - uses: haskell-actions/setup@v2
         id: haskell
         with:
-          ghc-version: '9.6'
+          ghc-version: '9.4.7'
           cabal-version: '3.10'
 
       - uses: actions/cache@v4
         with:
           path: ${{ steps.haskell.outputs.cabal-store }}
-          key: windows-cabal-${{ hashFiles('trackkat.cabal') }}
+          key: windows-cabal-${{ hashFiles('trackkat.cabal', 'cabal.project.freeze') }}
           restore-keys: windows-cabal-
+
+      - run: cabal update
 
       - name: Build
         shell: pwsh
@@ -84,7 +86,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
       - uses: haskell-actions/setup@v2
         with:
-          ghc-version: '9.6'
+          ghc-version: '9.4.7'
           cabal-version: '3.10'
+      - run: cabal update
       - run: cabal build all --enable-tests
       - run: cabal test all --test-show-details=direct
