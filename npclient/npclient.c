@@ -8,7 +8,9 @@
  * and the signature are what NaturalPoint-aware games check for. */
 
 #include <windows.h>
+#include <stdarg.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "../cbits/trackkat_shared.h"
@@ -46,6 +48,7 @@ static const struct {
 };
 
 static HMODULE self;
+static HANDLE log_file = INVALID_HANDLE_VALUE;
 static HANDLE heap_mapping, control_mapping;
 static volatile FTHeap *heap;
 static volatile TrackKatControl *control;
@@ -54,13 +57,64 @@ static bool launch_attempted;
 static unsigned last_data_id;
 static ULONGLONG last_data_change;
 
+/* Append a line to npclient.log beside the DLL, so we can see what a game
+ * asks for. */
+static void np_log(const char *fmt, ...)
+{
+    if (log_file == INVALID_HANDLE_VALUE)
+        return;
+    char line[512];
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    int n = snprintf(line, sizeof line, "%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+    va_list ap;
+    va_start(ap, fmt);
+    n += vsnprintf(line + n, sizeof line - (size_t)n - 2, fmt, ap);
+    va_end(ap);
+    if (n > (int)sizeof line - 2)
+        n = (int)sizeof line - 2;
+    line[n++] = '\r';
+    line[n++] = '\n';
+    DWORD written;
+    WriteFile(log_file, line, (DWORD)n, &written, NULL);
+}
+
+/* Log only the first few calls of a kind. */
+#define LOG_FIRST(limit, ...)                                                  \
+    do {                                                                       \
+        static int logged_;                                                    \
+        if (logged_ < (limit)) {                                               \
+            logged_++;                                                         \
+            np_log(__VA_ARGS__);                                                 \
+        }                                                                      \
+    } while (0)
+
+static void open_log(void)
+{
+    wchar_t path[MAX_PATH];
+    DWORD n = GetModuleFileNameW(self, path, MAX_PATH);
+    wchar_t *slash = n && n < MAX_PATH ? wcsrchr(path, L'\\') : NULL;
+    if (!slash || (size_t)(slash + 1 - path) + wcslen(L"npclient.log") >= MAX_PATH)
+        return;
+    wcscpy(slash + 1, L"npclient.log");
+    log_file = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    char exe[MAX_PATH];
+    GetModuleFileNameA(NULL, exe, MAX_PATH);
+    np_log("loaded (%d-bit) into %s", (int)sizeof(void *) * 8, exe);
+}
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
         self = instance;
         DisableThreadLibraryCalls(instance);
+        open_log();
     } else if (reason == DLL_PROCESS_DETACH) {
+        np_log("unloaded");
+        if (log_file != INVALID_HANDLE_VALUE)
+            CloseHandle(log_file);
         if (heap)
             UnmapViewOfFile((void *)heap);
         if (control)
@@ -84,6 +138,7 @@ static void ensure_trackkat(void)
     HANDLE running = OpenMutexA(SYNCHRONIZE, FALSE, TRACKKAT_RUNNING_MUTEX);
     if (running) {
         CloseHandle(running);
+        np_log("trackkat is running");
         return;
     }
 
@@ -107,8 +162,11 @@ static void ensure_trackkat(void)
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_SHOWMINNOACTIVE;
     if (CreateProcessW(path, NULL, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, dir, &si, &pi)) {
+        np_log("started trackkat.exe");
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
+    } else {
+        np_log("could not start trackkat.exe (error %lu)", GetLastError());
     }
 }
 
@@ -128,6 +186,8 @@ static bool map_shared(void)
         if (control_mapping)
             control = MapViewOfFile(control_mapping, FILE_MAP_WRITE, 0, 0, sizeof(TrackKatControl));
     }
+    if (!(heap && control))
+        LOG_FIRST(3, "could not map shared memory (error %lu)", GetLastError());
     return heap && control;
 }
 
@@ -240,6 +300,14 @@ NP_EXPORT(int) NP_GetData(tir_data_t *data)
     }
 
     int status = data->status;
+    static int last_status = -1;
+    static unsigned calls;
+    if (status != last_status || ++calls % 1200 == 0) {
+        np_log("NP_GetData #%u: status %s, yaw %.0f pitch %.0f roll %.0f x %.0f y %.0f z %.0f, %s",
+             calls, status == NPCLIENT_STATUS_OK ? "ok" : "disabled", data->yaw, data->pitch, data->roll,
+             data->tx, data->ty, data->tz, key ? "scrambled" : "plain");
+        last_status = status;
+    }
     data->cksum = cksum((unsigned char *)data, sizeof *data);
     if (key)
         scramble((unsigned char *)data, sizeof *data, key);
@@ -248,6 +316,7 @@ NP_EXPORT(int) NP_GetData(tir_data_t *data)
 
 NP_EXPORT(int) NP_RegisterProgramProfileID(unsigned short id)
 {
+    LOG_FIRST(5, "NP_RegisterProgramProfileID(%u)", id);
     for (size_t i = 0; i < sizeof scrambled_games / sizeof scrambled_games[0]; i++)
         if (scrambled_games[i].id == id)
             key = scrambled_games[i].key;
@@ -259,6 +328,7 @@ NP_EXPORT(int) NP_RegisterProgramProfileID(unsigned short id)
 
 NP_EXPORT(int) NP_ReCenter(void)
 {
+    LOG_FIRST(20, "NP_ReCenter");
     if (map_shared())
         InterlockedIncrement(&control->recenter_requests);
     return 0;
@@ -266,6 +336,7 @@ NP_EXPORT(int) NP_ReCenter(void)
 
 NP_EXPORT(int) NP_QueryVersion(unsigned short *version)
 {
+    LOG_FIRST(5, "NP_QueryVersion");
     *version = 0x0500;
     return 0;
 }
@@ -311,6 +382,7 @@ static volatile unsigned char part2_2[200] = {
 
 NP_EXPORT(int) NP_GetSignature(tir_signature_t *sig)
 {
+    LOG_FIRST(5, "NP_GetSignature");
     for (int i = 0; i < 200; i++)
         sig->DllSignature[i] = part1_2[i] ^ part1_1[i];
     for (int i = 0; i < 200; i++)
@@ -319,15 +391,15 @@ NP_EXPORT(int) NP_GetSignature(tir_signature_t *sig)
 }
 
 /* The rest of TrackIR's API, which games call but we don't need. */
-NP_EXPORT(int) NP_GetParameter(int a, int b) { (void)a; (void)b; return 0; }
-NP_EXPORT(int) NP_SetParameter(int a, int b) { (void)a; (void)b; return 0; }
-NP_EXPORT(int) NP_RegisterWindowHandle(HWND hwnd) { (void)hwnd; return 0; }
-NP_EXPORT(int) NP_UnregisterWindowHandle(void) { return 0; }
-NP_EXPORT(int) NP_RequestData(unsigned short req) { (void)req; return 0; }
-NP_EXPORT(int) NP_StartCursor(void) { return 0; }
-NP_EXPORT(int) NP_StopCursor(void) { return 0; }
-NP_EXPORT(int) NP_StartDataTransmission(void) { return 0; }
-NP_EXPORT(int) NP_StopDataTransmission(void) { return 0; }
+NP_EXPORT(int) NP_GetParameter(int a, int b) { LOG_FIRST(5, "NP_GetParameter(%d, %d)", a, b); return 0; }
+NP_EXPORT(int) NP_SetParameter(int a, int b) { LOG_FIRST(5, "NP_SetParameter(%d, %d)", a, b); return 0; }
+NP_EXPORT(int) NP_RegisterWindowHandle(HWND hwnd) { (void)hwnd; LOG_FIRST(5, "NP_RegisterWindowHandle"); return 0; }
+NP_EXPORT(int) NP_UnregisterWindowHandle(void) { LOG_FIRST(5, "NP_UnregisterWindowHandle"); return 0; }
+NP_EXPORT(int) NP_RequestData(unsigned short req) { LOG_FIRST(5, "NP_RequestData(0x%x)", req); return 0; }
+NP_EXPORT(int) NP_StartCursor(void) { LOG_FIRST(5, "NP_StartCursor"); return 0; }
+NP_EXPORT(int) NP_StopCursor(void) { LOG_FIRST(5, "NP_StopCursor"); return 0; }
+NP_EXPORT(int) NP_StartDataTransmission(void) { LOG_FIRST(5, "NP_StartDataTransmission"); return 0; }
+NP_EXPORT(int) NP_StopDataTransmission(void) { LOG_FIRST(5, "NP_StopDataTransmission"); return 0; }
 NP_EXPORT(int) NPPriv_ClientNotify(void) { return 0; }
 NP_EXPORT(int) NPPriv_GetLastError(void) { return 0; }
 NP_EXPORT(int) NPPriv_SetData(void) { return 0; }
