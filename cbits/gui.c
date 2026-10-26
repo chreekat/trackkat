@@ -23,7 +23,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_CALIBRATE 0x4
 #define ACT_QUIT 0x8
 #define ACT_SAVE 0x10
-#define ACT_KEY_RECENTER 0x20 /* a key was pressed in a key box */
+#define ACT_KEY_RECENTER 0x20 /* a key was pressed to add to the bindings */
 #define ACT_KEY_PAUSE 0x40
 
 /* The camera's state, as hts_gui_camera takes it. */
@@ -54,7 +54,7 @@ typedef struct State {
 
 static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, L"", L"",
-                       L"Curves are input:output points, in degrees or mm, as in trackkat.conf."};
+                       L"Separate several keys or buttons with commas. Curves are input:output points, in degrees or mm."};
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
 static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings as the user asked to save them */
@@ -68,7 +68,10 @@ static size_t log_len;
 static unsigned long long log_total;
 
 static volatile LONG actions;
-static volatile LONG chosen_keys[2]; /* modifiers << 16 | virtual key, per key box */
+static volatile LONG chosen_keys[2]; /* modifiers << 16 | virtual key, per binding list */
+static volatile LONG capturing = -1;  /* the binding list waiting for a key or button, or -1 */
+static wchar_t added[2][FIELD_MAX];   /* bindings to add to the lists */
+static unsigned added_lists;          /* bit per list with a binding to add */
 static volatile LONG stopping;
 
 static void copy_text(wchar_t *dst, size_t size, const wchar_t *src)
@@ -185,11 +188,29 @@ int hts_gui_take_actions(void)
     return (int)InterlockedExchange(&actions, 0);
 }
 
-/* The last key pressed in a key box (0 recenter, 1 pause), as modifiers << 16
- * | virtual key. */
+/* The last key pressed to add to a binding list (0 recenter, 1 pause), as
+ * modifiers << 16 | virtual key. */
 int hts_gui_chosen_key(int which)
 {
     return (int)InterlockedCompareExchange(&chosen_keys[which ? 1 : 0], 0, 0);
+}
+
+/* Which binding list waits for a key or joystick button to add: 0 recenter,
+ * 1 pause, or -1 none. */
+int hts_gui_capturing(void)
+{
+    return (int)InterlockedCompareExchange(&capturing, 0, 0);
+}
+
+/* Add a binding to a list in the window (0 recenter, 1 pause), as written in
+ * trackkat.conf, and stop waiting for one. */
+void hts_gui_add_binding(int which, const wchar_t *binding)
+{
+    which = which ? 1 : 0;
+    AcquireSRWLockExclusive(&lock);
+    copy_text(added[which], FIELD_MAX, binding);
+    added_lists |= 1u << which;
+    ReleaseSRWLockExclusive(&lock);
 }
 
 /* ---- The GUI thread's own state ------------------------------------------ */
@@ -204,6 +225,8 @@ enum {
     ID_PAUSE,
     ID_CALIBRATE,
     ID_COPY_LOG,
+    ID_ADD_RECENTER,
+    ID_ADD_PAUSE,
     ID_SMOOTHING,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
@@ -219,7 +242,9 @@ static HWND log_group, copy_button, log_hint;
 static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
 static wchar_t field_text[F_COUNT][FIELD_MAX]; /* values of the checkbox and sliders */
-static WNDPROC edit_proc;
+static HWND add_button[2];
+static WNDPROC button_proc;
+static int swallow_key_up; /* the key that was captured is still to come up */
 static State seen; /* the last snapshot */
 static int dpi = 96;
 static HFONT ui_font, mono_font, small_font, bold_font;
@@ -664,32 +689,111 @@ static int is_modifier(WPARAM vk)
            vk == VK_RMENU;
 }
 
-/* A key box shows a binding; pressing a key in it reports the key, and
- * Haskell names it and shows the name. Tab still moves on. */
-static LRESULT CALLBACK key_box_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+static void end_capture(void)
 {
-    int which = GetDlgCtrlID(w) == ID_FIELD + F_PAUSE;
+    LONG which = InterlockedExchange(&capturing, -1);
+    if (which >= 0)
+        SetWindowTextW(add_button[which], L"Add key or button…");
+}
+
+static void start_capture(int which)
+{
+    end_capture();
+    InterlockedExchange(&capturing, which);
+    SetWindowTextW(add_button[which], L"Press it now…");
+    SetFocus(add_button[which]);
+}
+
+/* An Add button, once clicked, takes the next key pressed (and Haskell the
+ * next joystick button) and adds it to its list. Clicking elsewhere stops
+ * it waiting. */
+static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+{
+    int which = GetDlgCtrlID(w) == ID_ADD_PAUSE;
+    int waiting = InterlockedCompareExchange(&capturing, 0, 0) == which;
     switch (msg) {
     case WM_GETDLGCODE:
-        if (lp && ((MSG *)lp)->message == WM_KEYDOWN && ((MSG *)lp)->wParam == VK_TAB)
-            break;
-        return DLGC_WANTALLKEYS | CallWindowProcW(edit_proc, w, msg, wp, lp);
+        if (waiting)
+            return DLGC_WANTALLKEYS;
+        break;
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
-        if (wp == VK_TAB && msg == WM_KEYDOWN)
+        if (!waiting)
             break;
-        if (!is_modifier(wp) && !(lp & 0x40000000)) {
+        if (!is_modifier(wp)) {
             InterlockedExchange(&chosen_keys[which], (LONG)(hts_modifiers_held() << 16 | (unsigned)wp));
             InterlockedOr(&actions, which ? ACT_KEY_PAUSE : ACT_KEY_RECENTER);
+            swallow_key_up = 1;
+            end_capture();
         }
         return 0;
     case WM_CHAR:
     case WM_SYSCHAR:
+        if (waiting || swallow_key_up)
+            return 0;
+        break;
     case WM_KEYUP:
     case WM_SYSKEYUP:
-        return 0;
+        if (waiting || swallow_key_up) {
+            if (!is_modifier(wp))
+                swallow_key_up = 0;
+            return 0;
+        }
+        break;
+    case WM_KILLFOCUS:
+        if (waiting)
+            end_capture();
+        break;
     }
-    return CallWindowProcW(edit_proc, w, msg, wp, lp);
+    return CallWindowProcW(button_proc, w, msg, wp, lp);
+}
+
+/* Add a binding to a list's text, unless it is there already. */
+static void add_binding(int field, const wchar_t *binding)
+{
+    wchar_t text[FIELD_MAX];
+    GetWindowTextW(field_ctl[field], text, FIELD_MAX);
+    const wchar_t *p = text;
+    size_t blen = wcslen(binding);
+    int empty = 1;
+    while (*p) {
+        while (*p == L' ' || *p == L',')
+            p++;
+        const wchar_t *end = p;
+        while (*end && *end != L',')
+            end++;
+        const wchar_t *last = end;
+        while (last > p && last[-1] == L' ')
+            last--;
+        if (last > p)
+            empty = 0;
+        if ((size_t)(last - p) == blen && _wcsnicmp(p, binding, blen) == 0)
+            return;
+        p = end;
+    }
+    wchar_t joined[FIELD_MAX];
+    if (empty)
+        copy_text(joined, FIELD_MAX, binding);
+    else {
+        _snwprintf(joined, FIELD_MAX, L"%ls, %ls", text, binding);
+        joined[FIELD_MAX - 1] = 0;
+    }
+    SetWindowTextW(field_ctl[field], joined);
+}
+
+/* A button label naming a binding list's first binding. */
+static void binding_label(wchar_t *label, size_t size, const wchar_t *action, const wchar_t *bindings)
+{
+    wchar_t first[FIELD_MAX];
+    copy_text(first, FIELD_MAX, bindings);
+    wchar_t *comma = wcschr(first, L',');
+    if (comma)
+        *comma = 0;
+    if (first[0])
+        _snwprintf(label, size, comma ? L"%ls (%ls, …)" : L"%ls (%ls)", action, first);
+    else
+        _snwprintf(label, size, L"%ls", action);
+    label[size - 1] = 0;
 }
 
 static int slider_field(int i) { return i == F_STEADINESS || i == F_RESPONSIVENESS; }
@@ -710,8 +814,7 @@ static void show_field(int i, const wchar_t *value)
         SetWindowTextW(field_ctl[i], value);
     if (i == F_RECENTER || i == F_PAUSE) {
         wchar_t label[FIELD_MAX + 32];
-        _snwprintf(label, FIELD_MAX + 32, i == F_RECENTER ? L"Recenter (%ls)" : L"Pause (%ls)", value);
-        label[FIELD_MAX + 31] = 0;
+        binding_label(label, FIELD_MAX + 32, i == F_RECENTER ? L"Recenter" : seen.paused ? L"Resume" : L"Pause", value);
         SetWindowTextW(i == F_RECENTER ? recenter_button : pause_button, label);
     }
 }
@@ -824,8 +927,8 @@ static void copy_log(void)
 static void refresh(void)
 {
     State st;
-    unsigned fields;
-    wchar_t values[F_COUNT][FIELD_MAX];
+    unsigned fields, lists;
+    wchar_t values[F_COUNT][FIELD_MAX], additions[2][FIELD_MAX];
     AcquireSRWLockExclusive(&lock);
     st = shared;
     fields = pushed_fields;
@@ -833,19 +936,27 @@ static void refresh(void)
     for (int i = 0; i < F_COUNT; i++)
         if (fields & 1u << i)
             copy_text(values[i], FIELD_MAX, pushed[i]);
+    lists = added_lists;
+    added_lists = 0;
+    memcpy(additions, added, sizeof added);
     ReleaseSRWLockExclusive(&lock);
 
     for (int i = 0; i < F_COUNT; i++)
         if (fields & 1u << i)
             show_field(i, values[i]);
+    for (int i = 0; i < 2; i++)
+        if (lists & 1u << i) {
+            add_binding(i ? F_PAUSE : F_RECENTER, additions[i]);
+            if (InterlockedCompareExchange(&capturing, 0, 0) == i)
+                end_capture();
+        }
     if (wcscmp(st.calibration, seen.calibration) != 0)
         SetWindowTextW(calibration_text, st.calibration);
     if (wcscmp(st.settings_message, seen.settings_message) != 0)
         SetWindowTextW(settings_text, st.settings_message);
     if (st.paused != seen.paused || fields & (1u << F_PAUSE)) {
         wchar_t label[FIELD_MAX + 32];
-        _snwprintf(label, FIELD_MAX + 32, st.paused ? L"Resume (%ls)" : L"Pause (%ls)", field_text[F_PAUSE]);
-        label[FIELD_MAX + 31] = 0;
+        binding_label(label, FIELD_MAX + 32, st.paused ? L"Resume" : L"Pause", field_text[F_PAUSE]);
         SetWindowTextW(pause_button, label);
     }
     seen = st;
@@ -873,8 +984,8 @@ static HWND edit(int field, int x, int y, int w)
 
 /* Layout, in pixels at 96 dpi. The log box takes what height is left. */
 #define CLIENT_W 720
-#define CLIENT_H 760
-#define LOG_TOP 568
+#define CLIENT_H 790
+#define LOG_TOP 598
 
 static void build_window(void)
 {
@@ -890,27 +1001,25 @@ static void build_window(void)
 
     calibration_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 36, 0);
 
-    label(L"Recenter key", 22, 390, 86);
-    field_ctl[F_RECENTER] = edit(F_RECENTER, 110, 390, 120);
-    label(L"Pause key", 250, 390, 70);
-    field_ctl[F_PAUSE] = edit(F_PAUSE, 322, 390, 120);
-    for (int i = F_RECENTER; i <= F_PAUSE; i++) {
-        SendMessageW(field_ctl[i], EM_SETREADONLY, TRUE, 0);
-        edit_proc = (WNDPROC)SetWindowLongPtrW(field_ctl[i], GWLP_WNDPROC, (LONG_PTR)key_box_proc);
+    for (int i = 0; i < 2; i++) {
+        int y = 390 + i * 30;
+        label(i ? L"Pause" : L"Recenter", 22, y, 80);
+        field_ctl[F_RECENTER + i] = edit(F_RECENTER + i, 104, y, 470);
+        add_button[i] = control(L"BUTTON", L"Add key or button…", WS_TABSTOP | BS_PUSHBUTTON, 580, y - 1, 120,
+                                25, i ? ID_ADD_PAUSE : ID_ADD_RECENTER);
+        button_proc = (WNDPROC)SetWindowLongPtrW(add_button[i], GWLP_WNDPROC, (LONG_PTR)add_button_proc);
     }
-    HWND key_hint = label(L"Click a key box, then press the key.", 460, 390, 240);
-    SendMessageW(key_hint, WM_SETFONT, (WPARAM)small_font, FALSE);
 
     field_ctl[F_SMOOTHING] =
-        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 426, 92, 22, ID_FIELD + F_SMOOTHING);
-    label(L"Steadiness", 120, 426, 70);
-    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 424, 140, 26,
+        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 456, 92, 22, ID_FIELD + F_SMOOTHING);
+    label(L"Steadiness", 120, 456, 70);
+    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 454, 140, 26,
                                       ID_FIELD + F_STEADINESS);
-    slider_value[0] = label(L"", 330, 426, 40);
-    label(L"Responsiveness", 380, 426, 96);
-    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 424, 140,
+    slider_value[0] = label(L"", 330, 456, 40);
+    label(L"Responsiveness", 380, 456, 96);
+    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 454, 140,
                                           26, ID_FIELD + F_RESPONSIVENESS);
-    slider_value[1] = label(L"", 618, 426, 40);
+    slider_value[1] = label(L"", 618, 456, 40);
     for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++) {
         SendMessageW(field_ctl[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
         SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
@@ -918,13 +1027,13 @@ static void build_window(void)
 
     static const wchar_t *const curve_labels[6] = {L"Yaw", L"Pitch", L"Roll", L"X", L"Y", L"Z"};
     for (int i = 0; i < 6; i++) {
-        int x = 22 + (i % 3) * 226, y = 462 + (i / 3) * 30;
+        int x = 22 + (i % 3) * 226, y = 492 + (i / 3) * 30;
         label(curve_labels[i], x, y, 40);
         field_ctl[F_YAW + i] = edit(F_YAW + i, x + 40, y, 170);
     }
 
-    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 524, 90, 26, IDOK);
-    settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 528, 578, 20, 0);
+    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 554, 90, 26, IDOK);
+    settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 558, 578, 20, 0);
 
     log_hint = control(L"STATIC", L"Everything trackkat prints. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
                        460, 20, 0);
@@ -937,7 +1046,7 @@ static void build_window(void)
 
     /* Group boxes last, beneath the controls they frame. */
     control(L"BUTTON", L"Level calibration", BS_GROUPBOX, 10, 298, 700, 62, 0);
-    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 368, 700, 190, 0);
+    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 368, 700, 220, 0);
     log_group = control(L"BUTTON", L"Log", BS_GROUPBOX, 10, LOG_TOP, 700, CLIENT_H - LOG_TOP - 10, 0);
 }
 
@@ -965,6 +1074,10 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_CALIBRATE:
             InterlockedOr(&actions, ACT_CALIBRATE);
             return 0;
+        case ID_ADD_RECENTER:
+        case ID_ADD_PAUSE:
+            start_capture(LOWORD(wp) == ID_ADD_PAUSE);
+            return 0;
         case ID_COPY_LOG:
             copy_log();
             return 0;
@@ -990,9 +1103,8 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             }
         return 0;
     case WM_CTLCOLORSTATIC:
-        /* Read-only, but the key boxes take keys and the log takes
-         * selections, so they look like it. */
-        if ((HWND)lp == log_box || (HWND)lp == field_ctl[F_RECENTER] || (HWND)lp == field_ctl[F_PAUSE]) {
+        /* Read-only, but it takes selections, so it looks like it. */
+        if ((HWND)lp == log_box) {
             SetBkColor((HDC)wp, RGB(255, 255, 255));
             return (LRESULT)log_brush;
         }

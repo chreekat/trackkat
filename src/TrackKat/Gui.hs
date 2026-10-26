@@ -1,8 +1,10 @@
+{-# LANGUAGE LambdaCase #-}
+
 -- | trackkat's window and system tray icon: see cbits/gui.c. State is
 -- pushed in with the @show@ functions, which never wait on the window, and
 -- what the user asks for is polled with 'takeActions'.
 module TrackKat.Gui (
-    Window (..),
+    WindowAtStart (..),
     startGui,
     stopGui,
     quitProcess,
@@ -10,6 +12,8 @@ module TrackKat.Gui (
     windowOpen,
     Action (..),
     takeActions,
+    capturing,
+    addBinding,
     guiLog,
     CameraState (..),
     showCamera,
@@ -30,8 +34,9 @@ import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
 import Foreign.Marshal.Array (allocaArray)
 
-import TrackKat.Config (Binding, bindingFromCodes)
+import TrackKat.Config (Binding, bindingFromCodes, renderBinding)
 import TrackKat.Pose (HeadPose (..))
+import TrackKat.Windows (Hotkey (..))
 
 foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()
@@ -40,6 +45,8 @@ foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
 foreign import ccall unsafe "hts_gui_window_open" c_window_open :: IO CInt
 foreign import ccall unsafe "hts_gui_take_actions" c_take_actions :: IO CInt
 foreign import ccall unsafe "hts_gui_chosen_key" c_chosen_key :: CInt -> IO CInt
+foreign import ccall unsafe "hts_gui_capturing" c_capturing :: IO CInt
+foreign import ccall unsafe "hts_gui_add_binding" c_add_binding :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_log" c_log :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_camera" c_camera :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_frame"
@@ -53,11 +60,11 @@ foreign import ccall unsafe "hts_gui_set_setting" c_set_setting :: CWString -> C
 foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString -> CWString -> CInt -> IO ()
 
 -- | Whether the window opens at start; the tray icon always shows.
-data Window = WindowShown | WindowHidden
+data WindowAtStart = WindowShown | WindowHidden
 
 -- | Start the window and tray icon on a thread of their own. Left is a
 -- Windows error code.
-startGui :: Window -> IO (Either Int ())
+startGui :: WindowAtStart -> IO (Either Int ())
 startGui w = do
     rc <- c_start (case w of WindowShown -> 1; WindowHidden -> 0)
     pure (if rc == 0 then Right () else Left (fromIntegral rc))
@@ -86,20 +93,37 @@ data Action
     | QuitAction
     | -- | the Save button: read the settings with 'savedSettings'
       SaveAction
-    | -- | a key pressed in the box for the named setting, if it has a name
-      KeyChosen String (Maybe Binding)
+    | -- | a key pressed to add to a binding list, if it has a name
+      KeyChosen Hotkey (Maybe Binding)
     deriving (Show)
 
 -- | What the user asked for since the last call.
 takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
-    keys <- sequence [chosen name which | (name, which, b) <- [("recenter", 0, 5), ("pause", 1, 6)], testBit bits b]
+    keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6)], testBit bits b]
     pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4)], testBit bits b] ++ keys)
   where
-    chosen name which = do
-        code <- fromIntegral <$> c_chosen_key which
-        pure (KeyChosen name (bindingFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
+    chosen k = do
+        code <- fromIntegral <$> c_chosen_key (list k)
+        pure (KeyChosen k (bindingFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
+
+-- | The binding list waiting for a key or joystick button to add, if any.
+capturing :: IO (Maybe Hotkey)
+capturing =
+    c_capturing >>= \case
+        0 -> pure (Just RecenterKey)
+        1 -> pure (Just PauseKey)
+        _ -> pure Nothing
+
+-- | Add a binding to a list in the window, and stop waiting for one.
+addBinding :: Hotkey -> Binding -> IO ()
+addBinding k b = withCWString (renderBinding b) (c_add_binding (list k))
+
+-- | How cbits/gui.c numbers the binding lists.
+list :: Hotkey -> CInt
+list RecenterKey = 0
+list PauseKey = 1
 
 -- | Add a line to the log the window shows.
 guiLog :: String -> IO ()

@@ -1,6 +1,6 @@
 /* fakegui: drive trackkat's window and tray icon (cbits/gui.c) with a
  * scripted pose and status, for working on the GUI without a camera. Prints
- * what the user asks for.
+ * what the user asks for. Keys chosen for the bindings are all Ctrl+F7.
  *
  * usage: fakegui [seconds] */
 
@@ -25,10 +25,12 @@ void hts_gui_saved_setting(const wchar_t *name, wchar_t *buf, int size);
 int hts_gui_take_actions(void);
 int hts_gui_chosen_key(int which);
 int hts_gui_window_open(void);
+int hts_gui_capturing(void);
+void hts_gui_add_binding(int which, const wchar_t *binding);
 
 static const wchar_t *const names[] = {L"recenter", L"pause", L"smoothing", L"steadiness", L"responsiveness",
                                        L"yaw", L"pitch", L"roll", L"x", L"y", L"z"};
-static const wchar_t *const values[] = {L"F12", L"Ctrl+F9", L"on", L"90", L"45", L"1:6",
+static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"on", L"90", L"45", L"1:6",
                                         L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5"};
 
 int main(int argc, char **argv)
@@ -81,8 +83,11 @@ int main(int argc, char **argv)
             }
             hts_gui_settings_message(L"Saved.");
         }
-        if (acts & 0x60)
+        /* Any key chosen stands for Ctrl+F7, as Haskell would name it. */
+        if (acts & 0x60) {
             printf("  key %x\n", hts_gui_chosen_key(acts & 0x40 ? 1 : 0));
+            hts_gui_add_binding(acts & 0x40 ? 1 : 0, L"Ctrl+F7");
+        }
         if (acts & 0x8)
             break;
         Sleep(16);
