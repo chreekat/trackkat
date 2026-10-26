@@ -48,7 +48,7 @@ static struct {
     HMODULE dll;
     get_data_fn get_data;
     void_fn recenter, stop, unregister;
-    char info[300];
+    char info[1024]; /* holds a UTF-8 path of up to MAX_PATH * 3 bytes */
     ULONGLONG last_attempt;
 } np;
 
