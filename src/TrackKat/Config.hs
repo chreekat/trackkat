@@ -6,6 +6,9 @@ module TrackKat.Config (
     parseConfig,
     renderConfig,
     describeChanges,
+    settingNames,
+    settingValues,
+    editSettings,
     Binding (..),
     Modifier (..),
     Joystick (..),
@@ -17,11 +20,14 @@ module TrackKat.Config (
     renderJoystick,
     modifierMask,
     virtualKey,
+    bindingFromCodes,
 ) where
 
-import Data.Bits ((.|.))
+import Data.Bits ((.&.), (.|.))
 import Data.Char (digitToInt, isDigit, isSpace, toLower)
-import Data.List (intercalate, nub)
+import Data.Foldable (traverse_)
+import Data.List (dropWhileEnd, findIndices, intercalate, nub)
+import Data.Maybe (fromMaybe)
 
 import TrackKat.Number
 import TrackKat.Response
@@ -104,26 +110,29 @@ parseConfig str = do
                 | all isSpace blank -> Right ck
                 | otherwise -> Left (where_ n ++ "expected name = value")
     where_ n = "line " ++ show n ++ ": "
-    setting (c, k@(Knobs on s r)) name value =
-        let resp = response c
-            curve f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve value
-         in case name of
-                "recenter" -> (\b -> (c{recenterBindings = b}, k)) <$> parseBindings value
-                "pause" -> (\b -> (c{pauseBindings = b}, k)) <$> parseBindings value
-                "smoothing" -> case value of
-                    "on" -> Right (c, Knobs True s r)
-                    "off" -> Right (c, Knobs False s r)
-                    _ -> Left "smoothing is on or off"
-                "steadiness" -> (\v -> (c, Knobs on v r)) <$> parseKnob name value
-                "responsiveness" -> (\v -> (c, Knobs on s v)) <$> parseKnob name value
-                "yaw" -> curve (\cv x -> x{yawCurve = cv})
-                "pitch" -> curve (\cv x -> x{pitchCurve = cv})
-                "roll" -> curve (\cv x -> x{rollCurve = cv})
-                "x" -> curve (\cv x -> x{xCurve = cv})
-                "y" -> curve (\cv x -> x{yCurve = cv})
-                "z" -> curve (\cv x -> x{zCurve = cv})
-                "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
-                _ -> Left ("unknown setting " ++ show name)
+
+-- | Apply one setting, by name and value as written.
+setting :: (Config, Knobs) -> String -> String -> Either String (Config, Knobs)
+setting (c, k@(Knobs on s r)) name value =
+    let resp = response c
+        curve f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve value
+     in case name of
+            "recenter" -> (\b -> (c{recenterBindings = b}, k)) <$> parseBindings value
+            "pause" -> (\b -> (c{pauseBindings = b}, k)) <$> parseBindings value
+            "smoothing" -> case value of
+                "on" -> Right (c, Knobs True s r)
+                "off" -> Right (c, Knobs False s r)
+                _ -> Left "smoothing is on or off"
+            "steadiness" -> (\v -> (c, Knobs on v r)) <$> parseKnob name value
+            "responsiveness" -> (\v -> (c, Knobs on s v)) <$> parseKnob name value
+            "yaw" -> curve (\cv x -> x{yawCurve = cv})
+            "pitch" -> curve (\cv x -> x{pitchCurve = cv})
+            "roll" -> curve (\cv x -> x{rollCurve = cv})
+            "x" -> curve (\cv x -> x{xCurve = cv})
+            "y" -> curve (\cv x -> x{yCurve = cv})
+            "z" -> curve (\cv x -> x{zCurve = cv})
+            "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
+            _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
 renderConfig c =
@@ -205,6 +214,51 @@ parseLean _ = Left "lean is view or screen"
 renderLean :: Lean -> String
 renderLean LeanWithView = "view"
 renderLean LeanWithScreen = "screen"
+
+-- | The names of the settings, in the order the default file lists them.
+settingNames :: [String]
+settingNames = map fst (settingLines (renderConfig defaultConfig))
+
+-- | Each setting's value as a settings file writes it, or as the default
+-- file does where this one doesn't set it.
+settingValues :: String -> [(String, String)]
+settingValues str = [(n, fromMaybe d (lookup n written)) | (n, d) <- settingLines (renderConfig defaultConfig)]
+  where
+    -- The last line setting a name is the one that counts.
+    written = reverse (settingLines str)
+
+-- | The settings a file's lines set, in order, as written.
+settingLines :: String -> [(String, String)]
+settingLines str = [(n, v) | Just (n, v) <- map settingLine (lines str)]
+
+settingLine :: String -> Maybe (String, String)
+settingLine l = case break (== '=') (takeWhile (/= '#') l) of
+    (name, '=' : value) -> Just (trim name, trim value)
+    _ -> Nothing
+
+-- | Give settings new values in a settings file, keeping the rest of the
+-- file, comments included. A changed setting's value is replaced on the line
+-- that sets it (the last, if several do), keeping that line's comment, or a
+-- line is added for it at the end. Left names a setting that isn't valid, or
+-- the line of the result that isn't.
+editSettings :: [(String, String)] -> String -> Either String String
+editSettings new str
+    | null changed = Right str
+    | otherwise = do
+        traverse_ (\(n, v) -> either (Left . ((n ++ ": ") ++)) Right (setting (defaultConfig, defaultKnobs) n v)) changed
+        let edited = unlines (foldl replace (lines str) changed)
+        edited <$ parseConfig edited
+  where
+    current = settingValues str
+    changed = [(n, v) | (n, v) <- new, lookup n current /= Just v]
+    replace ls (n, v) = case findIndices ((== Just n) . fmap fst . settingLine) ls of
+        [] -> ls ++ [n ++ " = " ++ v]
+        is -> [if i == last is then rewrite l else l | (i, l) <- zip [0 :: Int ..] ls]
+      where
+        rewrite l =
+            let (name, rest) = break (== '=') l
+                comment = dropWhile (/= '#') rest
+             in dropWhileEnd isSpace name ++ " = " ++ v ++ (if null comment then "" else " " ++ comment)
 
 -- | Read curve points like @0.5:0 1.5:1@, inputs increasing from zero.
 parseCurve :: String -> Either String Curve
@@ -302,12 +356,20 @@ renderJoystick (Joystick name index) = name ++ (if index > 1 then " (" ++ show i
 
 -- | The modifier flags Windows' RegisterHotKey takes.
 modifierMask :: [Modifier] -> Int
-modifierMask mods = foldl (.|.) 0 (map bit mods)
-  where
-    bit Alt = 0x1
-    bit Ctrl = 0x2
-    bit Shift = 0x4
-    bit Win = 0x8
+modifierMask mods = foldl (.|.) 0 (map modifierBit mods)
+
+modifierBit :: Modifier -> Int
+modifierBit Alt = 0x1
+modifierBit Ctrl = 0x2
+modifierBit Shift = 0x4
+modifierBit Win = 0x8
+
+-- | The binding for RegisterHotKey's modifier flags and a virtual-key code;
+-- Nothing if the key has no name here.
+bindingFromCodes :: Int -> Int -> Maybe Binding
+bindingFromCodes mask vk = case [name | (name, code) <- keys, code == vk] of
+    name : _ -> Just (Key [m | m <- [minBound ..], mask .&. modifierBit m /= 0] name)
+    [] -> Nothing
 
 -- | The Windows virtual-key code of a key.
 virtualKey :: String -> Int

@@ -376,6 +376,25 @@ main = do
     check "lean default" $ lean (response defaultConfig) == LeanWithView
     check "bad lean" $ parseConfig "lean = sideways" == Left "line 1: lean is view or screen"
 
+    -- Editing the settings file from trackkat's window.
+    let userFile = "# mine\npause=Pause # TrackIR style\nsmoothing = off\nsteadiness = 70\npause = F9\n"
+    check ("values as written: " ++ show (settingValues userFile)) $
+        take 5 (settingValues userFile)
+            == [("recenter", "F12"), ("pause", "F9"), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
+    check "names in file order" $ settingNames == map fst (settingValues "")
+    check "unchanged values leave the file alone" $ editSettings (settingValues userFile) userFile == Right userFile
+    check ("edit keeps comments: " ++ show (editSettings [("pause", "Ctrl+F9"), ("yaw", "1:5")] userFile)) $
+        editSettings [("pause", "Ctrl+F9"), ("yaw", "1:5")] userFile
+            == Right "# mine\npause=Pause # TrackIR style\nsmoothing = off\nsteadiness = 70\npause = Ctrl+F9\nyaw = 1:5\n"
+    check "edit keeps a line's comment" $
+        editSettings [("pause", "F8")] "pause=Pause # TrackIR style" == Right "pause = F8 # TrackIR style\n"
+    check "edit names a bad value" $
+        editSettings [("steadiness", "101")] userFile == Left "steadiness: steadiness is a number from 0 to 100"
+    check "edit reports the rest of the file" $
+        editSettings [("pause", "F8")] "bogus\n" == Left "line 1: expected name = value"
+    check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
+    check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
+
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
     n <- readIORef failures
