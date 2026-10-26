@@ -27,12 +27,13 @@ import Control.Concurrent.Async (link, withAsync)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (Exception, bracket_, finally, throwIO, try)
-import Control.Monad (forever, replicateM_, void, when)
+import Control.Monad (forever, replicateM_, unless, void, when)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString as B
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Word (Word16, Word8)
 import GHC.Clock (getMonotonicTime, getMonotonicTimeNSec)
+import System.Timeout (timeout)
 
 import TrackKat.Frame (Packet, parseStream)
 import TrackKat.Protocol
@@ -144,14 +145,15 @@ withPackets cam act = do
             USB.withStream (camContext cam) (camHandle cam) inEp 32 16384 $ \stream -> do
                 putMVar reading ()
                 forever (USB.pump stream 1000 >>= writeChan chunks)
+        -- Timed here rather than trusting the reader to keep returning:
+        -- after sleep, a USB read might never come back at all.
         next = do
-            chunk <- readChan chunks
+            since <- readIORef lastData
             now <- getMonotonicTime
-            if B.null chunk
-                then do
-                    since <- readIORef lastData
-                    when (now - since > silenceLimit) $ throwIO CameraSilent
-                else writeIORef lastData now
+            -- A negative timeout would mean none at all.
+            waited <- timeout (max 0 (ceiling ((since + silenceLimit - now) * 1e6))) (readChan chunks)
+            chunk <- maybe (throwIO CameraSilent) pure waited
+            unless (B.null chunk) $ writeIORef lastData =<< getMonotonicTime
             atomicModifyIORef' pending $ \p ->
                 let (packets, rest) = parseStream (p <> chunk) in (rest, packets)
     withAsync reader $ \r -> do
