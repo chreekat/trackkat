@@ -26,10 +26,10 @@ library
     TrackKat.Tracker
     TrackKat.USB
   build-depends:
-    , array       ^>=0.5.4
+    , array       ^>=0.5.8
     , async       ^>=2.2.6
-    , base        ^>=4.17.2
-    , bytestring  ^>=0.11.5
+    , base        ^>=4.22.0
+    , bytestring  ^>=0.12.2
   c-sources:        cbits/usb_shim.c
   extra-libraries:  usb-1.0
 

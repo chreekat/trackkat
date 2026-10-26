@@ -16,7 +16,7 @@ module TrackKat.Linear (
     solveLinear,
 ) where
 
-import Data.List (foldl')
+import Data.List (unsnoc)
 
 data V3 = V3 !Double !Double !Double
     deriving (Eq, Show)
@@ -81,21 +81,21 @@ rodrigues w
 solveLinear :: [[Double]] -> [Double] -> Maybe [Double]
 solveLinear a b = backSubst <$> eliminate (zipWith (\row v -> row ++ [v]) a b)
   where
+    -- Rows are their coefficients followed by their right-hand side.
     eliminate [] = Just []
-    eliminate rows =
-        let pivot = foldl' (\p r -> if abs (head r) > abs (head p) then r else p) (head rows) rows
-            others = deleteFirst pivot rows
-            p0 = head pivot
-            reduce r = let k = head r / p0 in zipWith (\x y -> x - k * y) (tail r) (tail pivot)
-         in if abs p0 < 1e-12
-                then Nothing
-                else (pivot :) <$> eliminate (map reduce others)
-    deleteFirst x (y : ys) | x == y = ys | otherwise = y : deleteFirst x ys
-    deleteFirst _ [] = []
+    eliminate rows = case [(abs x, n) | (n, x : _) <- zip [0 :: Int ..] rows] of
+        [] -> Nothing
+        leads ->
+            let (size, i) = maximum leads
+             in case splitAt i rows of
+                    (before, (p0 : prest) : after)
+                        | size >= 1e-12 ->
+                            ((p0 : prest) :) <$> eliminate (map (reduce p0 prest) (before ++ after))
+                    _ -> Nothing
+    reduce p0 prest (x : xs) = zipWith (\c pc -> c - x / p0 * pc) xs prest
+    reduce _ _ [] = []
     -- Each eliminated row is [pivot, coefficients of later unknowns..., rhs].
     backSubst = foldr step []
-      where
-        step row xs =
-            let coeffs = init (tail row)
-                rhs = last row
-             in (rhs - sum (zipWith (*) coeffs xs)) / head row : xs
+    step (p : rest) xs
+        | Just (coeffs, rhs) <- unsnoc rest = (rhs - sum (zipWith (*) coeffs xs)) / p : xs
+    step _ xs = xs

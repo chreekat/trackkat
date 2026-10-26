@@ -19,7 +19,7 @@ module TrackKat.Frame (
 
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import qualified Data.ByteString as B
-import Data.List (foldl', partition, sortOn)
+import Data.List (partition, sortOn)
 import Data.Ord (Down (..))
 import Data.Word (Word8)
 
