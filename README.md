@@ -12,9 +12,10 @@ Supported hardware: TrackIR 5 revision 3 (USB id `131D:0159`).
 
 ## Getting tirprobe
 
-Every push builds a Windows zip on GitHub Actions: open the latest run under
-the repository's **Actions** tab and download the `trackkat-windows` artifact.
-It contains `tirprobe.exe` and `libusb-1.0.dll`; keep them in the same folder.
+Download the latest build of `main` (no GitHub login needed):
+<https://github.com/chreekat/trackkat/releases/download/dev/trackkat-windows.zip>
+
+The zip contains `tirprobe.exe` and `libusb-1.0.dll`; keep them in the same folder.
 
 ## One-time setup: switch the camera to WinUSB
 
