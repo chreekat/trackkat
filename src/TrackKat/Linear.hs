@@ -1,25 +1,25 @@
 -- | Just enough 3D linear algebra for pose estimation.
-module TrackKat.Linear
-  ( V3 (..)
-  , (^+^)
-  , (^-^)
-  , (*^)
-  , dot
-  , cross
-  , norm
-  , M33 (..)
-  , identity
-  , transpose
-  , mulMV
-  , mulMM
-  , rodrigues
-  , solveLinear
-  ) where
+module TrackKat.Linear (
+    V3 (..),
+    (^+^),
+    (^-^),
+    (*^),
+    dot,
+    cross,
+    norm,
+    M33 (..),
+    identity,
+    transpose,
+    mulMV,
+    mulMM,
+    rodrigues,
+    solveLinear,
+) where
 
 import Data.List (foldl')
 
 data V3 = V3 !Double !Double !Double
-  deriving (Eq, Show)
+    deriving (Eq, Show)
 
 infixl 6 ^+^, ^-^
 infixl 7 *^
@@ -42,7 +42,7 @@ norm v = sqrt (dot v v)
 
 -- | Rows.
 data M33 = M33 !V3 !V3 !V3
-  deriving (Eq, Show)
+    deriving (Eq, Show)
 
 identity :: M33
 identity = M33 (V3 1 0 0) (V3 0 1 0) (V3 0 0 1)
@@ -63,12 +63,12 @@ mulMM a b = M33 (row r0) (row r1) (row r2)
 -- | Rotation by the axis-angle vector @w@ (angle = |w| radians).
 rodrigues :: V3 -> M33
 rodrigues w
-  | theta < 1e-12 = identity
-  | otherwise =
-      M33
-        (V3 (c + x * x * k) (x * y * k - z * s) (x * z * k + y * s))
-        (V3 (y * x * k + z * s) (c + y * y * k) (y * z * k - x * s))
-        (V3 (z * x * k - y * s) (z * y * k + x * s) (c + z * z * k))
+    | theta < 1e-12 = identity
+    | otherwise =
+        M33
+            (V3 (c + x * x * k) (x * y * k - z * s) (x * z * k + y * s))
+            (V3 (y * x * k + z * s) (c + y * y * k) (y * z * k - x * s))
+            (V3 (z * x * k - y * s) (z * y * k + x * s) (c + z * z * k))
   where
     theta = norm w
     V3 x y z = (1 / theta) *^ w
@@ -83,19 +83,19 @@ solveLinear a b = backSubst <$> eliminate (zipWith (\row v -> row ++ [v]) a b)
   where
     eliminate [] = Just []
     eliminate rows =
-      let pivot = foldl' (\p r -> if abs (head r) > abs (head p) then r else p) (head rows) rows
-          others = deleteFirst pivot rows
-          p0 = head pivot
-          reduce r = let k = head r / p0 in zipWith (\x y -> x - k * y) (tail r) (tail pivot)
-       in if abs p0 < 1e-12
-            then Nothing
-            else (pivot :) <$> eliminate (map reduce others)
+        let pivot = foldl' (\p r -> if abs (head r) > abs (head p) then r else p) (head rows) rows
+            others = deleteFirst pivot rows
+            p0 = head pivot
+            reduce r = let k = head r / p0 in zipWith (\x y -> x - k * y) (tail r) (tail pivot)
+         in if abs p0 < 1e-12
+                then Nothing
+                else (pivot :) <$> eliminate (map reduce others)
     deleteFirst x (y : ys) | x == y = ys | otherwise = y : deleteFirst x ys
     deleteFirst _ [] = []
     -- Each eliminated row is [pivot, coefficients of later unknowns..., rhs].
     backSubst = foldr step []
       where
         step row xs =
-          let coeffs = init (tail row)
-              rhs = last row
-           in (rhs - sum (zipWith (*) coeffs xs)) / head row : xs
+            let coeffs = init (tail row)
+                rhs = last row
+             in (rhs - sum (zipWith (*) coeffs xs)) / head row : xs
