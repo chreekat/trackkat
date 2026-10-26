@@ -46,11 +46,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:PATH = $path
 
+      # These match what the runner image has installed, so this is quick.
       - uses: haskell-actions/setup@v2
         id: haskell
         with:
-          ghc-version: '9.4.7'
-          cabal-version: '3.10'
+          ghc-version: '9.14.1'
+          cabal-version: '3.18.2.0'
 
       - uses: actions/cache@v4
         with:
@@ -113,9 +114,15 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
       - uses: haskell-actions/setup@v2
+        id: haskell
         with:
-          ghc-version: '9.4.7'
-          cabal-version: '3.10'
+          ghc-version: '9.14.1'
+          cabal-version: '3.18.1.0'
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.haskell.outputs.cabal-store }}
+          key: linux-cabal-${{ hashFiles('trackkat.cabal', 'cabal.project.freeze') }}
+          restore-keys: linux-cabal-
       - run: cabal update
       - run: cabal build all --enable-tests
       - run: cabal test all --test-show-details=direct
