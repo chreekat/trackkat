@@ -36,7 +36,7 @@ defaultConfig =
         , pauseKey = Binding [] "F9"
         , response =
             Response
-                { smoothing = Smoothing{minCutoff = 1, beta = 0.05}
+                { smoothing = knobSmoothing defaultKnobs
                 , yawCurve = rotation
                 , pitchCurve = rotation
                 , rollCurve = rotation
@@ -56,25 +56,50 @@ data Binding = Binding [Modifier] String
 data Modifier = Ctrl | Alt | Shift | Win
     deriving (Eq, Show, Enum, Bounded)
 
+-- | The smoothing settings as written: on or off, then steadiness and
+-- responsiveness, each 0 to 100.
+data Knobs = Knobs Bool Double Double
+
+-- | A cutoff of about 1 Hz and a beta of about 0.05.
+defaultKnobs :: Knobs
+defaultKnobs = Knobs True 65 57
+
+knobSmoothing :: Knobs -> Smoothing
+knobSmoothing (Knobs on s r) = if on then tuned s r else NoSmoothing
+
+-- | The knobs that give a smoothing, inverting 'tuned'; off keeps the
+-- default knobs.
+smoothingKnobs :: Smoothing -> Knobs
+smoothingKnobs NoSmoothing = let Knobs _ s r = defaultKnobs in Knobs False s r
+smoothingKnobs (Smoothing mc b) = Knobs True (100 * logBase 0.01 (mc / 20)) (100 * logBase 1000 (b / 0.001))
+
 -- | Read a settings file. Unmentioned settings keep their defaults; the
--- error names the offending line.
+-- error names the offending line. The smoothing settings combine, so their
+-- order doesn't matter.
 parseConfig :: String -> Either String Config
-parseConfig = foldl line (Right defaultConfig) . zip [1 :: Int ..] . lines
+parseConfig str = do
+    (c, k) <- foldl line (Right (defaultConfig, defaultKnobs)) (zip [1 :: Int ..] (lines str))
+    pure c{response = (response c){smoothing = knobSmoothing k}}
   where
     line acc (n, l) =
-        acc >>= \c -> case break (== '=') (takeWhile (/= '#') l) of
-            (name, '=' : value) -> either (Left . (where_ n ++)) Right (setting c (trim name) (trim value))
+        acc >>= \ck -> case break (== '=') (takeWhile (/= '#') l) of
+            (name, '=' : value) -> either (Left . (where_ n ++)) Right (setting ck (trim name) (trim value))
             (blank, _)
-                | all isSpace blank -> Right c
+                | all isSpace blank -> Right ck
                 | otherwise -> Left (where_ n ++ "expected name = value")
     where_ n = "line " ++ show n ++ ": "
-    setting c name value =
-        let r = response c
-            curve f = (\cv -> c{response = f cv r}) <$> parseCurve value
+    setting (c, k@(Knobs on s r)) name value =
+        let resp = response c
+            curve f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve value
          in case name of
-                "recenter" -> (\b -> c{recenterKey = b}) <$> parseBinding value
-                "pause" -> (\b -> c{pauseKey = b}) <$> parseBinding value
-                "smoothing" -> (\sm -> c{response = r{smoothing = sm}}) <$> parseSmoothing value
+                "recenter" -> (\b -> (c{recenterKey = b}, k)) <$> parseBinding value
+                "pause" -> (\b -> (c{pauseKey = b}, k)) <$> parseBinding value
+                "smoothing" -> case value of
+                    "on" -> Right (c, Knobs True s r)
+                    "off" -> Right (c, Knobs False s r)
+                    _ -> Left "smoothing is on or off"
+                "steadiness" -> (\v -> (c, Knobs on v r)) <$> parseKnob name value
+                "responsiveness" -> (\v -> (c, Knobs on s v)) <$> parseKnob name value
                 "yaw" -> curve (\cv x -> x{yawCurve = cv})
                 "pitch" -> curve (\cv x -> x{pitchCurve = cv})
                 "roll" -> curve (\cv x -> x{rollCurve = cv})
@@ -92,9 +117,21 @@ renderConfig c =
         , "recenter = " ++ renderBinding (recenterKey c)
         , "pause = " ++ renderBinding (pauseKey c)
         , ""
-        , "# Smoothing: cutoff in Hz (lower is steadier when still) and"
-        , "# responsiveness (higher lags less when moving), or \"off\"."
-        , "smoothing = " ++ renderSmoothing (smoothing r)
+        , "# Smoothing calms the view while your head is still, at the cost of"
+        , "# some lag when you move. Both settings run from 0 to 100."
+        , "#"
+        , "# steadiness: how still the view stays while your head is still. If"
+        , "# the view jitters, raise it; if it feels floaty or drifts into place,"
+        , "# lower it."
+        , "#"
+        , "# responsiveness: how closely the view keeps up when you move. If it"
+        , "# lags behind your head, raise it; if it jitters as you move slowly,"
+        , "# lower it."
+        , "#"
+        , "# smoothing = off turns smoothing off altogether."
+        , "smoothing = " ++ (if on then "on" else "off")
+        , "steadiness = " ++ renderNumber s
+        , "responsiveness = " ++ renderNumber rs
         , ""
         , "# Response curves, as input:output points: degrees for yaw, pitch and"
         , "# roll, mm for x, y and z. Straight lines join the points, starting"
@@ -110,6 +147,7 @@ renderConfig c =
         ]
   where
     r = response c
+    Knobs on s rs = smoothingKnobs (smoothing r)
 
 -- | Read curve points like @0.5:0 1.5:1@, inputs increasing from zero.
 parseCurve :: String -> Either String Curve
@@ -130,20 +168,11 @@ parseCurve value = do
 renderCurve :: Curve -> String
 renderCurve (Curve points) = unwords [renderNumber a ++ ":" ++ renderNumber b | (a, b) <- points]
 
-parseSmoothing :: String -> Either String Smoothing
-parseSmoothing value = case words value of
-    ["off"] -> Right NoSmoothing
-    [a, b]
-        | Just mc <- parseNumber a
-        , Just be <- parseNumber b
-        , mc > 0
-        , be >= 0 ->
-            Right (Smoothing mc be)
-    _ -> Left "smoothing wants a cutoff in Hz and a responsiveness, like 1 0.05, or off"
-
-renderSmoothing :: Smoothing -> String
-renderSmoothing NoSmoothing = "off"
-renderSmoothing (Smoothing mc be) = renderNumber mc ++ " " ++ renderNumber be
+-- | Read a smoothing knob, a number from 0 to 100.
+parseKnob :: String -> String -> Either String Double
+parseKnob name value = case parseNumber value of
+    Just v | v >= 0, v <= 100 -> Right v
+    _ -> Left (name ++ " is a number from 0 to 100")
 
 -- | A decimal number such as @-12@, @0.5@ or @.25@.
 parseNumber :: String -> Maybe Double

@@ -64,9 +64,14 @@ it. If you had trackkat before smoothing and curves existed, delete the file
 and trackkat writes a fresh one with the new settings documented.
 
 - `recenter = F12`, `pause = Ctrl+F9`: keys.
-- `smoothing = 1 0.05`: how steady the view is when your head is still (the
-  first number; lower is steadier) and how little it lags when you move (the
-  second; higher lags less). `smoothing = off` turns it off.
+- `steadiness = 65`, from 0 to 100: how still the view stays while your
+  head is still. Raise it if the view jitters; lower it if the view feels
+  floaty or drifts into place.
+- `responsiveness = 57`, from 0 to 100: how closely the view keeps up when
+  you move. Raise it if the view lags behind your head; lower it if the view
+  jitters as you move slowly.
+- `smoothing = off` turns smoothing off altogether; `smoothing = on` turns it
+  back on.
 - `yaw = 0.5:0 1.5:1`, and likewise `pitch`, `roll`, `x`, `y`, `z`: response
   curves as input:output points, in degrees or mm. For example
   `yaw = 10:10 45:120` turns your view 120 degrees when you turn your head 45.

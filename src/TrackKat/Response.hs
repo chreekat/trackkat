@@ -4,6 +4,7 @@ module TrackKat.Response (
     Curve (..),
     applyCurve,
     Smoothing (..),
+    tuned,
     Response (..),
     Shaper,
     newShaper,
@@ -42,6 +43,16 @@ data Smoothing
         }
     | NoSmoothing
     deriving (Eq, Show)
+
+-- | Smoothing from steadiness and responsiveness, each 0 to 100, on log
+-- scales: steadiness takes the cutoff from 20 Hz down to 0.2 Hz, and
+-- responsiveness takes beta from 0.001 up to 1.
+tuned :: Double -> Double -> Smoothing
+tuned steadiness responsiveness =
+    Smoothing
+        { minCutoff = 20 * 0.01 ** (steadiness / 100)
+        , beta = 0.001 * 1000 ** (responsiveness / 100)
+        }
 
 data Response = Response
     { smoothing :: Smoothing
