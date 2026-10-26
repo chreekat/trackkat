@@ -28,7 +28,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Word (Word16, Word8)
 import GHC.Clock (getMonotonicTime, getMonotonicTimeNSec)
 
-import TrackKat.Frame (Packet, parseTransfer)
+import TrackKat.Frame (Packet, parseStream)
 import TrackKat.Protocol
 import qualified TrackKat.USB as USB
 
@@ -57,6 +57,7 @@ data Camera = Camera
   , camSeed :: IORef Seed
   , camLog :: Log
   , camLedsEnabled :: Bool
+  , camPending :: IORef B.ByteString  -- ^ start of a packet that a transfer cut off
   }
 
 data OpenError
@@ -74,7 +75,8 @@ withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
 withCamera ctx logger settings act = do
   (h, _) <- openOrExplain
   seed <- newIORef . newSeed =<< getMonotonicTimeNSec
-  let cam = Camera h seed logger (statusLed settings)
+  pending <- newIORef B.empty
+  let cam = Camera h seed logger (statusLed settings) pending
   (`finally` USB.close h) $ do
     explainClaim (USB.claim h)
     bracket_ (initialise cam settings >> start cam settings) (shutdown cam) (act cam)
@@ -105,9 +107,13 @@ withCamera ctx logger settings act = do
           | USB.usbCode e == USB.errNotSupported -> throwIO (WrongDriver (USB.usbName e))
           | otherwise -> throwIO (OpenFailed e)
 
--- | Wait for the next USB transfer (up to 1 s) and decode it.
+-- | Wait for the next USB transfer (up to 1 s) and return the packets it
+-- completes.
 readPackets :: Camera -> IO [Packet]
-readPackets cam = parseTransfer <$> USB.bulkRead (camHandle cam) inEp 16384 1000
+readPackets cam = do
+  chunk <- USB.bulkRead (camHandle cam) inEp 16384 1000
+  atomicModifyIORef' (camPending cam) $ \pending ->
+    let (packets, rest) = parseStream (pending <> chunk) in (rest, packets)
 
 send :: Camera -> Command -> IO ()
 send cam cmd = do
