@@ -24,6 +24,7 @@ module TrackKat.Camera (
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (link, withAsync)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (Exception, bracket_, finally, throwIO, try)
 import Control.Monad (forever, replicateM_, void, when)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
@@ -64,6 +65,7 @@ data Camera = Camera
     , camHandle :: USB.Handle
     , camSeed :: IORef Seed
     , camLog :: Log
+    , camSettings :: Settings
     , camLedsEnabled :: Bool
     }
 
@@ -78,16 +80,16 @@ data OpenError
 
 instance Exception OpenError
 
--- | Find, initialise and start the camera, run the action, and shut the
--- camera down again however the action exits.
+-- | Find and initialise the camera, run the action, and shut the camera down
+-- again however the action exits. Video starts with 'withPackets'.
 withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
 withCamera ctx logger settings act = do
     (h, _) <- openOrExplain
     seed <- newIORef . newSeed =<< getMonotonicTimeNSec
-    let cam = Camera ctx h seed logger (statusLed settings)
+    let cam = Camera ctx h seed logger settings (statusLed settings)
     (`finally` USB.close h) $ do
         explainClaim (USB.claim h)
-        bracket_ (initialise cam settings >> start cam settings) (shutdown cam) (act cam)
+        bracket_ (initialise cam settings) (shutdown cam) (act cam)
             `finally` USB.release h
   where
     openOrExplain = do
@@ -115,24 +117,32 @@ withCamera ctx logger settings act = do
                 | USB.usbCode e == USB.errNotSupported -> throwIO (WrongDriver (USB.usbName e))
                 | otherwise -> throwIO (OpenFailed e)
 
--- | Run the action with a source of the camera's packets. The source blocks
--- until a USB transfer arrives (or a second passes) and returns the packets
--- it completes.
+-- | Start video and run the action with a source of the camera's packets.
+-- The source blocks until a USB transfer arrives (or a second passes) and
+-- returns the packets it completes.
 --
--- The camera drops data when its own buffer fills, so several reads stay
--- queued with it, kept going by a thread that does nothing else.
+-- The camera drops data when its own buffer fills, so reads are queued with
+-- it before video starts, and kept queued by a thread that does nothing else.
+-- Each read takes about one frame, so 32 cover a quarter of a second of that
+-- thread being held up.
 withPackets :: Camera -> (IO [Packet] -> IO a) -> IO a
 withPackets cam act = do
     chunks <- newChan
     pending <- newIORef B.empty
+    reading <- newEmptyMVar
     let reader =
-            USB.withStream (camContext cam) (camHandle cam) inEp 8 16384 $ \stream ->
+            USB.withStream (camContext cam) (camHandle cam) inEp 32 16384 $ \stream -> do
+                putMVar reading ()
                 forever (USB.pump stream 1000 >>= writeChan chunks)
         next = do
             chunk <- readChan chunks
             atomicModifyIORef' pending $ \p ->
                 let (packets, rest) = parseStream (p <> chunk) in (rest, packets)
-    withAsync reader $ \r -> link r >> act next
+    withAsync reader $ \r -> do
+        link r
+        takeMVar reading
+        start cam (camSettings cam)
+        act next
 
 send :: Camera -> Command -> IO ()
 send cam cmd = do
