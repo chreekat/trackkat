@@ -23,9 +23,9 @@ library
     TrackKat.Protocol
     TrackKat.USB
   build-depends:
-    , array       >=0.5
-    , base        >=4.17 && <5
-    , bytestring  >=0.11
+    , array       ^>=0.5.4
+    , base        ^>=4.17.2
+    , bytestring  ^>=0.11.5
   c-sources:        cbits/usb_shim.c
   extra-libraries:  usb-1.0
 
@@ -35,6 +35,7 @@ executable tirprobe
   main-is:          Main.hs
   ghc-options:      -threaded
   build-depends:
+    , async
     , base
     , trackkat
 
