@@ -21,6 +21,7 @@ library
     TrackKat.Frame
     TrackKat.GamePose
     TrackKat.Linear
+    TrackKat.Number
     TrackKat.Pose
     TrackKat.Protocol
     TrackKat.Response
