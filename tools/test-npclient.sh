@@ -18,7 +18,7 @@ export WINEDEBUG=-all WINEPREFIX="$work/prefix"
 wineboot -i >/dev/null 2>&1
 wine fakepose.exe 6 >fakepose.out 2>&1 &
 sleep 2
-wine npgame.exe 1006 "$(winepath -w "$work/NPClient64.dll")" | tee npgame.out
+wine npgame.exe 1003 "$(winepath -w "$work/NPClient64.dll")" | tee npgame.out
 wait
 cat fakepose.out
 
