@@ -5,8 +5,9 @@ Replacement driver and control software for the NaturalPoint TrackIR 5.
 Goals: survive suspend/hibernate, never crash, start automatically when a game
 wants head tracking, and keep fully adjustable per-axis curves.
 
-Status: **probe stage.** `tirprobe` talks to the camera directly and prints the
-IR blobs it sees. Nothing is fed to games yet.
+Status: **first game output.** `trackkat` tracks the TrackClip and serves the
+pose to games through its own `NPClient` DLLs, like NaturalPoint's software.
+`tirprobe` is the diagnostic tool.
 
 Supported hardware: TrackIR 5 revision 3 (USB id `131D:0159`).
 
@@ -34,6 +35,29 @@ driver instead.
 To undo: Device Manager → the TrackIR → Update driver → Browse my computer →
 Let me pick → choose NaturalPoint's driver. Reinstalling the TrackIR software
 also restores it.
+
+## Using trackkat with games
+
+1. Quit NaturalPoint's TrackIR software for good; trackkat replaces it.
+2. Run `trackkat.exe` once from the unzipped folder. It registers that folder
+   as where games find `NPClient`, writes `trackkat.conf` there, and starts
+   tracking. Keep the folder where it is: games load the DLLs from it, and
+   start `trackkat.exe` from it themselves when it isn't running.
+3. Face the camera and press F12 (recenter). Type `c` and Enter in its window
+   once, then turn your head left and right, to calibrate which way is up.
+4. Start the game. Its TrackIR support should find trackkat; the camera's
+   second green light shows when a game is reading the pose.
+
+Keys work from anywhere, including inside games:
+
+- **F12** recenters. A game's own "recenter TrackIR" binding does too.
+- **F9** pauses: games see your head held still until you press it again.
+
+Change them in `trackkat.conf`, e.g. `pause = Ctrl+F9`, then restart
+trackkat.
+
+If the camera is unplugged, or the PC sleeps, trackkat waits and picks it up
+again when it comes back.
 
 ## Running the probe
 

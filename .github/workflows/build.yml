@@ -13,13 +13,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install libusb
+      - name: Install libusb and C compilers
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-libusb
+          install: >-
+            mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-i686-gcc
+
+      - name: Build NPClient DLLs
+        shell: msys2 {0}
+        run: |
+          flags="-std=c11 -Wall -Wextra -Werror -O2 -s -shared -static-libgcc -Wl,--kill-at"
+          /ucrt64/bin/gcc $flags -o NPClient64.dll npclient/npclient.c
+          /mingw32/bin/gcc $flags -o NPClient.dll npclient/npclient.c
 
       - uses: haskell-actions/setup@v2
         id: haskell
@@ -54,9 +64,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          $exe = cabal list-bin tirprobe `
-            --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
-          Copy-Item $exe dist\
+          foreach ($name in "tirprobe", "trackkat") {
+            $exe = cabal list-bin $name `
+              --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
+            Copy-Item $exe dist\
+          }
+          Copy-Item NPClient.dll, NPClient64.dll dist\
           Copy-Item "$env:USB_PREFIX\bin\libusb-1.0.dll" dist\
           Copy-Item README.md dist\
 
