@@ -8,6 +8,8 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +62,20 @@ jobs:
         with:
           name: trackkat-windows
           path: dist
+
+      # Artifacts need a GitHub login to download; release assets don't.
+      - name: Publish dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path dist\* -DestinationPath trackkat-windows.zip
+          gh release delete dev --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create dev trackkat-windows.zip --prerelease --target $env:GITHUB_SHA `
+            --title "Development build" `
+            --notes "Latest build of main ($env:GITHUB_SHA). Download trackkat-windows.zip below."
 
   linux:
     runs-on: ubuntu-latest
