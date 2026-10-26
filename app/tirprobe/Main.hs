@@ -1,8 +1,9 @@
 -- | tirprobe: talk to a TrackIR 5 and print what it sees.
 module Main (main) where
 
+import Control.Concurrent (forkIO)
 import Control.Exception (catch)
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, forever, void, when)
 import Data.IORef
 import GHC.Clock (getMonotonicTime)
 import System.Environment (getArgs)
@@ -13,23 +14,35 @@ import Text.Read (readMaybe)
 
 import TrackKat.Camera
 import TrackKat.Frame
+import TrackKat.Linear (norm)
+import TrackKat.Pose
 import qualified TrackKat.USB as USB
 
 data Options = Options
   { optSettings :: Settings
   , optRaw :: Bool
   , optList :: Bool
+  , optBlobs :: Bool
+  , optModel :: Model
+  , optFocal :: Double
   }
 
 usage :: String
 usage =
   unlines
-    [ "usage: tirprobe [--threshold N] [--ir 5|6|7] [--no-status-led] [--raw]"
+    [ "usage: tirprobe [--blobs] [--clip LR,LT,RT] [--focal F] [--threshold N]"
+    , "                [--ir 5|6|7] [--no-status-led] [--raw]"
     , "       tirprobe --list"
     , ""
+    , "Shows head pose relative to where you were when you last pressed Enter."
+    , ""
+    , "  --blobs           show the raw blob positions instead of the pose"
+    , "  --clip LR,LT,RT   reflector spacing in mm: left-right, left-top,"
+    , "                    right-top (default: linuxtrack's TrackClip, 134,129,129)"
+    , "  --focal F         camera focal length in pixels (default 660)"
     , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
     , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
-    , "  --no-status-led   leave the green light off"
+    , "  --no-status-led   leave the green lights off"
     , "  --raw             also hex-dump every USB transfer"
     , "  --list            list all USB devices and whether we can open them"
     , ""
@@ -40,6 +53,13 @@ parseArgs :: [String] -> Options -> Either String Options
 parseArgs [] o = Right o
 parseArgs ("--raw" : r) o = parseArgs r o {optRaw = True}
 parseArgs ("--list" : r) o = parseArgs r o {optList = True}
+parseArgs ("--blobs" : r) o = parseArgs r o {optBlobs = True}
+parseArgs ("--focal" : n : r) o | Just v <- readMaybe n, v > 0 = parseArgs r o {optFocal = v}
+parseArgs ("--clip" : spec : r) o
+  | [Just lr, Just lt, Just rt] <- map readMaybe (splitOn ',' spec)
+  , Just m <- triangle lr lt rt =
+      parseArgs r o {optModel = m}
+  | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
 parseArgs ("--no-status-led" : r) o = parseArgs r o {optSettings = (optSettings o) {statusLed = False}}
 parseArgs ("--threshold" : n : r) o | Just v <- readMaybe n = parseArgs r o {optSettings = (optSettings o) {threshold = v}}
 parseArgs ("--ir" : n : r) o | Just v <- readMaybe n = parseArgs r o {optSettings = (optSettings o) {irBrightness = v}}
@@ -49,7 +69,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   args <- getArgs
-  opts <- case parseArgs args (Options defaultSettings False False) of
+  opts <- case parseArgs args (Options defaultSettings False False False trackClip (focal defaultIntrinsics)) of
     Right o -> pure o
     Left err -> hPutStrLn stderr (err ++ "\n\n" ++ usage) >> exitFailure
   let logger = putStrLn . ("# " ++)
@@ -82,17 +102,57 @@ listAll ctx = do
     printf "%04X:%04X  %s%s\n" (USB.devVendor d) (USB.devProduct d) status
       (if USB.devVendor d == vendorId then "   <-- NaturalPoint" else "" :: String)
 
+splitOn :: Char -> String -> [String]
+splitOn c str = case break (== c) str of
+  (a, []) -> [a]
+  (a, _ : rest) -> a : splitOn c rest
+
 run :: Options -> Camera -> IO ()
 run opts cam = do
-  putStrLn "# tracking; Ctrl-C to stop"
+  putStrLn "# tracking; press Enter to recenter, Ctrl-C to stop"
   lastPrint <- newIORef 0
   frames <- newIORef (0 :: Int)
-  let loop = do
+  previous <- newIORef Nothing
+  reference <- newIORef Nothing
+  recenter <- newIORef True
+  -- First green light shows whether we're tracking, once that has held
+  -- steady for a moment.
+  ledOn <- newIORef False
+  ledSince <- newIORef (0, False)
+  let updateLed tracking = do
+        now <- getMonotonicTime
+        (since, was) <- readIORef ledSince
+        when (tracking /= was) $ writeIORef ledSince (now, tracking)
+        shown <- readIORef ledOn
+        when (tracking == was && tracking /= shown && now - since > 0.25) $ do
+          setLeds cam tracking False
+          writeIORef ledOn tracking
+  void . forkIO . forever $ getLine >> writeIORef recenter True
+  let intrinsics = defaultIntrinsics {focal = optFocal opts}
+      model = optModel opts
+      track stripes = do
+        let blobs = stripesToBlobs 15 2500 stripes
+        guess <- readIORef previous
+        case identify [(blobX b, blobY b) | b <- blobs] >>= solvePose intrinsics model guess of
+          Nothing -> do
+            writeIORef previous Nothing
+            pure (Left (length blobs))
+          Just (pose, err) -> do
+            writeIORef previous (Just pose)
+            again <- atomicModifyIORef' recenter (\r -> (False, r))
+            when again $ do
+              writeIORef reference (Just pose)
+              putStrLn "# recentered"
+            ref <- maybe pose id <$> readIORef reference
+            pure (Right (relativePose model ref pose, norm (poseT pose), err))
+      loop = do
         pkts <- readPackets cam
         forM_ pkts $ \p -> do
           when (optRaw opts) $ putStrLn ("raw " ++ describeRaw p)
           case p of
             Frame n stripes -> do
+              tracked <- if optBlobs opts then pure (Left 0) else track stripes
+              when (not (optBlobs opts)) $ updateLed (either (const False) (const True) tracked)
               modifyIORef' frames (+ 1)
               now <- getMonotonicTime
               t0 <- readIORef lastPrint
@@ -101,12 +161,23 @@ run opts cam = do
                 writeIORef frames 0
                 writeIORef lastPrint now
                 let fps = fromIntegral count / (now - t0) :: Double
-                    blobs = stripesToBlobs 4 2500 stripes
-                putStrLn (summary n fps blobs)
+                    blobs = stripesToBlobs 15 2500 stripes
+                putStrLn $
+                  if optBlobs opts
+                    then summary n fps blobs
+                    else either lost showPose tracked
             Corrupt why _ -> putStrLn ("# corrupt packet: " ++ why)
             _ -> pure ()
         loop
   loop
+
+lost :: Int -> String
+lost n = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
+
+showPose :: (HeadPose, Double, Double) -> String
+showPose (hp, dist, err) =
+  printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
+    (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp) dist err
 
 summary :: Integral a => a -> Double -> [Blob] -> String
 summary n fps blobs =

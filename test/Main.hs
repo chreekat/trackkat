@@ -7,6 +7,8 @@ import Data.IORef
 import System.Exit (exitFailure)
 
 import TrackKat.Frame
+import TrackKat.Linear
+import TrackKat.Pose
 import TrackKat.Protocol
 
 main :: IO ()
@@ -50,6 +52,42 @@ main = do
     _ -> False
 
   check "status reply" $ fmap statusReady (parseStatus (B.pack [0x07, 0x20, 0, 1, 0, 0, 0])) == Just True
+
+  -- Pose: project known head poses and recover them.
+  let deg = (* (pi / 180))
+      rotYXZ y p r = rodrigues (V3 0 (deg y) 0) `mulMM` rodrigues (V3 (deg p) 0 0) `mulMM` rodrigues (V3 0 0 (deg r))
+      reference = Pose identity (V3 0 0 700)
+      poses =
+        [ (y, p, r, dt0)
+        | (y, p, r) <- [(0, 0, 0), (20, 0, 0), (-35, 10, 0), (10, -15, 8), (0, 0, -20), (40, 20, 10)]
+        , dt0 <- [V3 0 0 0, V3 30 (-20) 50]
+        ]
+  forM_ poses $ \(y, p, r, dt) -> do
+    let truth = Pose (rotYXZ y p r) (V3 0 0 700 ^+^ dt)
+        img = (project defaultIntrinsics truth (mLeft trackClip), project defaultIntrinsics truth (mRight trackClip), project defaultIntrinsics truth (mTop trackClip))
+        -- Start from a pose a few degrees and mm off, as frame-to-frame tracking would.
+        guess = Pose (rotYXZ (y + 3) (p - 2) (r + 2)) (V3 0 0 710 ^+^ dt)
+    case solvePose defaultIntrinsics trackClip (Just guess) img of
+      Nothing -> check ("solve " ++ show (y, p, r)) False
+      Just (sol, err) -> do
+        let hp = relativePose trackClip reference sol
+            V3 ex ey ez = (mulMV (poseR truth) (mPivot trackClip) ^+^ poseT truth) ^-^ (mPivot trackClip ^+^ V3 0 0 700)
+        check ("reprojection " ++ show (y, p, r, err)) (err < 1e-3)
+        check ("angles " ++ show (y, p, r) ++ " got " ++ show hp)
+          (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
+        check ("translation " ++ show hp) (all (< 0.1) [abs (tx hp - ex), abs (ty hp - ey), abs (tz hp - ez)])
+
+  -- With no previous pose, start from "facing the camera"; fine for modest angles.
+  forM_ [(15, 5, 0), (-10, -10, 5)] $ \(y, p, r) -> do
+    let truth = Pose (rotYXZ y p r) (V3 40 (-30) 650)
+        img = (project defaultIntrinsics truth (mLeft trackClip), project defaultIntrinsics truth (mRight trackClip), project defaultIntrinsics truth (mTop trackClip))
+    case solvePose defaultIntrinsics trackClip Nothing img of
+      Just (sol, _) -> let hp = relativePose trackClip reference sol
+                        in check ("cold start " ++ show (y, p, r) ++ " got " ++ show hp)
+                             (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
+      Nothing -> check "cold start solved" False
+
+  check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
   n <- readIORef failures
   if n == 0 then putStrLn "all tests passed" else exitFailure

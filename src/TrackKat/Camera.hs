@@ -14,6 +14,7 @@ module TrackKat.Camera
   , productIdV3
   , withCamera
   , readPackets
+  , setLeds
   , Log
   , hex
   ) where
@@ -21,7 +22,7 @@ module TrackKat.Camera
 import Control.Concurrent (threadDelay)
 import Control.Exception (Exception, bracket_, finally, throwIO, try)
 import Control.Monad (replicateM_, void)
-import Data.Bits (shiftL, shiftR, (.&.))
+import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString as B
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Word (Word16, Word8)
@@ -44,7 +45,7 @@ inEp = 0x82
 data Settings = Settings
   { threshold :: Int     -- ^ pixel brightness cut-off, 30..253
   , irBrightness :: Int  -- ^ IR illuminator level, 5..7
-  , statusLed :: Bool    -- ^ show the green "tracking" light
+  , statusLed :: Bool    -- ^ use the two green lights (see 'setLeds')
   }
   deriving (Show)
 
@@ -55,6 +56,7 @@ data Camera = Camera
   { camHandle :: USB.Handle
   , camSeed :: IORef Seed
   , camLog :: Log
+  , camLedsEnabled :: Bool
   }
 
 data OpenError
@@ -72,7 +74,7 @@ withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
 withCamera ctx logger settings act = do
   (h, _) <- openOrExplain
   seed <- newIORef . newSeed =<< getMonotonicTimeNSec
-  let cam = Camera h seed logger
+  let cam = Camera h seed logger (statusLed settings)
   (`finally` USB.close h) $ do
     explainClaim (USB.claim h)
     bracket_ (initialise cam settings >> start cam settings) (shutdown cam) (act cam)
@@ -132,8 +134,15 @@ setIrBrightness :: Camera -> Int -> IO ()
 setIrBrightness cam level =
   setIrBrightnessRaw cam ((case max 5 (min 7 level) of 5 -> 150; 6 -> 250; _ -> 350) `shiftL` 4)
 
-setStatusLed :: Camera -> Bool -> IO ()
-setStatusLed cam running = send cam (Cmd4 0x19 0x04 0x00 (if running then 0x22 else 0x33))
+-- | Set the two green lights on the front of the camera. NaturalPoint uses
+-- the first for "tracking the reflectors" and the second for "a game is using
+-- the tracking". Does nothing if the lights were disabled in 'Settings'.
+--
+-- Each command pauses for 50 ms, so only call this when the state changes.
+setLeds :: Camera -> Bool -> Bool -> IO ()
+setLeds cam first second
+  | camLedsEnabled cam = send cam (Cmd4 0x19 0x04 0x00 ((if first then 0x20 else 0) .|. (if second then 0x02 else 0)))
+  | otherwise = pure ()
 
 -- | Discard anything the camera has queued.
 drain :: Camera -> IO ()
@@ -201,7 +210,7 @@ start cam s = do
   send cam (Cmd4 0x19 0x03 0x00 0x05)
   send cam (Cmd2 0x1A 0x04)
   setIrLed cam True
-  setStatusLed cam (statusLed s)
+  send cam (Cmd4 0x19 0x04 0x00 0x00)
 
 -- | Stop video and leave the camera as linuxtrack does on close.
 shutdown :: Camera -> IO ()

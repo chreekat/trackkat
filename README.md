@@ -37,23 +37,32 @@ also restores it.
 
 ## Running the probe
 
-Open a terminal in the folder with `tirprobe.exe` and run:
+Open a terminal in the folder with `tirprobe.exe` and run `tirprobe`. Wear the
+TrackClip, face the camera and press **Enter** to recenter. About ten times a
+second it prints your head pose relative to that position:
 
 ```
-tirprobe
+yaw   +3.2  pitch   -1.0  roll   +0.4   x    +2  y    -1  z    +5 mm   distance  812 mm  fit 0.00 px
 ```
 
-Wear the TrackClip and move your head. Expect a line roughly ten times a second
-like
+The first green light on the camera shows when all three reflectors are being
+tracked.
 
-```
-frame  42  120.0 fps  3 blobs  ( 321.4,  210.2)   38px ...
-```
+Options:
 
-Options: `--threshold N` (30–253, default 140), `--ir 5|6|7` (illuminator
-brightness), `--no-status-led`, `--raw` (hex-dump every USB transfer; use this
-when reporting problems: `tirprobe --raw > probe.txt`). Ctrl-C stops the camera
-cleanly.
+- `--clip LR,LT,RT`: your clip's reflector spacing in mm, centre to centre:
+  left–right, left–top, right–top (as seen from the camera). The angles
+  depend on the shape of this triangle, so measuring your clip is worthwhile.
+- `--focal F`: camera focal length in pixels (default 660, from the 51.7°
+  field of view). Only affects the distance and the size of the angles.
+- `--blobs`: show raw blob positions instead of the pose.
+- `--threshold N` (30–253, default 140), `--ir 5|6|7` (illuminator
+  brightness), `--no-status-led`.
+- `--raw`: hex-dump every USB transfer; use this when reporting problems:
+  `tirprobe --raw > probe.txt`.
+- `--list`: list every USB device and whether it can be opened.
+
+Ctrl-C stops the camera cleanly.
 
 ## Building
 

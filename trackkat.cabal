@@ -18,6 +18,8 @@ library
   exposed-modules:
     TrackKat.Camera
     TrackKat.Frame
+    TrackKat.Linear
+    TrackKat.Pose
     TrackKat.Protocol
     TrackKat.USB
   build-depends:
