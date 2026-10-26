@@ -10,6 +10,7 @@ module TrackKat.Camera (
     Settings (..),
     defaultSettings,
     OpenError (..),
+    CameraSilent (..),
     vendorId,
     productIdV3,
     withCamera,
@@ -80,6 +81,13 @@ data OpenError
 
 instance Exception OpenError
 
+-- | The camera stopped sending data without the USB connection failing, as
+-- after the computer sleeps.
+data CameraSilent = CameraSilent
+    deriving (Show)
+
+instance Exception CameraSilent
+
 -- | Find and initialise the camera, run the action, and shut the camera down
 -- again however the action exits. Video starts with 'withPackets'.
 withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
@@ -119,7 +127,8 @@ withCamera ctx logger settings act = do
 
 -- | Start video and run the action with a source of the camera's packets.
 -- The source blocks until a USB transfer arrives (or a second passes) and
--- returns the packets it completes.
+-- returns the packets it completes. It throws 'CameraSilent' once
+-- 'silenceLimit' seconds pass without data.
 --
 -- The camera drops data when its own buffer fills, so reads are queued with
 -- it before video starts, and kept queued by a thread that does nothing else.
@@ -130,12 +139,19 @@ withPackets cam act = do
     chunks <- newChan
     pending <- newIORef B.empty
     reading <- newEmptyMVar
+    lastData <- newIORef =<< getMonotonicTime
     let reader =
             USB.withStream (camContext cam) (camHandle cam) inEp 32 16384 $ \stream -> do
                 putMVar reading ()
                 forever (USB.pump stream 1000 >>= writeChan chunks)
         next = do
             chunk <- readChan chunks
+            now <- getMonotonicTime
+            if B.null chunk
+                then do
+                    since <- readIORef lastData
+                    when (now - since > silenceLimit) $ throwIO CameraSilent
+                else writeIORef lastData now
             atomicModifyIORef' pending $ \p ->
                 let (packets, rest) = parseStream (p <> chunk) in (rest, packets)
     withAsync reader $ \r -> do
@@ -143,6 +159,11 @@ withPackets cam act = do
         takeMVar reading
         start cam (camSettings cam)
         act next
+
+-- | Seconds without data before the camera counts as silent. With video on
+-- it sends a frame even when it sees no reflectors.
+silenceLimit :: Double
+silenceLimit = 3
 
 send :: Camera -> Command -> IO ()
 send cam cmd = do
