@@ -16,6 +16,7 @@ library
   import:           shared
   hs-source-dirs:   src
   exposed-modules:
+    TrackKat.Calibration
     TrackKat.Camera
     TrackKat.Config
     TrackKat.Frame

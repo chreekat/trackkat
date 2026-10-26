@@ -43,8 +43,8 @@ also restores it.
    as where games find `NPClient`, writes `trackkat.conf` there, and starts
    tracking. Keep the folder where it is: games load the DLLs from it, and
    start `trackkat.exe` from it themselves when it isn't running.
-3. Face the camera and press F12 (recenter). Type `c` and Enter in its window
-   once, then turn your head left and right, to calibrate which way is up.
+3. Face the camera and press F12 (recenter). trackkat works out the rest as
+   you look around (see [Calibration](#calibration)).
 4. Start the game. Its TrackIR support should find trackkat; the camera's
    second green light shows when a game is reading the pose.
 
@@ -55,6 +55,37 @@ Keys work from anywhere, including inside games:
 
 Recentering while the clip is out of sight centres the view at once; the
 pose you hold when the clip comes back becomes the new centre.
+
+### Calibration
+
+trackkat learns two things from how you move your head, and keeps them in
+`trackkat.calibration` beside `trackkat.exe`, so it carries on from where it
+left off:
+
+- **Which way is up.** The camera is usually tipped down at you, so its own
+  axes would mix some of a left-right turn into roll. trackkat takes up to
+  be the axis your head turns about when you glance left and right. Nods,
+  tilts and slow drifts don't count.
+- **Where your neck pivots.** The clip sits in front of, above and to one
+  side of the point your head turns about, so turning your head also moves
+  the clip. trackkat finds the point that stays still while you turn (and
+  your body doesn't) and measures movement there, so that turning your head
+  doesn't also move the view, and only leaning does.
+
+Both keep being refined while you play, with older movement counting less,
+so if you move the camera they follow within a few minutes of looking
+around (if you tip it by more than about 30 degrees, calibrate up again with
+`c`). Changes apply slowly enough not to move the view, and trackkat
+prints a line when one is worth mentioning:
+
+```
+Level learnt: camera tipped 14.2 degrees down and 1.3 to its right, from 900 degrees of head turning.
+Neck pivot learnt: 95 mm below the clip, 80 behind it and 60 to its right, from 40 head turns.
+```
+
+To calibrate up at once, type `c` and Enter in trackkat's window, then turn
+your head left and right for five seconds. Delete `trackkat.calibration` to
+start afresh; it explains its own format.
 
 ### Trying it out: trackdemo
 
@@ -126,10 +157,11 @@ second it prints your head pose relative to that position:
 yaw   +3.2  pitch   -1.0  roll   +0.4   x    +2  y    -1  z    +5 mm   distance  812 mm  fit 0.00 px
 ```
 
-Once per setup, calibrate which way is up: type `c`, press Enter, and turn
-your head left and right for five seconds. It prints the camera tilt it
-found. Until then, angles are measured about the camera's own axes, so a
-camera tipped downward mixes some yaw into roll.
+tirprobe learns which way is up and where your neck pivots as trackkat does,
+but starts afresh each time. To calibrate up at once: type `c`, press Enter,
+and turn your head left and right for five seconds. It prints the camera
+tilt it found. Until then, angles are measured about the camera's own axes,
+so a camera tipped downward mixes some yaw into roll.
 
 The first green light on the camera shows when all three reflectors are being
 tracked.

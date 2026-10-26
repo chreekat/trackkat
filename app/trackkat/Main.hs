@@ -6,19 +6,21 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), withAsync)
+import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, catch, catches, displayException)
 import Control.Monad (forM_, forever, unless, when)
 import Data.IORef
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
 import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
-import System.Directory (doesFileExist, getModificationTime)
+import System.Directory (doesFileExist, getModificationTime, renameFile)
 import System.Environment (getExecutablePath)
 import System.Exit (exitFailure)
 import System.FilePath (takeDirectory, (</>))
 import System.IO
 import Text.Printf (printf)
 
+import TrackKat.Calibration
 import TrackKat.Camera
 import TrackKat.Config
 import TrackKat.Frame (Packet (..))
@@ -56,8 +58,9 @@ main = do
         "Recenter: %s   Pause: %s   (Enter also recenters, c Enter calibrates level)\n"
         (renderBinding (recenterKey config))
         (renderBinding (pauseKey config))
-    session <- newSession (response config)
-    withAsync (console session) $ \_ -> withAsync (watchSettings settingsFile session stamp config) $ \_ -> forever $ do
+    let calibrationFile = dir </> "trackkat.calibration"
+    session <- newSession (response config) =<< loadCalibration calibrationFile
+    withAsync (console session) $ \_ -> withAsync (watchSettings settingsFile session stamp config) $ \_ -> withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ -> forever $ do
         (USB.withContext $ \ctx -> withCamera ctx (putStrLn . ("# " ++)) defaultSettings (track session))
             `catches` [ Handler $ \e -> putStrLn (explain e)
                       , Handler $ \e -> putStrLn ("USB error: " ++ displayException (e :: USB.USBError))
@@ -84,6 +87,33 @@ loadConfig path = do
                 Left err -> do
                     putStrLn (path ++ ": " ++ err)
                     exitFailure
+
+-- | Read what was learnt in earlier sessions, or start afresh.
+loadCalibration :: FilePath -> IO Calibration
+loadCalibration path = do
+    exists <- doesFileExist path
+    found <-
+        if exists
+            then (parseCalibration <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException)))
+            else pure (Left "not found")
+    case found of
+        Right c -> do
+            putStrLn (describeLevel c)
+            putStrLn (describePivot c)
+            pure c
+        Left err -> do
+            when exists $ putStrLn (path ++ ": " ++ err ++ "; starting afresh.")
+            putStrLn "No calibration yet: trackkat learns it as you turn your head."
+            pure defaultCalibration
+
+-- | Save each calibration handed over, only the latest when several wait,
+-- so that saving never holds up tracking. The file is replaced whole.
+saveCalibrations :: FilePath -> MVar Calibration -> IO ()
+saveCalibrations path pending = forever $ do
+    c <- takeMVar pending
+    let new = path ++ ".new"
+    (writeFile new (renderCalibration c) >> renameFile new path)
+        `catch` \e -> putStrLn ("Can't save the calibration: " ++ displayException (e :: IOException))
 
 -- | Parse the settings file, reading it whole so editors can replace it.
 readSettings :: FilePath -> IO (Either String Config)
@@ -136,17 +166,20 @@ data Session = Session
     -- ^ the pose games see while paused
     , sLatest :: IORef GamePose
     -- ^ the last pose sent
+    , sSaving :: MVar Calibration
+    -- ^ a calibration waiting to be saved
     }
 
-newSession :: Response -> IO Session
-newSession r =
+newSession :: Response -> Calibration -> IO Session
+newSession r c =
     Session
-        <$> newIORef (newTracker defaultIntrinsics defaultClip)
+        <$> newIORef (newTracker defaultIntrinsics defaultClip c)
         <*> newIORef r
         <*> newIORef newShaper
         <*> newIORef ClipLost
         <*> newIORef Nothing
         <*> newIORef still
+        <*> newEmptyMVar
 
 -- | Recenter on the next frame that shows the clip. If the clip is out of
 -- sight, games see the view centred straight away.
@@ -189,6 +222,7 @@ track s cam = do
                 (outcome, events) <- atomicModifyIORef' (sTracker s) $ \t ->
                     let (t', o, evs) = step now stripes t in (t', (o, evs))
                 mapM_ (putStrLn . describeEvent) events
+                forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
                 -- A new centre or level is a jump the shaper must not smooth.
                 when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
                 case outcome of
@@ -257,18 +291,28 @@ handleControls s seenRecenters = do
                 writeIORef (sPaused s) . Just =<< readIORef (sLatest s)
                 putStrLn "Paused: games see your head held still."
 
+-- | Refinements are applied slowly, so only a new centre or a requested
+-- calibration resets shaping.
 resetsShaping :: Event -> Bool
 resetsShaping Recentered = True
 resetsShaping (Calibrated _) = True
 resetsShaping _ = False
 
+-- | A calibration to save.
+learnt :: Event -> [Calibration]
+learnt (Calibrated c) = [c]
+learnt (Refined _ c) = [c]
+learnt _ = []
+
 describeEvent :: Event -> String
 describeEvent Recentered = "Recentered."
 describeEvent CalibrationStarted = "Calibrating: turn your head left and right."
 describeEvent CalibrationFailed = "Calibration failed: not enough turning, try again."
-describeEvent (Calibrated l) =
-    let (down, right) = cameraTilt l
+describeEvent (Calibrated c) =
+    let (down, right) = cameraTilt (estimatedLevel c)
      in printf "Calibrated: camera tipped %.1f degrees down, %.1f to its right." down right
+describeEvent (Refined LevelRefined c) = describeLevel c
+describeEvent (Refined PivotRefined c) = describePivot c
 
 status :: Outcome -> Maybe GamePose -> Bool -> String
 status outcome paused gameConnected =

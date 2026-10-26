@@ -3,10 +3,12 @@ module Main (main) where
 import Control.Monad (forM_, unless)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
+import Data.Either (isLeft)
 import Data.IORef
 import Data.Maybe (isNothing)
 import System.Exit (exitFailure)
 
+import TrackKat.Calibration
 import TrackKat.Config
 import TrackKat.Frame
 import TrackKat.GamePose
@@ -91,6 +93,7 @@ main = do
     let deg = (* (pi / 180))
         rotYXZ y p r = rodrigues (V3 0 (deg y) 0) `mulMM` rodrigues (V3 (deg p) 0 0) `mulMM` rodrigues (V3 0 0 (deg r))
         reference = Pose identity (V3 0 0 700)
+        neck = V3 0 160 50
         poses =
             [ (y, p, r, dt0)
             | (y, p, r) <- [(0, 0, 0), (20, 0, 0), (-35, 10, 0), (10, -15, 8), (0, 0, -20), (40, 20, 10)]
@@ -104,8 +107,8 @@ main = do
         case solvePose defaultIntrinsics trackClip (Just guess) img of
             Nothing -> check ("solve " ++ show (y, p, r)) False
             Just (sol, err) -> do
-                let hp = relativePose trackClip cameraLevel reference sol
-                    V3 ex ey ez = (mulMV (poseR truth) (mPivot trackClip) ^+^ poseT truth) ^-^ (mPivot trackClip ^+^ V3 0 0 700)
+                let hp = relativePose cameraLevel neck reference sol
+                    V3 ex ey ez = (mulMV (poseR truth) neck ^+^ poseT truth) ^-^ (neck ^+^ V3 0 0 700)
                 check ("reprojection " ++ show (y, p, r, err)) (err < 1e-3)
                 check
                     ("angles " ++ show (y, p, r) ++ " got " ++ show hp)
@@ -118,7 +121,7 @@ main = do
             img = (project defaultIntrinsics truth (mLeft trackClip), project defaultIntrinsics truth (mRight trackClip), project defaultIntrinsics truth (mTop trackClip))
         case solvePose defaultIntrinsics trackClip Nothing img of
             Just (sol, _) ->
-                let hp = relativePose trackClip cameraLevel reference sol
+                let hp = relativePose cameraLevel neck reference sol
                  in check
                         ("cold start " ++ show (y, p, r) ++ " got " ++ show hp)
                         (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
@@ -132,7 +135,7 @@ main = do
             img = (project defaultIntrinsics truth (mLeft headset), project defaultIntrinsics truth (mRight headset), project defaultIntrinsics truth (mTop headset))
         case solvePose defaultIntrinsics headset Nothing img of
             Just (sol, _) ->
-                let hp = relativePose headset cameraLevel reference sol
+                let hp = relativePose cameraLevel neck reference sol
                  in check
                         ("headset cold start " ++ show (y, p, r) ++ " got " ++ show hp)
                         (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
@@ -157,7 +160,7 @@ main = do
                 case observe (seenFrom (rotYXZ y p r) (V3 0 0 700)) of
                     Nothing -> check "levelled pose solved" False
                     Just sol -> do
-                        let hp = relativePose headset level neutral sol
+                        let hp = relativePose level neck neutral sol
                         check
                             ("levelled pose " ++ show (y, p, r) ++ " got " ++ show hp)
                             (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
@@ -171,7 +174,7 @@ main = do
         clipAt pose = concatMap (square . project defaultIntrinsics pose) [mLeft headset, mRight headset, mTop headset]
         facing = Pose identity (V3 0 0 700)
         turned = Pose (rotYXZ 20 0 0) (V3 0 0 700)
-        t0 = newTracker defaultIntrinsics headset
+        t0 = newTracker defaultIntrinsics headset defaultCalibration
         (t1, firstOut, firstEvents) = step 0 (clipAt facing) t0
         (t2, lostOut, lostEvents) = step 0.1 (take 5 (clipAt facing)) (request Recenter t1)
         (_, laterOut, laterEvents) = step 0.2 (clipAt turned) t2
@@ -260,6 +263,69 @@ main = do
         reloaded "pause = Ctrl+F9\nsteadiness = 80\nyaw = 10:10 45:120\n"
             == Right "Settings reloaded: pause = Ctrl+F9, steadiness = 80, yaw = 10:10 45:120"
     check "smoothing turned off" $ reloaded "smoothing = off\nsteadiness = 80\n" == Right "Settings reloaded: smoothing = off"
+
+    -- Learning from everyday movement: the camera tipped 13 degrees down and
+    -- 4 to its right watches a head turn about a neck pivot, with a little
+    -- noise in every pose. Ninety seconds of glancing left and right while
+    -- slowly nodding, then twenty of nodding alone.
+    let truePivot = V3 (-60) 90 70
+        neckAt = V3 0 50 800
+        wobble :: Int -> Double -> Double
+        wobble i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5
+        -- The head turned as given, its pivot at the given place in level axes.
+        headAt place y p r = seenFrom (rotYXZ y p r) (place ^-^ mulMV (rotYXZ y p r) truePivot)
+        noisy i (Pose r t) =
+            Pose
+                (rodrigues (V3 (deg 0.2 * wobble i 1) (deg 0.2 * wobble i 2) (deg 0.2 * wobble i 3)) `mulMM` r)
+                (t ^+^ V3 (wobble i 4) (wobble i 5) (2 * wobble i 6))
+        glancing sway =
+            [ (time, noisy i (headAt (neckAt ^+^ sway time) y p 0))
+            | i <- [0 .. 120 * 110 :: Int]
+            , let time = fromIntegral i / 120 :: Double
+                  (y, p)
+                    | time < 90 = (35 * sin (2 * pi * time / 2.5), 8 * sin (2 * pi * time / 7))
+                    | otherwise = (0, 15 * sin (2 * pi * time / 2))
+            ]
+        runLearner frames = foldl (\(l, rs) (time, pose) -> let (l', new) = learn time pose l in (l', rs ++ new)) (newLearner defaultCalibration, []) frames
+        (learnt, refinements) = runLearner (glancing (const (V3 0 0 0)))
+        c = learnerCalibration learnt
+        (tiltDown, tiltRight) = cameraTilt (estimatedLevel c)
+        (appliedDown, appliedRight) = cameraTilt (appliedLevel learnt)
+        straight = headAt neckAt 0 0 0
+    check ("learnt level " ++ show (tiltDown, tiltRight)) $ abs (tiltDown - 13) < 0.5 && abs (tiltRight - 4) < 0.5
+    check ("applied level " ++ show (appliedDown, appliedRight)) $ abs (appliedDown - 13) < 0.5 && abs (appliedRight - 4) < 0.5
+    check ("learnt pivot " ++ show (estimatedPivot c, pivotTurns c)) $ norm (estimatedPivot c ^-^ truePivot) < 5
+    check ("applied pivot " ++ show (appliedPivot learnt)) $ norm (appliedPivot learnt ^-^ truePivot) < 5
+    check ("refinements reported " ++ show (length refinements)) $
+        LevelRefined `elem` refinements && PivotRefined `elem` refinements
+    forM_ [(30, 0), (-40, 0), (0, 15), (25, -10)] $ \(y, p) -> do
+        let hp = relativePose (appliedLevel learnt) (appliedPivot learnt) straight (headAt neckAt y p 0)
+            moved = norm (V3 (tx hp) (ty hp) (tz hp))
+        check ("turning alone doesn't move " ++ show (y, p) ++ " got " ++ show hp) $
+            moved < 3 && abs (yaw hp - y) < 0.5 && abs (pitch hp - p) < 0.5 && abs (roll hp) < 0.5
+    let unlearnt = relativePose cameraLevel (appliedPivot (newLearner defaultCalibration)) straight (headAt neckAt 30 0 0)
+    check ("without learning, turning moves " ++ show unlearnt) $ norm (V3 (tx unlearnt) (ty unlearnt) (tz unlearnt)) > 20
+
+    -- Swaying the body while glancing mustn't drag the pivot far.
+    let (swaying, _) = runLearner (glancing (\time -> V3 (30 * sin (2 * pi * time / 3.7)) 0 (20 * sin (2 * pi * time / 5.3))))
+    check ("pivot while swaying " ++ show (estimatedPivot (learnerCalibration swaying))) $
+        norm (estimatedPivot (learnerCalibration swaying) ^-^ truePivot) < 15
+
+    -- Saving and loading.
+    let saved = renderCalibration c
+        closeV a b = norm (a ^-^ b) < 1e-3
+    case parseCalibration saved of
+        Left err -> check ("calibration loads: " ++ err) False
+        Right loaded -> do
+            check "calibration round-trips" $ renderCalibration loaded == saved
+            check "loaded level" $ angleBetween (levelUp (estimatedLevel loaded)) (levelUp (estimatedLevel c)) < 1e-3
+            check "loaded pivot" $ closeV (estimatedPivot loaded) (estimatedPivot c)
+            check "loaded evidence" $ abs (levelTurning loaded - levelTurning c) < 1e-3 && abs (pivotTurns loaded - pivotTurns c) < 1e-3
+            check "loaded calibration applies at once" $ closeV (appliedPivot (newLearner loaded)) (estimatedPivot c)
+    check "empty calibration file" $ fmap renderCalibration (parseCalibration "") == Right (renderCalibration defaultCalibration)
+    check "bad up" $ isLeft (parseCalibration "up = 0 0 0\n")
+    check "bad line" $ isLeft (parseCalibration "# fine\nnonsense\n")
+    check "unknown calibration setting" $ either id (const "") (parseCalibration "tilt = 3\n") == "line 1: unknown setting \"tilt\""
 
     -- Leaning with the view: the view turned 160 degrees to the right, to
     -- about 5 o'clock, and a lean to the user's left goes toward the

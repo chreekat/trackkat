@@ -2,6 +2,7 @@
 module TrackKat.Tracker (
     Tracker,
     newTracker,
+    trackerCalibration,
     Request (..),
     request,
     Event (..),
@@ -9,6 +10,7 @@ module TrackKat.Tracker (
     step,
 ) where
 
+import TrackKat.Calibration
 import TrackKat.Frame (Stripe, blobX, blobY, stripesToBlobs)
 import TrackKat.Linear (M33, mulMM, norm, transpose)
 import TrackKat.Pose
@@ -21,8 +23,13 @@ data Request = Recenter | Calibrate
 data Event
     = Recentered
     | CalibrationStarted
-    | Calibrated Level
+    | -- | The level was calibrated on request and applied at once; the
+      -- calibration with it.
+      Calibrated Calibration
     | CalibrationFailed
+    | -- | Everyday movement changed the calibration noticeably; what is
+      -- applied follows it slowly.
+      Refined Refinement Calibration
     deriving (Show)
 
 -- | What a frame showed.
@@ -38,8 +45,9 @@ data Outcome
       Lost Int
     deriving (Show)
 
-data Calibration
-    = Calibration
+-- | A requested calibration of level in progress.
+data Sweep
+    = Sweep
         -- | deadline, in seconds on the clock given to 'step'
         Double
         -- | rotations relative to the reference, newest first
@@ -51,15 +59,20 @@ data Tracker = Tracker
     , trPrevious :: Maybe Pose
     -- ^ last frame's pose, the solver's starting point
     , trReference :: Maybe Pose
-    , trLevel :: Level
-    , trCalibration :: Maybe Calibration
+    , trLearner :: Learner
+    , trSweep :: Maybe Sweep
     , trPending :: [Request]
     -- ^ oldest first
     }
 
--- | A tracker that recenters on the first frame it tracks.
-newTracker :: Intrinsics -> Model -> Tracker
-newTracker k m = Tracker k m Nothing Nothing cameraLevel Nothing [Recenter]
+-- | A tracker that starts from the given calibration and recenters on the
+-- first frame it tracks.
+newTracker :: Intrinsics -> Model -> Calibration -> Tracker
+newTracker k m c = Tracker k m Nothing Nothing (newLearner c) Nothing [Recenter]
+
+-- | What the tracker has learnt so far.
+trackerCalibration :: Tracker -> Calibration
+trackerCalibration = learnerCalibration . trLearner
 
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
@@ -78,25 +91,29 @@ maxBlobPixels = 2500
 step :: Double -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
 step now stripes t =
     case identify [(blobX b, blobY b) | b <- blobs] >>= solvePose (trIntrinsics t) (trModel t) (trPrevious t) of
-        Nothing -> (t{trPrevious = Nothing}, Lost (length blobs), [])
+        Nothing -> (t{trPrevious = Nothing, trLearner = lostSight (trLearner t)}, Lost (length blobs), [])
         Just (pose, fit) ->
             let (t1, requested) = foldl (handle pose) (t{trPrevious = Just pose, trPending = []}, []) (trPending t)
                 ref = maybe pose id (trReference t1)
-                (t2, calibrated) = calibrate pose ref t1
+                (learner, refinements) = learn now pose (trLearner t1)
+                (t2, calibrated) = calibrate pose ref t1{trLearner = learner}
+                applied = trLearner t2
              in ( t2
-                , Tracked (relativePose (trModel t2) (trLevel t2) ref pose) (norm (poseT pose)) fit
-                , reverse requested ++ calibrated
+                , Tracked (relativePose (appliedLevel applied) (appliedPivot applied) ref pose) (norm (poseT pose)) fit
+                , reverse requested ++ [Refined r (learnerCalibration learner) | r <- refinements] ++ calibrated
                 )
   where
     blobs = stripesToBlobs minBlobPixels maxBlobPixels stripes
     handle pose (acc, evs) Recenter = (acc{trReference = Just pose}, Recentered : evs)
     handle _ (acc, evs) Calibrate =
-        (acc{trCalibration = Just (Calibration (now + calibrationSeconds) [])}, CalibrationStarted : evs)
-    calibrate pose ref acc = case trCalibration acc of
+        (acc{trSweep = Just (Sweep (now + calibrationSeconds) [])}, CalibrationStarted : evs)
+    calibrate pose ref acc = case trSweep acc of
         Nothing -> (acc, [])
-        Just (Calibration deadline rots)
+        Just (Sweep deadline rots)
             | now < deadline ->
-                (acc{trCalibration = Just (Calibration deadline (poseR pose `mulMM` transpose (poseR ref) : rots))}, [])
+                (acc{trSweep = Just (Sweep deadline (poseR pose `mulMM` transpose (poseR ref) : rots))}, [])
             | otherwise -> case levelFromYaws rots of
-                Nothing -> (acc{trCalibration = Nothing}, [CalibrationFailed])
-                Just l -> (acc{trCalibration = Nothing, trLevel = l}, [Calibrated l])
+                Nothing -> (acc{trSweep = Nothing}, [CalibrationFailed])
+                Just l ->
+                    let acc' = acc{trSweep = Nothing, trLearner = calibrateLevel l (trLearner acc)}
+                     in (acc', [Calibrated (trackerCalibration acc')])
