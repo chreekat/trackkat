@@ -8,36 +8,19 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    needs: linux
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install libusb and C compilers
+      - name: Install libusb
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-libusb
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-i686-gcc
-
-      - name: Build NPClient DLLs
-        shell: msys2 {0}
-        run: |
-          flags="-std=c11 -Wall -Wextra -Werror -O2 -s -shared -static-libgcc -Wl,--kill-at"
-          # Report compiler output as annotations, which are readable without
-          # access to the log.
-          build() {
-            if ! out=$("$@" 2>&1); then
-              printf '%s\n' "$out" | sed 's/^/::error::/'
-              return 1
-            fi
-          }
-          build /ucrt64/bin/gcc $flags -o NPClient64.dll npclient/npclient.c
-          build /mingw32/bin/gcc $flags -o NPClient.dll npclient/npclient.c
+          install: mingw-w64-ucrt-x86_64-libusb
 
       - uses: haskell-actions/setup@v2
         id: haskell
@@ -68,6 +51,11 @@ jobs:
           cabal test all --test-show-details=direct `
             --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: npclient-dlls
+          path: npclient-dlls
+
       - name: Package
         shell: pwsh
         run: |
@@ -77,7 +65,7 @@ jobs:
               --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
             Copy-Item $exe dist\
           }
-          Copy-Item NPClient.dll, NPClient64.dll dist\
+          Copy-Item npclient-dlls\NPClient.dll, npclient-dlls\NPClient64.dll dist\
           Copy-Item "$env:USB_PREFIX\bin\libusb-1.0.dll" dist\
           Copy-Item README.md dist\
 
@@ -112,3 +100,18 @@ jobs:
       - run: cabal update
       - run: cabal build all --enable-tests
       - run: cabal test all --test-show-details=direct
+
+      # Games load these, 64- and 32-bit; the Windows job packages them.
+      - name: Build NPClient DLLs
+        run: |
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+          flags="-std=c11 -Wall -Wextra -Werror -O2 -s -shared -static-libgcc -Wl,--kill-at"
+          x86_64-w64-mingw32-gcc $flags -o NPClient64.dll npclient/npclient.c
+          i686-w64-mingw32-gcc $flags -o NPClient.dll npclient/npclient.c
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npclient-dlls
+          path: |
+            NPClient.dll
+            NPClient64.dll
