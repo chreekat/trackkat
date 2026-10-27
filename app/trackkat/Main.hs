@@ -36,10 +36,6 @@ import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 import TrackKat.Windows
 
--- | The headset clip this was developed with.
-defaultClip :: Model
-defaultClip = maybe (error "defaultClip") id (triangle 45 70 116 116)
-
 -- | How trackkat was started.
 data Start
     = ByHand
@@ -284,6 +280,9 @@ watchSettings path s = go
                             writeIORef (sSettings s) new
                             rebindHotkeys (hotkeyBindings new)
                             say (describeChanges config new)
+                            when (clip new /= clip config) $ do
+                                atomicModifyIORef' (sTracker s) (\t -> (setModel (clipModel (clip new)) t, ()))
+                                say "Tracking the clip's new shape; recentering."
                             showSettings text
                             go stamp' new
             _ -> go stamp config
@@ -319,7 +318,7 @@ data Session = Session
 newSession :: Config -> Calibration -> IO Session
 newSession config c =
     Session
-        <$> newIORef (newTracker defaultIntrinsics defaultClip c)
+        <$> newIORef (newTracker defaultIntrinsics (clipModel (clip config)) c)
         <*> newIORef config
         <*> newIORef newShaper
         <*> newIORef ClipLost
