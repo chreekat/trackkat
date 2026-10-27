@@ -99,8 +99,17 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$env:PATH;$env:USB_PREFIX\bin"
-          cabal build all --enable-tests `
-            --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
+          $out = cabal build all --enable-tests `
+            --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib" 2>&1 |
+            ForEach-Object { "$_" }
+          $rc = $LASTEXITCODE
+          $out
+          # The end of the output as an annotation, which shows without the log.
+          if ($rc -ne 0) {
+            $tail = ($out | Select-Object -Last 60 | ForEach-Object { $_ -replace '%', '%25' }) -join '%0A'
+            "::error title=Build failed::$tail"
+            exit $rc
+          }
 
       - name: Test
         shell: pwsh
