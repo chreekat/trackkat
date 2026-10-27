@@ -1,5 +1,5 @@
 -- | trackkat's settings file, as @name = value@ lines: hotkey and joystick
--- button bindings, smoothing and response curves.
+-- button bindings, smoothing, response curves and drift.
 module TrackKat.Config (
     Config (..),
     defaultConfig,
@@ -29,6 +29,7 @@ import Data.Foldable (traverse_)
 import Data.List (dropWhileEnd, findIndices, intercalate, nub)
 import Data.Maybe (fromMaybe)
 
+import TrackKat.Drift (Drift (..))
 import TrackKat.Number
 import TrackKat.Response
 
@@ -36,11 +37,12 @@ data Config = Config
     { recenterBindings :: [Binding]
     , pauseBindings :: [Binding]
     , response :: Response
+    , drift :: Drift
     }
     deriving (Eq, Show)
 
 -- | TrackIR's own keys; linear curves with gains tuned in DCS; strong
--- smoothing.
+-- smoothing; a centre that follows the head.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -57,6 +59,7 @@ defaultConfig =
                 , zCurve = gain 2.5
                 , lean = LeanWithView
                 }
+        , drift = Drift
         }
   where
     gain g = Curve [(1, g)]
@@ -132,6 +135,7 @@ setting (c, k@(Knobs on s r)) name value =
             "y" -> curve (\cv x -> x{yCurve = cv})
             "z" -> curve (\cv x -> x{zCurve = cv})
             "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
+            "drift" -> (\d -> (c{drift = d}, k)) <$> parseDrift value
             _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
@@ -183,6 +187,14 @@ renderConfig c =
         , "# looking up or down. lean = screen: leaning moves you the same way"
         , "# whichever way you look."
         , "lean = " ++ renderLean (lean r)
+        , ""
+        , "# drift = on: when you shift in your chair, the centre follows where"
+        , "# your head comes to rest, over a minute or two, too slowly to see."
+        , "# Only rest close to the centre counts, and only after a while there:"
+        , "# looking or leaning away, however long, doesn't move it. Recentering"
+        , "# still puts the centre where you are at once. drift = off keeps the"
+        , "# centre where you recentered."
+        , "drift = " ++ renderDrift (drift c)
         ]
   where
     r = response c
@@ -204,7 +216,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
-                ++ [("lean", renderLean (lean r))]
+                ++ [("lean", renderLean (lean r)), ("drift", renderDrift (drift c))]
 
 parseLean :: String -> Either String Lean
 parseLean "view" = Right LeanWithView
@@ -214,6 +226,15 @@ parseLean _ = Left "lean is view or screen"
 renderLean :: Lean -> String
 renderLean LeanWithView = "view"
 renderLean LeanWithScreen = "screen"
+
+parseDrift :: String -> Either String Drift
+parseDrift "on" = Right Drift
+parseDrift "off" = Right NoDrift
+parseDrift _ = Left "drift is on or off"
+
+renderDrift :: Drift -> String
+renderDrift Drift = "on"
+renderDrift NoDrift = "off"
 
 -- | The names of the settings, in the order the default file lists them.
 settingNames :: [String]

@@ -3,7 +3,6 @@
 Roughly in order.
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
-- Optional slow drift of the centre toward where the head rests.
 - Estimate the clip's shape from movement, for clips other than the
   developer's.
 - Find the source of the wiggle after a fast head turn (the view overshoots
