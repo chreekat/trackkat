@@ -26,5 +26,5 @@ Roughly in order.
 - Two identical controllers (e.g. a pair of T.16000Ms for "HOSAS"): they are
   told apart by sorting device paths, so unplugging one renumbers the other.
   Identify each by its USB port (or serial number, if it has one), so a
-  binding follows the stick in that port. The stick's left/right-handed
-  switch may change the HID identity; check when someone has a pair.
+  binding follows the stick in that port. The T.16000M's left/right-handed
+  switch doesn't change its USB identity, so it doesn't help.
