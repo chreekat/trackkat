@@ -277,7 +277,7 @@ saveSettings path = do
         Right text -> case editSettings edited text of
             Left err -> showSettingsMessage ("Not saved: " ++ err)
             Right new
-                | new == text -> showSettingsMessage "Nothing has changed."
+                | new == text -> pure ()
                 | otherwise -> do
                     -- Put in place whole, so it is never read half written.
                     let temp = path ++ ".new"
