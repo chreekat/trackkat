@@ -186,11 +186,32 @@ one with the new settings documented.
 - `smoothing = off` turns smoothing off altogether; `smoothing = on` turns it
   back on.
 - `yaw = 1:6`, and likewise `pitch`, `roll`, `x`, `y`, `z`: response
-  curves as input:output points, in degrees or mm. For example
+  curves, the same both sides of centre. Most simply a multiplier: `1:6`
+  turns the view 6 degrees for each degree you turn your head, so turning
+  30 degrees looks straight behind you. The defaults multiply yaw by 6,
+  pitch 7, roll 4, x 3, y 4 and z 2.5.
+
+  A centre precision from 0 to 100, as in `yaw = 1:6, precision 40`, makes
+  small movements gentler, for aiming and reading gauges, and larger ones
+  steeper, while the same head movement still reaches the end of the view:
+  180 degrees for yaw, 90 for pitch and roll, 300 mm for x, y and z. With
+  multiplier m, that end at R/m and precision p as a fraction k, a movement
+  x up to R/m becomes R·((1 − k)·u + k·u³) with u = x·m/R, the expo of
+  radio-controlled models: near centre the view moves m·(1 − k) times as
+  far as your head, at the end m·(1 + 2k) times, and past it carries on
+  that steeply. So `yaw = 1:6, precision 40` still looks straight behind
+  at 30 degrees, but a 5 degree glance turns the view 18 degrees rather than 30.
+
+  For any other shape, give input:output points, in degrees or mm, which
+  straight lines join, starting from 0:0. For example
   `yaw = 10:10 45:120` turns your view 120 degrees when you turn your head 45.
-  Past the last point the curve carries straight on, so one point makes a
-  straight line: the defaults multiply yaw by 6, pitch 7, roll 4, x 3, y 4
-  and z 2.5.
+  Past the last point the curve carries straight on.
+
+  In trackkat's window each axis has a multiplier, a centre precision and
+  a plot of its curve, with a dot where your head is now. **Advanced**
+  shows the curves as text instead, for points; an axis with points shows
+  as a custom curve, and the window leaves it alone unless you change its
+  multiplier or precision.
 - `lean = view`: leaning moves you relative to where you look in the game.
   With the view turned to look behind you, leaning left (toward the left of
   the screen) leans out of the right side of the cockpit, as your body would

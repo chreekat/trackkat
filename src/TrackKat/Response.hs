@@ -2,7 +2,13 @@
 -- per-axis response curves, and turning leans to follow the view.
 module TrackKat.Response (
     Curve (..),
+    Multiplier (..),
     applyCurve,
+    reach,
+    yawRange,
+    pitchRange,
+    rollRange,
+    leanRange,
     Smoothing (..),
     tuned,
     Lean (..),
@@ -15,16 +21,55 @@ module TrackKat.Response (
 
 import TrackKat.Pose (HeadPose (..))
 
--- | A response curve: points of (input, output), with input increasing and
--- an implied point at the origin. In degrees for rotations, mm for
--- translations. The same on both sides of centre.
-newtype Curve = Curve [(Double, Double)]
+-- | A response curve, the same on both sides of centre: in degrees for
+-- rotations, mm for translations.
+data Curve
+    = -- | Points of (input, output), with input increasing and an implied
+      -- point at the origin, joined by straight lines. Past the last point
+      -- the curve continues along the last segment, so one point is a
+      -- straight line.
+      Points [(Double, Double)]
+    | -- | A multiplier made gentle near centre and steeper toward the edge,
+      -- keeping the head movement that reaches the end of the view's range
+      -- where the multiplier alone puts it: the expo of radio-controlled
+      -- models.
+      Expo Multiplier
     deriving (Eq, Show)
 
--- | Interpolate linearly between the curve's points, and past the last one
--- continue along the last segment.
+-- | A multiplier with a centre precision.
+data Multiplier = Multiplier
+    { factor :: Double
+    -- ^ above 0
+    , precision :: Double
+    -- ^ 0 to 100: 0 is the multiplier alone, 100 is flat at centre
+    , viewRange :: Double
+    -- ^ the end of the view's range, as one of the ranges below
+    }
+    deriving (Eq, Show)
+
+-- | The ends of the views' ranges: looking straight behind, straight up or
+-- down, and tipped onto your side; and leaning 300 mm, about as far as a
+-- cockpit lets you. cbits/gui.c draws the axes to the same ranges.
+yawRange, pitchRange, rollRange, leanRange :: Double
+yawRange = 180
+pitchRange = 90
+rollRange = 90
+leanRange = 300
+
+-- | The head movement that, multiplied, reaches the end of the view's range.
+reach :: Multiplier -> Double
+reach m = viewRange m / factor m
+
+-- | Where a curve takes a head movement.
+--
+-- An expo with multiplier m, reach R and precision as a fraction k takes a
+-- movement x up to R to R·m·((1 - k)·u + k·u³), with u = x / R: at centre
+-- the slope is m·(1 - k), rising to m·(1 + 2k) at the reach, where the
+-- output is the end of the range whatever the precision. The slope is never
+-- negative, so the view never turns back. Past the reach the curve
+-- continues along its slope there.
 applyCurve :: Curve -> Double -> Double
-applyCurve (Curve points) x = signum x * go (0, 0) points
+applyCurve (Points points) x = signum x * go (0, 0) points
   where
     a = abs x
     go (x0, y0) ((x1, y1) : rest)
@@ -32,6 +77,14 @@ applyCurve (Curve points) x = signum x * go (0, 0) points
         | otherwise = go (x1, y1) rest
     go _ [] = a
     slope x0 y0 x1 y1 = if x1 == x0 then 0 else (y1 - y0) / (x1 - x0)
+applyCurve (Expo e) x
+    | a <= r = signum x * viewRange e * ((1 - k) * u + k * u ^ (3 :: Int))
+    | otherwise = signum x * (viewRange e + (a - r) * factor e * (1 + 2 * k))
+  where
+    a = abs x
+    r = reach e
+    u = a / r
+    k = precision e / 100
 
 -- | The 1€ filter's settings (Casiez, Roussel and Vogel, CHI 2012): how
 -- strongly to smooth a still head, and how quickly smoothing gives way as it

@@ -62,7 +62,7 @@ defaultConfig =
         , drift = Drift
         }
   where
-    gain g = Curve [(1, g)]
+    gain g = Points [(1, g)]
 
 -- | A key with modifiers held, or a joystick button numbered from 1.
 data Binding = Key [Modifier] String | JoystickButton Joystick Int
@@ -118,7 +118,7 @@ parseConfig str = do
 setting :: (Config, Knobs) -> String -> String -> Either String (Config, Knobs)
 setting (c, k@(Knobs on s r)) name value =
     let resp = response c
-        curve f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve value
+        curve range f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve range value
      in case name of
             "recenter" -> (\b -> (c{recenterBindings = b}, k)) <$> parseBindings value
             "pause" -> (\b -> (c{pauseBindings = b}, k)) <$> parseBindings value
@@ -128,12 +128,12 @@ setting (c, k@(Knobs on s r)) name value =
                 _ -> Left "smoothing is on or off"
             "steadiness" -> (\v -> (c, Knobs on v r)) <$> parseKnob name value
             "responsiveness" -> (\v -> (c, Knobs on s v)) <$> parseKnob name value
-            "yaw" -> curve (\cv x -> x{yawCurve = cv})
-            "pitch" -> curve (\cv x -> x{pitchCurve = cv})
-            "roll" -> curve (\cv x -> x{rollCurve = cv})
-            "x" -> curve (\cv x -> x{xCurve = cv})
-            "y" -> curve (\cv x -> x{yCurve = cv})
-            "z" -> curve (\cv x -> x{zCurve = cv})
+            "yaw" -> curve yawRange (\cv x -> x{yawCurve = cv})
+            "pitch" -> curve pitchRange (\cv x -> x{pitchCurve = cv})
+            "roll" -> curve rollRange (\cv x -> x{rollCurve = cv})
+            "x" -> curve leanRange (\cv x -> x{xCurve = cv})
+            "y" -> curve leanRange (\cv x -> x{yCurve = cv})
+            "z" -> curve leanRange (\cv x -> x{zCurve = cv})
             "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
             "drift" -> (\d -> (c{drift = d}, k)) <$> parseDrift value
             _ -> Left ("unknown setting " ++ show name)
@@ -169,11 +169,22 @@ renderConfig c =
         , "steadiness = " ++ renderNumber s
         , "responsiveness = " ++ renderNumber rs
         , ""
-        , "# Response curves, as input:output points: degrees for yaw, pitch and"
-        , "# roll, mm for x, y and z. Straight lines join the points, starting"
-        , "# from 0:0, and carry on past the last one. The same both sides of"
-        , "# centre. For example, a deadzone then 1:1 is 0.5:0 1.5:1, and"
-        , "# 10:10 45:120 looks well behind you when you turn your head 45 degrees."
+        , "# Response curves: how far the view turns or moves as your head does,"
+        , "# the same both sides of centre. Most simply a multiplier, as 1:6: the"
+        , "# view turns 6 degrees for each degree your head turns, so turning"
+        , "# 30 degrees looks straight behind you."
+        , "#"
+        , "# A centre precision, from 0 to 100, makes small movements gentler and"
+        , "# large ones steeper, while the same head movement still reaches the"
+        , "# end of the view: 180 degrees for yaw, 90 for pitch and roll, 300 mm"
+        , "# for x, y and z. For example:"
+        , "#   yaw = 1:6, precision 40"
+        , "#"
+        , "# For any other shape, give input:output points: degrees for yaw, pitch"
+        , "# and roll, mm for x, y and z. Straight lines join the points, starting"
+        , "# from 0:0, and carry on past the last one. For example, a deadzone then"
+        , "# 1:1 is 0.5:0 1.5:1, and 10:10 45:120 looks well behind you when you"
+        , "# turn your head 45 degrees."
         , "yaw = " ++ renderCurve (yawCurve r)
         , "pitch = " ++ renderCurve (pitchCurve r)
         , "roll = " ++ renderCurve (rollCurve r)
@@ -281,9 +292,25 @@ editSettings new str
                 comment = dropWhile (/= '#') rest
              in dropWhileEnd isSpace name ++ " = " ++ v ++ (if null comment then "" else " " ++ comment)
 
--- | Read curve points like @0.5:0 1.5:1@, inputs increasing from zero.
-parseCurve :: String -> Either String Curve
-parseCurve value = do
+-- | Read a curve: points like @0.5:0 1.5:1@, inputs increasing from zero,
+-- or a multiplier with a centre precision like @1:6, precision 40@, given
+-- the end of the axis's view.
+parseCurve :: Double -> String -> Either String Curve
+parseCurve range value = case splitOn ',' value of
+    [points] -> Points <$> parsePoints points
+    [points, extra] -> do
+        m <- case parsePoints points of
+            Right [(i, o)] | o > 0 -> Right (o / i)
+            Right _ -> Left "a centre precision goes with one input:output point, both above 0, like 1:6, precision 40"
+            Left err -> Left err
+        p <- case words extra of
+            ["precision", n] -> parseKnob "precision" n
+            _ -> Left ("expected precision and a number, not " ++ show (trim extra))
+        Right (Expo (Multiplier m p range))
+    _ -> Left "a curve has at most one comma, before its precision"
+
+parsePoints :: String -> Either String [(Double, Double)]
+parsePoints value = do
     points <- traverse point (words value)
     let inputs = map fst points
     if null points
@@ -291,14 +318,15 @@ parseCurve value = do
         else
             if or (zipWith (>=) (0 : inputs) inputs) || any ((< 0) . fst) points
                 then Left "curve inputs must be positive and increasing"
-                else Right (Curve points)
+                else Right points
   where
     point w = case break (== ':') w of
         (i, ':' : o) | Just a <- parseNumber i, Just b <- parseNumber o -> Right (a, b)
         _ -> Left ("expected input:output, not " ++ show w)
 
 renderCurve :: Curve -> String
-renderCurve (Curve points) = unwords [renderNumber a ++ ":" ++ renderNumber b | (a, b) <- points]
+renderCurve (Points points) = unwords [renderNumber a ++ ":" ++ renderNumber b | (a, b) <- points]
+renderCurve (Expo e) = "1:" ++ renderNumber (factor e) ++ ", precision " ++ renderNumber (precision e)
 
 -- | Read a smoothing knob, a number from 0 to 100.
 parseKnob :: String -> String -> Either String Double
