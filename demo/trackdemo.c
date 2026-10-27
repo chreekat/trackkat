@@ -642,7 +642,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     wc.lpfnWndProc = wndproc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    /* trackkat's icon (icons/trackkat.rc), or Windows' own if the build left it out. */
+    wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(1));
+    if (!wc.hIcon)
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     wc.lpszClassName = L"trackdemo";
     RegisterClassW(&wc);
 
