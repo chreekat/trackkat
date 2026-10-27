@@ -112,11 +112,16 @@ describeLevel c =
             right
             (levelTurning c)
 
--- | A line for the console about the learnt pivot.
-describePivot :: Calibration -> String
-describePivot c =
+-- | A line for the console about the learnt pivot, given the clip's pose at
+-- the centre. Directions are along the level axes with the head at the
+-- centre, facing the camera, however the clip sits on the head; without a
+-- centre, only the distance is given.
+describePivot :: Maybe Pose -> Calibration -> String
+describePivot Nothing c =
+    printf "Neck pivot learnt: %.0f mm from the clip, from %.0f head turns." (norm (estimatedPivot c)) (pivotTurns c)
+describePivot (Just centre) c =
     printf
-        "Neck pivot learnt: %.0f mm %s the clip, %.0f %s it and %.0f to its %s, from %.0f head turns."
+        "Neck pivot learnt: %.0f mm %s the clip, %.0f %s it and %.0f to your %s, from %.0f head turns."
         (abs y)
         (if y >= 0 then "below" else "above" :: String)
         (abs z)
@@ -125,7 +130,7 @@ describePivot c =
         (if x >= 0 then "left" else "right" :: String)
         (pivotTurns c)
   where
-    V3 x y z = estimatedPivot c
+    V3 x y z = inLevelAxes (estimatedLevel c) centre (estimatedPivot c)
 
 -- * Up
 

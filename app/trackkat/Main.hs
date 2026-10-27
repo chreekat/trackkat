@@ -204,8 +204,8 @@ loadCalibration path = do
     case found of
         Right c -> do
             say (describeLevel c)
-            say (describePivot c)
-            showCalibration (describeCalibration c)
+            say (describePivot Nothing c)
+            showCalibration (describeCalibration Nothing c)
             pure c
         Left err -> do
             when exists $ say (path ++ ": " ++ err ++ "; starting afresh.")
@@ -406,11 +406,12 @@ track s cam = do
             Frame _ stripes -> do
                 now <- getMonotonicTime
                 handleControls s seenRecenters
-                (outcome, events) <- atomicModifyIORef' (sTracker s) $ \t ->
-                    let (t', o, evs) = step now stripes t in (t', (o, evs))
+                (outcome, events, tracker) <- atomicModifyIORef' (sTracker s) $ \t ->
+                    let (t', o, evs) = step now stripes t in (t', (o, evs, t'))
+                let centre = trackerCentre tracker
                 forM_ events $ \e -> do
-                    say (describeEvent e)
-                    mapM_ showCalibration (calibrationNews e)
+                    say (describeEvent centre e)
+                    mapM_ showCalibration (calibrationNews centre (trackerCalibration tracker) e)
                 forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
                 -- A new centre or level is a jump the shaper must not smooth.
                 when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
@@ -484,15 +485,16 @@ resetsShaping Recentered = True
 resetsShaping (Calibrated _) = True
 resetsShaping _ = False
 
-describeEvent :: Event -> String
-describeEvent Recentered = "Recentered."
-describeEvent CalibrationStarted = "Calibrating: turn your head left and right."
-describeEvent CalibrationFailed = "Calibration failed: not enough turning, try again."
-describeEvent (Calibrated c) =
+-- | Describe an event, given the clip's pose at the centre.
+describeEvent :: Maybe Pose -> Event -> String
+describeEvent _ Recentered = "Recentered."
+describeEvent _ CalibrationStarted = "Calibrating: turn your head left and right."
+describeEvent _ CalibrationFailed = "Calibration failed: not enough turning, try again."
+describeEvent _ (Calibrated c) =
     let (down, right) = cameraTilt (estimatedLevel c)
      in printf "Calibrated: camera tipped %.1f degrees down, %.1f to its right." down right
-describeEvent (Refined LevelRefined c) = describeLevel c
-describeEvent (Refined PivotRefined c) = describePivot c
+describeEvent _ (Refined LevelRefined c) = describeLevel c
+describeEvent centre (Refined PivotRefined c) = describePivot centre c
 
 -- | A calibration to save.
 learnt :: Event -> [Calibration]
@@ -501,16 +503,17 @@ learnt (Refined _ c) = [c]
 learnt _ = []
 
 -- | What the calibration box in trackkat's window says after an event, if
--- the event is about calibration.
-calibrationNews :: Event -> Maybe String
-calibrationNews Recentered = Nothing
-calibrationNews (Calibrated c) = Just (describeEvent (Calibrated c) ++ "\n" ++ describePivot c)
-calibrationNews (Refined _ c) = Just (describeCalibration c)
-calibrationNews e = Just (describeEvent e)
+-- the event is about calibration or moves the centre, given the clip's pose
+-- at the centre and the calibration so far.
+calibrationNews :: Maybe Pose -> Calibration -> Event -> Maybe String
+calibrationNews centre c Recentered = Just (describeCalibration centre c)
+calibrationNews centre _ (Calibrated c) = Just (describeEvent centre (Calibrated c) ++ "\n" ++ describePivot centre c)
+calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
+calibrationNews centre _ e = Just (describeEvent centre e)
 
 -- | The calibration box's account of a calibration.
-describeCalibration :: Calibration -> String
-describeCalibration c = describeLevel c ++ "\n" ++ describePivot c
+describeCalibration :: Maybe Pose -> Calibration -> String
+describeCalibration centre c = describeLevel c ++ "\n" ++ describePivot centre c
 
 status :: Outcome -> Maybe HeadPose -> Bool -> String
 status outcome paused gameConnected =

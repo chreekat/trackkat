@@ -20,6 +20,7 @@ module TrackKat.Pose (
     levelUp,
     levelFromYaws,
     cameraTilt,
+    inLevelAxes,
     HeadPose (..),
     relativePose,
     eulerYXZ,
@@ -216,6 +217,11 @@ levelFromYaws rots
 cameraTilt :: Level -> (Double, Double)
 cameraTilt (Level (M33 _ (V3 dx dy dz) _)) =
     (atan2 dz (sqrt (dx * dx + dy * dy)) * 180 / pi, atan2 (negate dx) dy * 180 / pi)
+
+-- | A direction given in the clip's axes, in level axes while the clip is in
+-- the given pose.
+inLevelAxes :: Level -> Pose -> V3 -> V3
+inLevelAxes (Level toLevel) (Pose r _) v = mulMV toLevel (mulMV r v)
 
 -- | A head's rotation and movement from a reference pose, in a level frame:
 -- x to the camera's right, y down, z away from the camera.
