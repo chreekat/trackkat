@@ -6,6 +6,7 @@ import Control.Exception (IOException, try)
 import Control.Monad (forM_, unless)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C
 import Data.Either (isLeft)
 import Data.IORef
 import Data.List (mapAccumL, sortOn)
@@ -551,6 +552,13 @@ main = do
             written <- try (readFile' example)
             check (example ++ " is the default settings file; TRACKKAT_ACCEPT=1 cabal test rewrites it") $
                 either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) written
+
+    -- The tray's cat, whose icons tools/make-icon.sh makes, is the
+    -- program's.
+    tray <- B.readFile "icons/tray.svg"
+    program <- B.readFile "icons/trackkat.svg"
+    let catPath svg = B.takeWhile (/= fromIntegral (fromEnum '"')) (B.drop 4 (snd (B.breakSubstring (C.pack " d=\"") svg)))
+    check "the tray's cat is the program's" (not (B.null (catPath tray)) && catPath tray == catPath program)
 
     -- Following the clip through what the camera shows: reflectors fading
     -- at a slant, running together, breaking up, and stray reflections.

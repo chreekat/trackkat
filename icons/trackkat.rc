@@ -1,3 +1,8 @@
-// trackkat's icon, for windres: the programs' own, in Explorer, and their
-// windows', which load it by this number.
+// trackkat's icons, for windres, made by tools/make-icon.sh. 1 is the
+// programs' own, in Explorer and on their windows; 2 to 5 are the tray's,
+// by state, as cbits/gui.c numbers them.
 1 ICON "trackkat.ico"
+2 ICON "tray-tracking.ico"
+3 ICON "tray-clip-lost.ico"
+4 ICON "tray-searching.ico"
+5 ICON "tray-no-camera.ico"
