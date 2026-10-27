@@ -1,0 +1,3 @@
+// trackkat's icon, for windres: the programs' own, and the window's, which
+// GLFW looks for by this name.
+GLFW_ICON ICON "trackkat.ico"

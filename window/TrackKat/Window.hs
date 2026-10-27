@@ -34,7 +34,6 @@ import Control.Concurrent.STM
 import Control.Exception (bracket_)
 import Control.Monad (forM_, forever, unless, when)
 import Data.Bits ((.|.))
-import qualified Data.ByteString as B
 import Data.Foldable (toList)
 import Data.IORef
 import Data.List (intercalate)
@@ -58,7 +57,6 @@ import qualified DearImGui.Raw.IO as Raw.IO
 import qualified Graphics.UI.GLFW as GLFW
 
 import TrackKat.Config (Binding, Hotkey (..), hotkeySetting, renderBinding)
-import TrackKat.Icon
 import TrackKat.Number (parseNumber)
 import TrackKat.Pose (HeadPose)
 import TrackKat.Response (Trim (..))
@@ -195,6 +193,8 @@ runWindow w start = do
             GLFW.windowHint (GLFW.WindowHint'ScaleToMonitor True)
             GLFW.windowHint (GLFW.WindowHint'Visible False)
             (width, height) <- startingSize
+            -- On Windows, GLFW gives the window the icon linked into the
+            -- program as GLFW_ICON: see icons/trackkat.rc.
             GLFW.createWindow width height "trackkat" Nothing Nothing >>= \case
                 Nothing -> do
                     why <- glfwError
@@ -212,8 +212,7 @@ runWindow w start = do
                     editor <- newEditor
                     modifyMVar_ (wWaker w) (const (pure (Just GLFW.postEmptyEvent)))
                     when (start == OnScreen) $ GLFW.showWindow win
-                    lastIcon <- newIORef Nothing
-                    forever (cycleOnce w win fonts editor lastIcon)
+                    forever (cycleOnce w win fonts editor)
 
 -- | The latest GLFW error, described.
 glfwError :: IO String
@@ -238,8 +237,8 @@ framesPerSecond = 30
 
 -- | Handle what was handed over and the window's events, then draw a frame
 -- if it is time, or else wait for the next.
-cycleOnce :: Window -> GLFW.Window -> Fonts -> Editor -> IORef (Maybe Icon) -> IO ()
-cycleOnce w win fonts editor lastIcon = do
+cycleOnce :: Window -> GLFW.Window -> Fonts -> Editor -> IO ()
+cycleOnce w win fonts editor = do
     deliveries <- atomically (flushTQueue (wInbox w))
     forM_ deliveries $ \case
         SettingsShown s -> deliver editor s
@@ -260,11 +259,6 @@ cycleOnce w win fonts editor lastIcon = do
     focused <- GLFW.getWindowFocused win
     unless focused $ stopCapturing w
     st <- readIORef (wStatus w)
-    let icon = statusIcon st
-    shownIcon <- readIORef lastIcon
-    when (shownIcon /= Just icon) $ do
-        writeIORef lastIcon (Just icon)
-        GLFW.setWindowIcon win [glfwIcon s icon | s <- [16, 32, 48]]
     iconified <- GLFW.getWindowIconified win
     if wanted == InTray || iconified
         then GLFW.waitEvents
@@ -276,12 +270,6 @@ cycleOnce w win fonts editor lastIcon = do
                 else do
                     writeIORef (edNextFrame editor) (max now (due + 1 / framesPerSecond))
                     drawFrame w win fonts editor st
-
-glfwIcon :: Int -> Icon -> GLFW.Image
-glfwIcon size icon = GLFW.mkImage size size pixel
-  where
-    pixels = iconPixels size icon
-    pixel i j = let at n = B.index pixels (4 * (j * size + i) + n) in (at 0, at 1, at 2, at 3)
 
 drawFrame :: Window -> GLFW.Window -> Fonts -> Editor -> Status -> IO ()
 drawFrame w win fonts editor st = do
