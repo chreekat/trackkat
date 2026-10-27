@@ -614,6 +614,12 @@ main = do
         [(_, _, Lost 3, _)] -> True
         _ -> False
 
+    -- Lights close to the camera laid out like the clip, as a phone's can
+    -- be: no head can be there, so the clip is lost, not followed there.
+    let phone pose = [(project defaultIntrinsics (Pose (poseR pose) (190 *^ normalize (poseT pose))) p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
+        phoned = trackFrames clipBent [(t, pose, renderDiscs (if t < 1 then reflectorDiscs clipBent allLit pose else phone pose)) | t <- at120 3, let pose = headSeen bentWorn 0 0 0]
+    check "lights by the camera aren't the clip" $ all isLost [o | (t, _, o, _) <- phoned, t >= 1]
+
     -- A reflector broken in two by a line too dim, and a fleck beside
     -- another, as at a low threshold.
     let broken = [(t, pose, (if t > 0.5 then breakAt (project defaultIntrinsics pose (mLeft clipBent)) else id) (renderDiscs (fleck pose : reflectorDiscs clipBent allLit pose))) | t <- at120 2.5, let pose = headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0]

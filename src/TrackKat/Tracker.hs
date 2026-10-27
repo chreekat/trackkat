@@ -173,6 +173,18 @@ maxTurn, maxMove :: Double -> Double
 maxTurn dt = 15 + 100 * dt
 maxMove dt = 40 + 200 * dt
 
+-- | The farthest a head turns (degrees) and moves (mm, at its pivot) from
+-- where it was recentered. Beyond that the blobs aren't the clip, but
+-- something like a phone's light.
+maxReachTurn, maxReachMove :: Double
+maxReachTurn = 120
+maxReachMove = 400
+
+-- | The nearest and farthest, in mm, the clip can be from the camera.
+nearest, farthest :: Double
+nearest = 250
+farthest = 2500
+
 -- | The worst RMS reprojection error, in pixels, of a pose matched from a
 -- prediction.
 maxFit :: Double
@@ -236,7 +248,7 @@ step now stripes t =
         let at b = (blobX b, blobY b)
             whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
         (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
-        Just (Sighting pose fit (Three (whole l) (whole r) (whole top)) (length blobs - 3))
+        if plausible pose then Just (Sighting pose fit (Three (whole l) (whole r) (whole top)) (length blobs - 3)) else Nothing
     -- The best match to the prediction, unless its pose is an impossible
     -- jump; then, of the next few that see as many reflectors, the one whose
     -- pose is nearest. (Fewer reflectors can always be fitted by a pose
@@ -249,7 +261,7 @@ step now stripes t =
                 (pose, fit) <- solveNear k pivot (recentPose r) (observations (metres (recentPose r)) c)
                 let (turn, move) = poseChange pivot (recentPose r) pose
                     jump = max (turn / maxTurn dt) (move / maxMove dt)
-                if fit <= maxFit && jump <= 1
+                if fit <= maxFit && jump <= 1 && plausible pose
                     then Just (jump, Sighting pose fit (matchSights c) (matchUnused c))
                     else Nothing
          in case candidates of
@@ -259,6 +271,12 @@ step now stripes t =
                     Nothing ->
                         let alike = [a | a <- cs, seenCount a == seenCount c]
                          in fmap snd (listToMaybe (sortOn fst (mapMaybe attempt (take 5 alike))))
+    -- Somewhere a head can be: at a sane distance from the camera, and not
+    -- too far from where it was recentered.
+    plausible pose =
+        let distance = norm (poseT pose)
+            reach ref = let (turn, move) = poseChange pivot ref pose in turn <= maxReachTurn && move <= maxReachMove
+         in distance >= nearest && distance <= farthest && maybe True reach (trReference t)
     seenCount c = length (catMaybes (toList (matchSights c)))
     observations z c = catMaybes (toList (observe z <$> modelPoints m <*> trSizes t <*> matchSights c))
     -- A dim reflector, smaller than usual, counts for less: part of it may
