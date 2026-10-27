@@ -29,9 +29,9 @@ int hts_gui_capturing(void);
 void hts_gui_add_binding(int which, const wchar_t *binding);
 
 static const wchar_t *const names[] = {L"recenter", L"pause", L"smoothing", L"steadiness", L"responsiveness",
-                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean"};
+                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"drift"};
 static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"on", L"90", L"45", L"1:6",
-                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view"};
+                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"on"};
 
 int main(int argc, char **argv)
 {
@@ -40,14 +40,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "could not start the GUI\n");
         return 1;
     }
-    for (int i = 0; i < 12; i++)
+    for (int i = 0; i < 13; i++)
         hts_gui_set_setting(names[i], values[i]);
     hts_gui_log(L"Games will load NPClient from C:\\Games\\trackkat");
     hts_gui_log(L"Recenter: F12   Pause: Ctrl+F9   (Enter also recenters, c Enter calibrates level)");
     hts_gui_log(L"Tracking.");
     hts_gui_calibration(L"Level learnt: camera tipped 12.4 degrees down and 0.8 to its right, from 1460 degrees of head "
                         L"turning.\nNeck pivot learnt: 92 mm below the clip, 71 behind it and 3 to its left, from 214 head "
-                        L"turns.");
+                        L"turns.\nCentre has followed you since recentering: yaw +0.4  pitch -0.2  roll +0.0   x +21  y -2  z +6 mm");
     hts_gui_camera(1, L"");
     hts_gui_games(1);
     int paused = 0;
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
             hts_gui_paused(paused);
         }
         if (acts & 0x10) {
-            for (int f = 0; f < 12; f++) {
+            for (int f = 0; f < 13; f++) {
                 wchar_t v[256];
                 hts_gui_saved_setting(names[f], v, 256);
                 printf("  %ls = %ls\n", names[f], v);

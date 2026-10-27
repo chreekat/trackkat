@@ -33,9 +33,9 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 #define FIELD_MAX 256
 
 /* The settings the window edits, by their names in trackkat.conf. */
-enum { F_RECENTER, F_PAUSE, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_DRIFT, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"smoothing", L"steadiness",
-                                                    L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean"};
+                                                    L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"drift"};
 
 typedef struct State {
     int camera;
@@ -807,6 +807,8 @@ static void show_field(int i, const wchar_t *value)
     copy_text(field_text[i], FIELD_MAX, value);
     if (i == F_LEAN)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"screen") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+    else if (i == F_DRIFT)
+        SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"off") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
         SendMessageW(field_ctl[i], BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -828,7 +830,7 @@ static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
     for (int i = 0; i < F_COUNT; i++)
-        if (i == F_SMOOTHING || i == F_LEAN || slider_field(i))
+        if (i == F_SMOOTHING || i == F_LEAN || i == F_DRIFT || slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
         else
             GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
@@ -1038,7 +1040,9 @@ static void build_window(void)
     }
 
     field_ctl[F_LEAN] = control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
-                                WS_TABSTOP | BS_AUTOCHECKBOX, 22, 568, 500, 22, ID_FIELD + F_LEAN);
+                                WS_TABSTOP | BS_AUTOCHECKBOX, 22, 568, 370, 22, ID_FIELD + F_LEAN);
+    field_ctl[F_DRIFT] = control(L"BUTTON", L"Centre follows where you rest (drift = on)",
+                                 WS_TABSTOP | BS_AUTOCHECKBOX, 400, 568, 300, 22, ID_FIELD + F_DRIFT);
 
     control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 600, 90, 26, IDOK);
     settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 604, 578, 20, 0);
@@ -1092,6 +1096,10 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_FIELD + F_LEAN:
             copy_text(field_text[F_LEAN], FIELD_MAX,
                       SendMessageW(field_ctl[F_LEAN], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"view" : L"screen");
+            return 0;
+        case ID_FIELD + F_DRIFT:
+            copy_text(field_text[F_DRIFT], FIELD_MAX,
+                      SendMessageW(field_ctl[F_DRIFT], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
             return 0;
         case ID_FIELD + F_SMOOTHING:
             show_field(F_SMOOTHING,
