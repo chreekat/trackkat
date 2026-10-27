@@ -234,7 +234,7 @@ startingSize = do
                 (_, _, _, h) <- GLFW.getMonitorWorkarea m
                 (_, scale) <- GLFW.getMonitorContentScale m
                 pure (round (fromIntegral h / max 1 scale) - 40)
-    pure (780, min 1120 fits)
+    pure (780, min 1150 fits)
 
 -- | How often the window is drawn while on the screen.
 framesPerSecond :: Double
@@ -337,7 +337,7 @@ windowSettings =
     map hotkeySetting [minBound .. maxBound]
         ++ ["smoothing", "steadiness", "responsiveness"]
         ++ map axisSetting [minBound .. maxBound]
-        ++ ["lean"]
+        ++ ["lean", "npclient"]
 
 deliver :: Editor -> [(String, String)] -> IO ()
 deliver ed s = do
@@ -619,6 +619,7 @@ settings w fr = do
     smoothing fr
     curves fr
     leanBox fr
+    npclientChoice fr
     saveRow w fr
 
 bindingLists :: Window -> Frame -> IO ()
@@ -743,6 +744,24 @@ leanBox fr = do
     Raw.spacing
     _ <- checkbox "Lean relative to where the game's view looks (lean = view)" (makeStateVar (pure withView) (\b -> setDraft fr "lean" (if b then "view" else "screen")))
     tip fr "On, leaning follows the view: looking behind you, leaning left leans out of the cockpit's right side. Off, leaning moves you the same way whichever way you look."
+
+-- | Whose NPClient games load: trackkat's, or that of NaturalPoint's
+-- TrackIR software.
+npclientChoice :: Frame -> IO ()
+npclientChoice fr = do
+    chosen <- draftValue fr "npclient"
+    Raw.alignTextToFramePadding
+    str "Games load"
+    tip fr help
+    choice "trackkat's NPClient" "trackkat" (chosen /= "trackir") "Games load trackkat's own NPClient, from trackkat's folder."
+    choice "TrackIR's NPClient" "trackir" (chosen == "trackir") "Games load the NPClient of NaturalPoint's TrackIR software, which is signed, so anti-cheat such as BattlEye lets games load it; trackkat stands in for NaturalPoint's software. Start trackkat before the game."
+  where
+    help = "Which NPClient DLL games load to get your head. trackkat's own works for most games; TrackIR's, from NaturalPoint's software if it is installed, for games whose anti-cheat refuses trackkat's."
+    choice l value on h = do
+        Raw.sameLine
+        clicked <- radioButton l on
+        when clicked $ setDraft fr "npclient" value
+        tip fr h
 
 -- | Put the next item on the same line, flush with the right edge.
 rightOf :: Float -> IO ()

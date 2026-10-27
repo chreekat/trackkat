@@ -58,7 +58,7 @@ main = do
     readIORef file >>= showSettings w . settingValues
     mapM_
         say
-        [ "Games will load NPClient from C:\\Games\\trackkat"
+        [ "Games will load trackkat's NPClient from C:\\Games\\trackkat"
         , "Joystick connected: Throttle - HOTAS Warthog"
         , "Recenter: F12, Throttle - HOTAS Warthog button 23   Pause: F9   Trim: Ctrl+F12   (Enter also recenters, c Enter calibrates level)"
         , "Tracking."
