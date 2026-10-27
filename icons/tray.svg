@@ -1,4 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <!-- The tray icon's shape: filled with the colour of trackkat's state. -->
-  <path fill="#2ecc71" stroke="#101010" stroke-width="10" d="glow"/>
+  <path fill="#2ecc71" stroke="#101010" stroke-width="10" d="M36 168 C36 126 44 104 50 94 L52 46 Q54 24 74 36 L106 62 C118 58 138 58 150 62 L182 36 Q202 24 204 46 L206 94 C212 104 220 126 220 168 C220 220 180 244 128 244 C76 244 36 220 36 168 Z"/>
 </svg>
