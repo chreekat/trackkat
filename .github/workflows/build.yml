@@ -140,6 +140,24 @@ jobs:
           $system = '^(api-ms-win-.*|kernel32|user32|gdi32|shell32|advapi32|opengl32|hid|setupapi|winmm|ole32|oleaut32|imm32|dbghelp|ntdll|ucrtbase|msvcrt|ws2_32|wsock32|rpcrt4|shlwapi|version|bcrypt|crypt32|dwmapi|uxtheme|comctl32|libusb-1\.0)\.dll$'
           $other = $dlls | Where-Object { $_ -notmatch $system }
           if ($other) { "::error::trackkat.exe needs $($other -join ', ')"; exit 1 }
+          # The icon, for Explorer and, as GLFW_ICON, for the window.
+          if (-not (& $objdump -h dist\trackkat.exe | Select-String '\.rsrc')) { "::error::trackkat.exe has no icon"; exit 1 }
+
+      # The runner may have no OpenGL 3; either way the window must open or
+      # say why, and not take the program down.
+      - name: Try the window
+        shell: pwsh
+        run: |
+          $exe = cabal list-bin trackkat-window-demo `
+            --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
+          $p = Start-Process $exe -PassThru -RedirectStandardOutput demo.out -RedirectStandardError demo.err
+          Start-Sleep 8
+          if ($p.HasExited) {
+            "::notice title=Window demo::exited ($($p.ExitCode)): $((Get-Content demo.err) -join ' ')"
+          } else {
+            "::notice title=Window demo::running after 8 s"
+            Stop-Process $p
+          }
 
       - uses: actions/upload-artifact@v4
         with:
