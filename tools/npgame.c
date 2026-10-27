@@ -32,6 +32,7 @@ typedef int(__stdcall *get_signature_fn)(tir_signature_t *);
 typedef int(__stdcall *query_version_fn)(unsigned short *);
 typedef int(__stdcall *register_id_fn)(unsigned short);
 typedef int(__stdcall *request_data_fn)(unsigned short);
+typedef int(__stdcall *register_window_fn)(HWND);
 typedef int(__stdcall *void_fn)(void);
 
 #include "../npclient/game_keys.h"
@@ -115,7 +116,11 @@ int main(int argc, char **argv)
     request_data_fn request_data = (request_data_fn)(void *)GetProcAddress(dll, "NP_RequestData");
     void_fn start = (void_fn)(void *)GetProcAddress(dll, "NP_StartDataTransmission");
     void_fn recenter = (void_fn)(void *)GetProcAddress(dll, "NP_ReCenter");
-    if (!get_data || !get_signature || !query_version || !register_id || !request_data || !start || !recenter) {
+    void_fn stop = (void_fn)(void *)GetProcAddress(dll, "NP_StopDataTransmission");
+    register_window_fn register_window = (register_window_fn)(void *)GetProcAddress(dll, "NP_RegisterWindowHandle");
+    void_fn unregister_window = (void_fn)(void *)GetProcAddress(dll, "NP_UnregisterWindowHandle");
+    if (!get_data || !get_signature || !query_version || !register_id || !request_data || !start || !recenter
+        || !stop || !register_window || !unregister_window) {
         fprintf(stderr, "NPClient is missing an export\n");
         return 1;
     }
@@ -126,6 +131,10 @@ int main(int argc, char **argv)
     unsigned short version = 0;
     query_version(&version);
     printf("version: 0x%04x\n", version);
+    /* Games hand over their window, by which NaturalPoint's software knows
+     * which process is the game. */
+    HWND window = CreateWindowExA(0, "STATIC", "npgame", WS_POPUP, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+    register_window(window);
     register_id(id);
     request_data(0x77);
     start();
@@ -148,6 +157,8 @@ int main(int argc, char **argv)
                    d.tz * 500.0 / NP_AXIS_MAX);
         Sleep(50);
     }
+    stop();
+    unregister_window();
     printf("%d bad checksums\n", bad);
     return bad != 0;
 }
