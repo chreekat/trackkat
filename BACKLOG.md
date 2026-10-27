@@ -25,6 +25,7 @@ Roughly in order.
   the bottom is cut off. Split the settings into tabs or let them scroll.
 - Two identical controllers (e.g. a pair of T.16000Ms for "HOSAS"): they are
   told apart by sorting device paths, so unplugging one renumbers the other.
-  Identify each by its USB port (or serial number, if it has one), so a
-  binding follows the stick in that port. The T.16000M's left/right-handed
+  Identify each by its USB port, so a binding follows the stick in that
+  port. Thrustmaster sticks report no serial number (their instance ids
+  end in a port-derived 6&...&0&N), so the port is all there is. The T.16000M's left/right-handed
   switch doesn't change its USB identity, so it doesn't help.
