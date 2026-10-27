@@ -211,8 +211,7 @@ void hts_bindings_apply(void)
     ReleaseSRWLockExclusive(&bindings_lock);
 }
 
-/* The modifiers held now, as RegisterHotKey's flags. Also used by the
- * window's key boxes (cbits/gui.c). */
+/* The modifiers held now, as RegisterHotKey's flags. */
 unsigned hts_modifiers_held(void)
 {
     unsigned m = 0;
@@ -227,11 +226,53 @@ unsigned hts_modifiers_held(void)
     return m;
 }
 
+/* Capturing a key to bind, for trackkat's window: 0 not capturing, 1
+ * waiting for a key, 2 holding one for hts_capture_take. */
+static volatile LONG capture_state;
+static volatile LONG captured_key; /* mods << 16 | vk */
+
+static int is_modifier(DWORD vk)
+{
+    return vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU || vk == VK_LWIN || vk == VK_RWIN ||
+           vk == VK_LSHIFT || vk == VK_RSHIFT || vk == VK_LCONTROL || vk == VK_RCONTROL || vk == VK_LMENU ||
+           vk == VK_RMENU;
+}
+
+/* Wait for the next key, or middle or side mouse button, other than a
+ * modifier on its own, forgetting any captured before. */
+void hts_capture_start(void)
+{
+    InterlockedExchange(&capture_state, 1);
+}
+
+void hts_capture_stop(void)
+{
+    InterlockedExchange(&capture_state, 0);
+}
+
+/* The key captured, as mods << 16 | vk, which ends capturing; or 0 if none
+ * has been pressed yet. */
+int hts_capture_take(void)
+{
+    if (InterlockedCompareExchange(&capture_state, 0, 2) != 2)
+        return 0;
+    return (int)InterlockedCompareExchange(&captured_key, 0, 0);
+}
+
 /* Note the actions bound to a key, or mouse button, pressed with the
- * modifiers held now; returns them. */
+ * modifiers held now; returns them. While capturing, the key is captured
+ * instead, and does nothing else. */
 static LONG press_key(DWORD vk)
 {
     LONG pressed = (LONG)(hts_modifiers_held() << 16 | vk);
+    LONG capture = InterlockedCompareExchange(&capture_state, 0, 0);
+    if (capture != 0) {
+        if (capture == 1 && !is_modifier(vk)) {
+            InterlockedExchange(&captured_key, pressed);
+            InterlockedExchange(&capture_state, 2);
+        }
+        return 0;
+    }
     LONG hit = 0;
     AcquireSRWLockShared(&bindings_lock);
     for (int i = 0; i < binding_count; i++)

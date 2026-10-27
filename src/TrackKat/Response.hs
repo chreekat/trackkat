@@ -53,7 +53,7 @@ data Multiplier = Multiplier
 
 -- | The ends of the views' ranges: looking straight behind, straight up or
 -- down, and tipped onto your side; and leaning 300 mm, about as far as a
--- cockpit lets you. cbits/gui.c draws the axes to the same ranges.
+-- cockpit lets you.
 yawRange, pitchRange, rollRange, leanRange :: Double
 yawRange = 180
 pitchRange = 90
