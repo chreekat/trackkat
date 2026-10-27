@@ -2,21 +2,16 @@
 #
 # Settings take effect as soon as the file is saved.
 #
-# Keys are like F12, Ctrl+F9, Alt+Shift+P, NumPad5. Joystick buttons
-# are like Throttle - HOTAS Warthog button 23. The easiest way to
-# figure out joystick button names is by using trackkat's window.
+# Keys and buttons, separated by commas, or none. For example:
+#   recenter = F12, Throttle - HOTAS Warthog button 23
+#   pause = Ctrl+F9, Mouse4
+#   trim = NumPad5
+# trim makes where you look in the game the new forward; recentering
+# undoes it.
 #
-# The middle and side mouse buttons are MouseMiddle, Mouse4 and Mouse5,
-# with keys held or not, as in Ctrl+Mouse4; other programs still see
-# them. The left and right buttons can't be bound. Windows can't see
-# a gaming mouse's extra buttons until the mouse's own software gives
-# them a key: give them F13 to F24, which no keyboard has, and bind
-# those here.
-#
-# trim makes where you look in the game the new forward, for yaw and
-# pitch, so you can look around from there; recentering undoes it.
-# It has no keys or buttons unless you give it some:
-#   trim = Ctrl+F12
+# The easiest way to figure out joystick button names is by using
+# trackkat's window. For a gaming mouse's extra buttons, give them F13
+# to F24 in the mouse's own software and bind those.
 recenter = F12
 pause = F9
 trim =
