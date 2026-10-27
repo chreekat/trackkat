@@ -23,3 +23,8 @@ Roughly in order.
 - Per-game profiles. Not wanted for now: good defaults instead.
 - The window is about 930 px tall at 100%: on 1080p screens at 125% or more
   the bottom is cut off. Split the settings into tabs or let them scroll.
+- Two identical controllers (e.g. a pair of T.16000Ms for "HOSAS"): they are
+  told apart by sorting device paths, so unplugging one renumbers the other.
+  Identify each by its USB port (or serial number, if it has one), so a
+  binding follows the stick in that port. The stick's left/right-handed
+  switch may change the HID identity; check when someone has a pair.
