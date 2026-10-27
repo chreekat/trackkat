@@ -16,3 +16,5 @@ Roughly in order.
   head motion, consider negative inertia (IBM TrackPoint) to make stops crisp;
   if the fit worsens, the clip's post is swinging.
 - Per-game profiles. Not wanted for now: good defaults instead.
+- The window is about 930 px tall at 100%: on 1080p screens at 125% or more
+  the bottom is cut off. Split the settings into tabs or let them scroll.
