@@ -367,6 +367,10 @@ windowContents w win fr = do
     calibration fr
     settings w fr
     logPane w win fr
+    -- Esc hides the window, as closing it does, unless a field is being
+    -- edited, where it undoes the edit.
+    escape <- Raw.shortcut (let ImGuiKey k = ImGuiKey_Escape in fromIntegral k) ImGuiInputFlags_None
+    when escape $ writeIORef (wVisibility w) InTray
 
 str :: String -> IO ()
 str = text . T.pack
