@@ -1,4 +1,4 @@
-# trackkat <img src="icons/trackkat.svg" alt="" height="40">
+# trackkat <img src="icons/trackkat.svg" alt="" height="30">
 
 Replacement software for the NaturalPoint TrackIR 5 (revision 3, USB id
 `131D:0159`) on Windows. It tracks the TrackClip and gives games your head
