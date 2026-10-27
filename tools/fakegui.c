@@ -30,7 +30,7 @@ void hts_gui_add_binding(int which, const wchar_t *binding);
 
 static const wchar_t *const names[] = {L"recenter", L"pause", L"smoothing", L"steadiness", L"responsiveness",
                                        L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"drift"};
-static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"on", L"90", L"45", L"1:6",
+static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"on", L"90", L"45", L"1:6, precision 40",
                                         L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"on"};
 
 int main(int argc, char **argv)
