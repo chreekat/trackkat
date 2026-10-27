@@ -51,7 +51,6 @@ import DearImGui hiding (end, flags, size, spacing, w, x, y, z)
 import DearImGui.GLFW (glfwNewFrame)
 import DearImGui.GLFW.OpenGL (glfwInitForOpenGL)
 import DearImGui.Internal.Text (withCString)
-import DearImGui.OpenGL3 (openGL3Init, openGL3NewFrame, openGL3RenderDrawData)
 import qualified DearImGui.Raw as Raw
 import qualified DearImGui.Raw.IO as Raw.IO
 import qualified Graphics.UI.GLFW as GLFW
@@ -208,11 +207,17 @@ runWindow w start = do
                     Raw.IO.setIniFilename nullPtr
                     fonts <- loadFonts
                     _ <- glfwInitForOpenGL win True
-                    _ <- openGL3Init
-                    editor <- newEditor
-                    modifyMVar_ (wWaker w) (const (pure (Just GLFW.postEmptyEvent)))
-                    when (start == OnScreen) $ GLFW.showWindow win
-                    forever (cycleOnce w win fonts editor)
+                    rendering <- rendererInit
+                    if not rendering
+                        then do
+                            GLFW.destroyWindow win
+                            GLFW.terminate
+                            pure (WindowFailure "ImGui can't draw with this OpenGL")
+                        else do
+                            editor <- newEditor
+                            modifyMVar_ (wWaker w) (const (pure (Just GLFW.postEmptyEvent)))
+                            when (start == OnScreen) $ GLFW.showWindow win
+                            forever (cycleOnce w win fonts editor)
 
 -- | The latest GLFW error, described.
 glfwError :: IO String
@@ -276,7 +281,7 @@ cycleOnce w win fonts editor = do
 
 drawFrame :: Window -> GLFW.Window -> Fonts -> Editor -> Status -> IO ()
 drawFrame w win fonts editor st = do
-    openGL3NewFrame
+    rendererNewFrame
     glfwNewFrame
     newFrame
     (scale, _) <- GLFW.getWindowContentScale win
@@ -288,7 +293,7 @@ drawFrame w win fonts editor st = do
     render
     (fw, fh) <- GLFW.getFramebufferSize win
     clearFrame fw fh (rgbF background)
-    openGL3RenderDrawData =<< getDrawData
+    renderDrawData =<< getDrawData
     GLFW.swapBuffers win
   where
     mainFlags = ImGuiWindowFlags_NoTitleBar .|. ImGuiWindowFlags_NoResize .|. ImGuiWindowFlags_NoMove .|. ImGuiWindowFlags_NoCollapse .|. ImGuiWindowFlags_NoSavedSettings .|. ImGuiWindowFlags_NoBringToFrontOnFocus

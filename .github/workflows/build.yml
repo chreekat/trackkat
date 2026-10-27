@@ -18,8 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # pkgconf for dear-imgui's build, which asks pkg-config for GLEW.
-      - name: Install libusb, pkgconf and C compilers
+      # GLEW and pkgconf for dear-imgui's build, which includes GLEW's
+      # header, and asks pkg-config for GLEW.
+      - name: Install libusb, GLEW, pkgconf and C compilers
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
@@ -27,6 +28,7 @@ jobs:
           update: false
           install: >-
             mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-glew
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-i686-gcc
@@ -76,20 +78,15 @@ jobs:
 
       # bindings-GLFW builds GLFW into trackkat, but ImGui's GLFW backend,
       # built by dear-imgui, needs GLFW's header too: the same version's,
-      # from bindings-GLFW's source. dear-imgui asks pkg-config for GLEW,
-      # which ImGui's OpenGL 3 renderer doesn't use (it loads OpenGL itself),
-      # so a stand-in for GLEW's pkg-config file answers, linking nothing.
-      # MSYS2's pkg-config is put last on the path while building, so that
-      # nothing else is taken from there. trackkat's programs link the icon.
+      # from bindings-GLFW's source. MSYS2's pkg-config is put last on the
+      # path while building, so that nothing else is taken from there.
+      # trackkat's programs link the icon.
       - name: Point the build at GLFW's header, pkg-config and the icon
         shell: pwsh
         run: |
           $usb = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "ucrt64"
           "USB_PREFIX=$usb" | Out-File -FilePath $env:GITHUB_ENV -Append
-          $pc = Join-Path "$env:RUNNER_TEMP" "pkgconfig"
-          New-Item -ItemType Directory -Force $pc | Out-Null
-          "Name: glew`nDescription: not used`nVersion: 2.2.0`nLibs:`nCflags:" | Out-File -FilePath (Join-Path $pc "glew.pc") -Encoding ascii
-          "PKG_CONFIG_PATH=$pc" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PKG_CONFIG_PATH=$usb\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
           cabal get bindings-GLFW-3.3.9.3 --destdir="$env:RUNNER_TEMP"
           $glfw = (Join-Path "$env:RUNNER_TEMP" "bindings-GLFW-3.3.9.3\glfw\include") -replace '\\', '/'
           $icon = $env:ICON_OBJECT -replace '\\', '/'
