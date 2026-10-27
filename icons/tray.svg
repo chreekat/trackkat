@@ -1,4 +1,10 @@
+<!-- The tray icon, shown tracking. Its eyes glow in the colour of trackkat's state:
+     tracking #2ecc71 (centre #a4ffc8), clip lost #f5a623 (#ffe0a0),
+     searching #8e8e93 (#d8d8de), no camera #e74c3c (#ffb0a8). -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- The tray icon's shape: filled with the colour of trackkat's state. -->
-  <path fill="#2ecc71" stroke="#101010" stroke-width="10" d="M36 168 C36 126 44 104 50 94 L52 46 Q54 24 74 36 L106 62 C118 58 138 58 150 62 L182 36 Q202 24 204 46 L206 94 C212 104 220 126 220 168 C220 220 180 244 128 244 C76 244 36 220 36 168 Z"/>
+  <defs><radialGradient id="g"><stop offset="0" stop-color="#a4ffc8"/><stop offset="0.45" stop-color="#2ecc71"/><stop offset="1" stop-color="#2ecc71" stop-opacity="0"/></radialGradient>
+  <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7a68c0"/><stop offset="1" stop-color="#4a3c86"/></linearGradient></defs>
+  <path fill="url(#fur)" stroke="#101010" stroke-width="8" d="M36 168 C36 126 44 104 50 94 L52 46 Q54 24 74 36 L106 62 C118 58 138 58 150 62 L182 36 Q202 24 204 46 L206 94 C212 104 220 126 220 168 C220 220 180 244 128 244 C76 244 36 220 36 168 Z"/>
+  <circle fill="url(#g)" cx="128" cy="96" r="34"/><circle fill="url(#g)" cx="88" cy="146" r="36"/><circle fill="url(#g)" cx="168" cy="146" r="36"/>
+  <circle fill="#a4ffc8" cx="128" cy="96" r="18"/><circle fill="#a4ffc8" cx="88" cy="146" r="20"/><circle fill="#a4ffc8" cx="168" cy="146" r="20"/>
 </svg>
