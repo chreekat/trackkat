@@ -5,13 +5,11 @@ import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
 import Data.Either (isLeft)
 import Data.IORef
-import Data.List (mapAccumL)
 import Data.Maybe (isNothing)
 import System.Exit (exitFailure)
 
 import TrackKat.Calibration
 import TrackKat.Config
-import TrackKat.Drift
 import TrackKat.Frame
 import TrackKat.GamePose
 import TrackKat.Linear
@@ -471,90 +469,16 @@ main = do
     check "trim round-trips" $ parseConfig (renderConfig withTrim) == Right withTrim
     check "trim change described" $ describeChanges defaultConfig withTrim == "Settings reloaded: trim = F11"
 
-    -- Drift: the centre following where the head rests. Poses at 120 a
-    -- second along a path, with a little noise.
-    let noise i =
-            HeadPose (0.1 * wobble i 7) (0.1 * wobble i 8) (0.1 * wobble i 9) (0.5 * wobble i 10) (0.5 * wobble i 11) (0.5 * wobble i 12)
-        add a b = HeadPose (yaw a + yaw b) (pitch a + pitch b) (roll a + roll b) (tx a + tx b) (ty a + ty b) (tz a + tz b)
-        atCentre = HeadPose 0 0 0 0 0 0
-        along :: Double -> Double -> (Double -> HeadPose) -> [(Double, HeadPose)]
-        along from to path = [(t, add (path t) (noise i)) | i <- [round (from * 120) .. round (to * 120) - 1 :: Int], let t = fromIntegral i / 120]
-        -- From 0 to 1 between two times.
-        ease a b t = let u = max 0 (min 1 ((t - a) / (b - a))) in u * u * (3 - 2 * u)
-        runDrift setting d0 = mapAccumL (\d (t, hp) -> let (o, d', _) = driftCentre setting t hp d in (d', (t, hp, o))) d0
-        offsets = map (\(_, hp, o) -> [yaw hp - yaw o, pitch hp - pitch o, roll hp - roll o, tx hp - tx o, ty hp - ty o, tz hp - tz o])
-        biggestStep rows = maximum (0 : concat (zipWith (zipWith (\a b -> abs (a - b))) rows (drop 1 rows)))
-        meanOf f rows = sum (map f rows) / fromIntegral (length rows)
-        during a b rows = [r | r@(t, _, _) <- rows, t >= a, t < b]
-        out f (_, _, o) = f o
-
-    -- Shifting 30 mm sideways in the chair, then resting there.
-    let shifting = along 0 150 (\t -> atCentre{tx = 30 * ease 10 15 t})
-        (_, shifted) = runDrift Drift newDrifter shifting
-        restingX = meanOf (out tx) (during 140 150 shifted)
-    check ("a shift is absorbed " ++ show restingX) $ abs restingX < 2
-    check ("half a minute after the shift, the centre hasn't moved " ++ show (meanOf (out tx) (during 29 30 shifted))) $
-        abs (meanOf (out tx) (during 29 30 shifted) - 30) < 1
-    check ("the centre moves smoothly " ++ show (biggestStep (offsets shifted))) $ biggestStep (offsets shifted) < 0.01
-    -- Shaped for a game, the drift is the only difference, and it is smooth.
-    let shapedAll rows = snd (mapAccumL (\sh (t, hp) -> let (p, sh') = shape (response defaultConfig) NoTrim t hp sh in (sh', [yaw p, pitch p, roll p, tx p, ty p, tz p])) newShaper rows)
-        gameDifference = zipWith (zipWith (-)) (shapedAll [(t, hp) | (t, hp, _) <- shifted]) (shapedAll [(t, o) | (t, _, o) <- shifted])
-    check ("the game sees no jump " ++ show (biggestStep gameDifference)) $ biggestStep gameDifference < 0.05
-
-    -- Watching something at 4 o'clock for a minute, then looking ahead again.
-    let looking = along 0 105 (\t -> atCentre{yaw = 20 * (ease 30 31 t - ease 91 92 t), tx = -8 * (ease 30 31 t - ease 91 92 t)})
-        (_, looked) = runDrift Drift newDrifter looking
-        yawOffset = maximum [abs (yaw hp - yaw o) | (_, hp, o) <- looked]
-    check ("a held look doesn't move the centre " ++ show yawOffset) $ yawOffset < 0.01
-    check ("back from a look, ahead is centred " ++ show (meanOf (out yaw) (during 100 105 looked))) $
-        abs (meanOf (out yaw) (during 100 105 looked)) < 0.1
-    -- A lean held still for a quarter of a minute, then back.
-    let leaning = along 0 70 (\t -> atCentre{tx = 30 * (ease 30 30.5 t - ease 45 45.5 t)})
-        (_, leant) = runDrift Drift newDrifter leaning
-    check ("a held lean doesn't move the centre " ++ show (maximum (map (abs . (!! 3)) (offsets leant)))) $
-        maximum (map (abs . (!! 3)) (offsets leant)) < 0.5
-
-    -- A chair turned 2.5 degrees, and the head resting a little tilted.
-    let chairTurned = along 0 400 (const atCentre{yaw = 2.5, roll = 1.5})
-        (_, turnedOut) = runDrift Drift newDrifter chairTurned
-    check ("a turned chair is absorbed " ++ show (meanOf (out yaw) (during 390 400 turnedOut))) $
-        abs (meanOf (out yaw) (during 390 400 turnedOut)) < 0.2 && abs (meanOf (out roll) (during 390 400 turnedOut)) < 0.2
-    check ("rotation waits for a minute of rest " ++ show (meanOf (out yaw) (during 59 60 turnedOut))) $
-        abs (meanOf (out yaw) (during 59 60 turnedOut) - 2.5) < 0.05
-
-    -- Paused, or with the clip out of sight, the centre stays put; and
-    -- when tracking resumes it carries on without a jump.
-    let (drifting, beforePause) = runDrift Drift newDrifter (along 0 40 (const atCentre{tx = 30}))
-        (pausedDrifter, whilePaused) = runDrift NoDrift drifting (along 40 100 (const atCentre{tx = 30}))
-        (_, afterPause) = runDrift Drift pausedDrifter (along 100 110 (const atCentre{tx = 30}))
-        offsetAt rows = case reverse rows of
-            (_, hp, o) : _ -> tx hp - tx o
-            [] -> 0
-    check ("drifting before the pause " ++ show (offsetAt beforePause)) $ offsetAt beforePause > 5
-    check "paused, the centre stays" $ all (\(_, hp, o) -> abs (tx hp - tx o - offsetAt beforePause) < 1e-9) whilePaused
-    check ("after a pause, the centre carries on " ++ show (offsetAt afterPause)) $
-        offsetAt afterPause > offsetAt beforePause && biggestStep (offsets (beforePause ++ whilePaused ++ afterPause)) < 0.01
-    let (_, regained) = runDrift Drift (interrupted drifting) (along 100 110 (const atCentre{tx = 30}))
-    check ("after losing the clip, the centre carries on " ++ show (offsetAt regained)) $
-        offsetAt regained > offsetAt beforePause && biggestStep (offsets (beforePause ++ regained)) < 0.01
-    -- Recentering starts afresh: the pose passes through unchanged.
-    let (_, fresh) = runDrift Drift newDrifter (along 0 10 (const atCentre{tx = 30}))
-    check "recentered, nothing has drifted" $ all (all ((< 1e-12) . abs)) (offsets fresh)
-    check "a fresh centre is described" $ describeDrift (driftOffset newDrifter) == "Centre: where you recentered."
-    -- Turned off, nothing drifts.
-    let (_, undrifted) = runDrift NoDrift newDrifter shifting
-    check "drift off" $ all (all ((< 1e-12) . abs)) (offsets undrifted)
-    -- News comes now and then.
-    let newsCount = length [() | Just _ <- snd (mapAccumL (\d (t, hp) -> let (_, d', n) = driftCentre Drift t hp d in (d', n)) newDrifter shifting)]
-    check ("drift mentioned now and then " ++ show newsCount) $ newsCount >= 2 && newsCount <= 3
-
-    check "drift setting" $ fmap drift (parseConfig "drift = off\n") == Right NoDrift
-    check "drift default" $ drift defaultConfig == Drift
-    check "bad drift" $ parseConfig "drift = maybe" == Left "line 1: drift is on or off"
-    check "drift change described" $
-        (describeChanges defaultConfig <$> parseConfig "drift = off\n") == Right "Settings reloaded: drift = off"
-    check "drift edited" $ editSettings [("drift", "off")] "lean = view\n" == Right "lean = view\ndrift = off\n"
-    check "drift shown" $ lookup "drift" (settingValues "") == Just "on"
+    -- Drift is no longer a setting, but files that set it still load,
+    -- with a note, and editing leaves the line alone.
+    let oldFile = "lean = view\ndrift = on\n"
+    check "drift ignored" $ parseConfig oldFile == Right defaultConfig && parseConfig "drift = maybe" == Right defaultConfig
+    check "drift noted" $ retiredSettings oldFile == ["line 2: drift is no longer a setting; ignoring it."]
+    check "no notes" $ retiredSettings (renderConfig defaultConfig) == []
+    check "drift not rendered" $ "drift" `notElem` settingNames
+    check "drift left alone" $
+        editSettings (settingValues oldFile ++ [("lean", "screen")]) oldFile == Right "lean = screen\ndrift = on\n"
+    check "drift not editable" $ isLeft (editSettings [("drift", "off")] oldFile)
 
     -- Editing the settings file from trackkat's window.
     let userFile = "# mine\npause=Pause # TrackIR style\nsmoothing = off\nsteadiness = 70\npause = F9\n"

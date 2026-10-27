@@ -1,11 +1,12 @@
 -- | trackkat's settings file, as @name = value@ lines: hotkey and joystick
--- button bindings, smoothing, response curves and drift.
+-- button bindings, smoothing and response curves.
 module TrackKat.Config (
     Config (..),
     defaultConfig,
     parseConfig,
     renderConfig,
     describeChanges,
+    retiredSettings,
     settingNames,
     settingValues,
     editSettings,
@@ -29,7 +30,6 @@ import Data.Foldable (traverse_)
 import Data.List (dropWhileEnd, findIndices, intercalate, nub)
 import Data.Maybe (fromMaybe)
 
-import TrackKat.Drift (Drift (..))
 import TrackKat.Number
 import TrackKat.Response
 
@@ -38,12 +38,11 @@ data Config = Config
     , pauseBindings :: [Binding]
     , trimBindings :: [Binding]
     , response :: Response
-    , drift :: Drift
     }
     deriving (Eq, Show)
 
 -- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
--- DCS; strong smoothing; a centre that follows the head.
+-- DCS; strong smoothing.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -61,7 +60,6 @@ defaultConfig =
                 , zCurve = gain 2.5
                 , lean = LeanWithView
                 }
-        , drift = Drift
         }
   where
     gain g = Points [(1, g)]
@@ -111,6 +109,7 @@ parseConfig str = do
   where
     line acc (n, l) =
         acc >>= \ck -> case break (== '=') (takeWhile (/= '#') l) of
+            (name, '=' : _) | trim name `elem` retired -> Right ck
             (name, '=' : value) -> either (Left . (where_ n ++)) Right (setting ck (trim name) (trim value))
             (blank, _)
                 | all isSpace blank -> Right ck
@@ -139,7 +138,6 @@ setting (c, k@(Knobs on s r)) name value =
             "y" -> curve leanRange (\cv x -> x{yCurve = cv})
             "z" -> curve leanRange (\cv x -> x{zCurve = cv})
             "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
-            "drift" -> (\d -> (c{drift = d}, k)) <$> parseDrift value
             _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
@@ -211,14 +209,6 @@ renderConfig c =
         , "# looking up or down. lean = screen: leaning moves you the same way"
         , "# whichever way you look."
         , "lean = " ++ renderLean (lean r)
-        , ""
-        , "# drift = on: when you shift in your chair, the centre follows where"
-        , "# your head comes to rest, over a minute or two, too slowly to see."
-        , "# Only rest close to the centre counts, and only after a while there:"
-        , "# looking or leaning away, however long, doesn't move it. Recentering"
-        , "# still puts the centre where you are at once. drift = off keeps the"
-        , "# centre where you recentered."
-        , "drift = " ++ renderDrift (drift c)
         ]
   where
     r = response c
@@ -243,7 +233,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
-                ++ [("lean", renderLean (lean r)), ("drift", renderDrift (drift c))]
+                ++ [("lean", renderLean (lean r))]
 
 parseLean :: String -> Either String Lean
 parseLean "view" = Right LeanWithView
@@ -254,14 +244,18 @@ renderLean :: Lean -> String
 renderLean LeanWithView = "view"
 renderLean LeanWithScreen = "screen"
 
-parseDrift :: String -> Either String Drift
-parseDrift "on" = Right Drift
-parseDrift "off" = Right NoDrift
-parseDrift _ = Left "drift is on or off"
+-- | Notes on the lines of a settings file that set something trackkat no
+-- longer has, which 'parseConfig' ignores.
+retiredSettings :: String -> [String]
+retiredSettings str =
+    [ "line " ++ show n ++ ": " ++ name ++ " is no longer a setting; ignoring it."
+    | (n, Just (name, _)) <- zip [1 :: Int ..] (map settingLine (lines str))
+    , name `elem` retired
+    ]
 
-renderDrift :: Drift -> String
-renderDrift Drift = "on"
-renderDrift NoDrift = "off"
+-- | Settings trackkat no longer has, which older settings files still set.
+retired :: [String]
+retired = ["drift"]
 
 -- | The names of the settings, in the order the default file lists them.
 settingNames :: [String]

@@ -30,9 +30,9 @@ int hts_gui_capturing(void);
 void hts_gui_add_binding(int which, const wchar_t *binding);
 
 static const wchar_t *const names[] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness", L"responsiveness",
-                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"drift"};
+                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean"};
 static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"", L"on", L"90", L"45", L"1:6, precision 40",
-                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"on"};
+                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view"};
 
 int main(int argc, char **argv)
 {
@@ -41,14 +41,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "could not start the GUI\n");
         return 1;
     }
-    for (int i = 0; i < 14; i++)
+    for (int i = 0; i < (int)(sizeof names / sizeof *names); i++)
         hts_gui_set_setting(names[i], values[i]);
     hts_gui_log(L"Games will load NPClient from C:\\Games\\trackkat");
     hts_gui_log(L"Recenter: F12   Pause: Ctrl+F9   Trim: none   (Enter also recenters, c Enter calibrates level)");
     hts_gui_log(L"Tracking.");
     hts_gui_calibration(L"Level learnt: camera tipped 12.4 degrees down and 0.8 to its right, from 1460 degrees of head "
                         L"turning.\nNeck pivot learnt: 92 mm below the clip, 71 behind it and 3 to its left, from 214 head "
-                        L"turns.\nCentre has followed you since recentering: yaw +0.4  pitch -0.2  roll +0.0   x +21  y -2  z +6 mm");
+                        L"turns.");
     hts_gui_camera(1, L"");
     hts_gui_games(1);
     int paused = 0;
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
             hts_gui_log(L"Trimmed: forward is now yaw -42 pitch +18.");
         }
         if (acts & 0x10) {
-            for (int f = 0; f < 14; f++) {
+            for (int f = 0; f < (int)(sizeof names / sizeof *names); f++) {
                 wchar_t v[256];
                 hts_gui_saved_setting(names[f], v, 256);
                 printf("  %ls = %ls\n", names[f], v);

@@ -19,7 +19,6 @@ library
     TrackKat.Calibration
     TrackKat.Camera
     TrackKat.Config
-    TrackKat.Drift
     TrackKat.Frame
     TrackKat.GamePose
     TrackKat.Linear
