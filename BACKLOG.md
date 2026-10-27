@@ -4,6 +4,11 @@ Roughly in order.
 
 - Head movements as desktop controls (switching virtual desktops or window
   manager panes), on Linux too.
+- Bright IR sources behind the user (a lit fireplace makes a big blob that
+  stops NaturalPoint's software entirely). Beyond rejecting blobs that don't
+  match the predicted reflectors, learn sources that stay put while the head
+  moves and mask them, and report them so the user can see what the camera
+  sees. Test when the fire is lit.
 
 ## Low priority
 
