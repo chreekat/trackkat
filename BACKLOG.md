@@ -2,8 +2,6 @@
 
 Roughly in order.
 
-- Head movements as desktop controls (switching virtual desktops or window
-  manager panes), on Linux too.
 - Bright IR sources behind the user (a lit fireplace makes a big blob that
   stops NaturalPoint's software entirely). Beyond rejecting blobs that don't
   match the predicted reflectors, learn sources that stay put while the head
@@ -29,3 +27,5 @@ Roughly in order.
   port. Thrustmaster sticks report no serial number (their instance ids
   end in a port-derived 6&...&0&N), so the port is all there is. The T.16000M's left/right-handed
   switch doesn't change its USB identity, so it doesn't help.
+- Head movements as desktop controls (switching virtual desktops or window
+  manager panes), on Linux too.
