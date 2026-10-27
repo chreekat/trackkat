@@ -54,7 +54,7 @@ typedef struct State {
 
 static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, L"", L"",
-                       L"Separate several keys or buttons with commas. Curves are input:output points, in degrees or mm."};
+                       L"Separate several keys or buttons with commas."};
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
 static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings as the user asked to save them */
@@ -236,6 +236,10 @@ enum {
     ID_MENU_RECENTER,
     ID_MENU_PAUSE,
     ID_MENU_QUIT,
+    ID_CURVES_AS_TEXT,
+    ID_MULTIPLIER = 400, /* + axis */
+    ID_STEP = 410,       /* + axis */
+    ID_PRECISION = 420,  /* + axis */
 };
 
 static HINSTANCE inst;
@@ -246,6 +250,11 @@ static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
 static wchar_t field_text[F_COUNT][FIELD_MAX]; /* values of the checkbox and sliders */
 static HWND add_button[2];
+/* Each axis's curve: a plot, a multiplier with arrows to step it, a centre
+ * precision, and what they mean; or, as text, the edit in field_ctl. */
+static HWND curve_plot[6], multiplier_edit[6], multiplier_step[6], precision_slider[6], precision_value[6];
+static HWND curve_note[6], curve_extra[6][2]; /* the labels shown only with the controls */
+static HWND curves_as_text;
 static WNDPROC button_proc;
 static int swallow_key_up; /* the key that was captured is still to come up */
 static State seen; /* the last snapshot */
@@ -566,6 +575,8 @@ static const wchar_t *const axis_names[6] = {L"Yaw", L"Pitch", L"Roll", L"X", L"
 /* What each axis's sides mean, as trackkat measures them. */
 static const wchar_t *const axis_minus[6] = {L"left", L"up", L"right", L"right", L"up", L"fwd"};
 static const wchar_t *const axis_plus[6] = {L"right", L"down", L"left", L"left", L"down", L"back"};
+/* The ends of the views' ranges, as yawRange and the rest in
+ * src/TrackKat/Response.hs. */
 static const float axis_range[6] = {180, 90, 90, 300, 300, 300};
 
 static void format_axis(wchar_t *buf, size_t size, int axis, float value)
@@ -681,6 +692,306 @@ static LRESULT CALLBACK live_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     }
     }
     return DefWindowProcW(w, msg, wp, lp);
+}
+
+/* ---- Response curves ------------------------------------------------------ */
+
+/* A curve as trackkat.conf writes it, read as src/TrackKat/Config.hs reads
+ * it: a multiplier with a centre precision, such as 1:6 or
+ * 1:6, precision 40, or other input:output points. */
+enum { SHAPE_MULTIPLIER, SHAPE_POINTS, SHAPE_UNREADABLE };
+#define CURVE_POINTS 64
+
+typedef struct {
+    int shape;
+    double factor;    /* the multiplier, or for points the last one's output over input */
+    double precision; /* 0 to 100, for a multiplier */
+    int n;
+    double in[CURVE_POINTS], out[CURVE_POINTS];
+} Curve;
+
+static Curve curve[6];
+
+
+static void skip_spaces(const wchar_t **p)
+{
+    while (**p == L' ' || **p == L'\t')
+        (*p)++;
+}
+
+static void read_curve(const wchar_t *text, Curve *c)
+{
+    memset(c, 0, sizeof *c);
+    c->shape = SHAPE_UNREADABLE;
+    const wchar_t *p = text;
+    for (;;) {
+        skip_spaces(&p);
+        if (!*p || *p == L',')
+            break;
+        wchar_t *end;
+        double a = wcstod(p, &end);
+        if (end == p || *end != L':')
+            return;
+        p = end + 1;
+        double b = wcstod(p, &end);
+        if (end == p || (*end && *end != L' ' && *end != L'\t' && *end != L','))
+            return;
+        p = end;
+        if (c->n == CURVE_POINTS || a <= (c->n ? c->in[c->n - 1] : 0))
+            return;
+        c->in[c->n] = a;
+        c->out[c->n] = b;
+        c->n++;
+    }
+    if (c->n == 0)
+        return;
+    c->factor = c->out[c->n - 1] / c->in[c->n - 1];
+    if (*p == L',') {
+        p++;
+        skip_spaces(&p);
+        if (wcsncmp(p, L"precision", 9) != 0)
+            return;
+        p += 9;
+        if (*p != L' ' && *p != L'\t')
+            return;
+        wchar_t *end;
+        double k = wcstod(p, &end);
+        if (end == p || k < 0 || k > 100)
+            return;
+        p = end;
+        skip_spaces(&p);
+        if (*p || c->n != 1 || c->out[0] <= 0)
+            return;
+        c->shape = SHAPE_MULTIPLIER;
+        c->precision = k;
+    } else
+        c->shape = c->n == 1 && c->out[0] > 0 ? SHAPE_MULTIPLIER : SHAPE_POINTS;
+}
+
+/* Where a curve takes a head movement, as applyCurve does. */
+static double apply_curve(const Curve *c, int axis, double x)
+{
+    double a = fabs(x), s = x < 0 ? -1 : 1;
+    if (c->shape == SHAPE_MULTIPLIER) {
+        double range = axis_range[axis], r = range / c->factor, k = c->precision / 100;
+        if (a <= r) {
+            double u = a / r;
+            return s * range * ((1 - k) * u + k * u * u * u);
+        }
+        return s * (range + (a - r) * c->factor * (1 + 2 * k));
+    }
+    double x0 = 0, y0 = 0;
+    for (int i = 0; i < c->n; i++) {
+        double x1 = c->in[i], y1 = c->out[i];
+        if (a <= x1 || i == c->n - 1)
+            return s * (y0 + (a - x0) * (y1 - y0) / (x1 - x0));
+        x0 = x1;
+        y0 = y1;
+    }
+    return x;
+}
+
+/* A number with no more decimals than it needs, up to two. */
+static void format_number(wchar_t *buf, size_t size, double x)
+{
+    _snwprintf(buf, size, L"%.2f", x);
+    buf[size - 1] = 0;
+    wchar_t *end = buf + wcslen(buf);
+    while (end > buf && end[-1] == L'0')
+        *--end = 0;
+    if (end > buf && end[-1] == L'.')
+        *--end = 0;
+}
+
+/* What a multiplier means: the head movement that reaches the end of the
+ * view's range. */
+static void describe_reach(wchar_t *buf, size_t size, int axis, double factor)
+{
+    static const wchar_t *const what[6] = {L"turn looks behind", L"nod looks straight up", L"tilt rolls 90°",
+                                           L"lean moves 300 mm", L"rise moves 300 mm", L"lean moves 300 mm"};
+    double reach = axis_range[axis] / factor;
+    wchar_t n[32];
+    format_number(n, 32, reach < 10 ? round(reach * 10) / 10 : round(reach));
+    _snwprintf(buf, size, axis < 3 ? L"%ls° %ls" : L"%ls mm %ls", n, what[axis]);
+    buf[size - 1] = 0;
+}
+
+static void paint_curve(HDC dc, int axis, int w, int h)
+{
+    fill_rect(dc, 0, 0, w, h, C_BOX);
+    SetBkMode(dc, TRANSPARENT);
+    HPEN grid = CreatePen(PS_DOT, 1, C_GRID);
+    HGDIOBJ old = SelectObject(dc, grid);
+    MoveToEx(dc, w / 2, 0, NULL);
+    LineTo(dc, w / 2, h);
+    MoveToEx(dc, 0, h / 2, NULL);
+    LineTo(dc, w, h / 2);
+    SelectObject(dc, old);
+    DeleteObject(grid);
+
+    const Curve *c = &curve[axis];
+    if (c->shape == SHAPE_UNREADABLE) {
+        text_at(dc, small_font, C_AMBER, 0, 0, w, h, DT_CENTER, L"?");
+        return;
+    }
+    /* Up, the view from the end of its range on one side to the other;
+     * across, the head a quarter further than the multiplier takes to reach
+     * it, so the curve's shape fills the plot whatever the multiplier. */
+    double reach = 1.25 * axis_range[axis] / (c->factor > 0 ? c->factor : 1);
+    double sx = w / 2.0 / reach, sy = (h / 2.0 - S(2)) / axis_range[axis];
+    HRGN clip = CreateRectRgn(0, 0, w, h);
+    SelectClipRgn(dc, clip);
+    if (c->shape == SHAPE_MULTIPLIER && c->precision > 0) {
+        /* The multiplier alone, for comparison. */
+        Curve plain = *c;
+        plain.precision = 0;
+        POINT a = {0, (LONG)lround(h / 2.0 + apply_curve(&plain, axis, reach) * sy)};
+        POINT b = {w, (LONG)lround(h / 2.0 - apply_curve(&plain, axis, reach) * sy)};
+        HPEN dots = CreatePen(PS_DOT, 1, C_DIM);
+        HGDIOBJ was = SelectObject(dc, dots);
+        MoveToEx(dc, a.x, a.y, NULL);
+        LineTo(dc, b.x, b.y);
+        SelectObject(dc, was);
+        DeleteObject(dots);
+    }
+    POINT pts[129];
+    for (int i = 0; i <= 128; i++) {
+        double x = reach * (i / 64.0 - 1);
+        double y = apply_curve(c, axis, x) * sy;
+        /* Far off the plot, GDI coordinates would overflow. */
+        y = y > h ? h : y < -h ? -h : y;
+        pts[i].x = (LONG)lround(w / 2.0 + x * sx);
+        pts[i].y = (LONG)lround(h / 2.0 - y);
+    }
+    HPEN pen = CreatePen(PS_SOLID, S(2), C_ACCENT);
+    old = SelectObject(dc, pen);
+    Polyline(dc, pts, 129);
+    SelectObject(dc, old);
+    DeleteObject(pen);
+
+    /* Where the head is now, and where the curve puts the view. */
+    int live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
+    double x = seen.head[axis], y = apply_curve(c, axis, x);
+    double px = w / 2.0 + x * sx, py = h / 2.0 - y * sy;
+    px = px < 0 ? 0 : px > w - 1 ? w - 1 : px;
+    py = py < 0 ? 0 : py > h - 1 ? h - 1 : py;
+    disc(dc, live ? C_HEAD_TICK : C_DIM, C_BOX, 1, (int)lround(px), (int)lround(py), S(3));
+    SelectClipRgn(dc, NULL);
+    DeleteObject(clip);
+}
+
+static LRESULT CALLBACK curve_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(w, &ps);
+        RECT rc;
+        GetClientRect(w, &rc);
+        HDC mem = CreateCompatibleDC(dc);
+        HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp);
+        paint_curve(mem, (int)GetWindowLongPtrW(w, GWLP_USERDATA), rc.right, rc.bottom);
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        EndPaint(w, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProcW(w, msg, wp, lp);
+}
+
+/* What changed a curve, so that showing it leaves alone the control the
+ * user is working. */
+enum { FROM_TEXT, FROM_MULTIPLIER, FROM_STEP, FROM_PRECISION };
+
+static int syncing; /* the window is changing curve controls itself */
+
+/* Show a curve's text in its controls, its note and its plot. A curve
+ * that isn't a multiplier keeps its controls at its overall slope and no
+ * precision, ready to replace it. */
+static void sync_curve(int axis, int from)
+{
+    wchar_t text[FIELD_MAX], buf[64];
+    GetWindowTextW(field_ctl[F_YAW + axis], text, FIELD_MAX);
+    Curve *c = &curve[axis];
+    read_curve(text, c);
+    syncing++;
+    if (from != FROM_MULTIPLIER && c->shape != SHAPE_UNREADABLE) {
+        format_number(buf, 64, c->factor);
+        SetWindowTextW(multiplier_edit[axis], buf);
+    }
+    int precision = c->shape == SHAPE_MULTIPLIER ? (int)lround(c->precision) : 0;
+    if (from != FROM_PRECISION)
+        SendMessageW(precision_slider[axis], TBM_SETPOS, TRUE, precision);
+    _snwprintf(buf, 64, L"%d", precision);
+    SetWindowTextW(precision_value[axis], buf);
+    if (c->shape == SHAPE_MULTIPLIER)
+        describe_reach(buf, 64, axis, c->factor);
+    else
+        copy_text(buf, 64, c->shape == SHAPE_POINTS ? L"Custom curve, of points" : L"Can't read this curve");
+    SetWindowTextW(curve_note[axis], buf);
+    syncing--;
+    InvalidateRect(curve_plot[axis], NULL, FALSE);
+}
+
+/* Replace a curve with a multiplier and precision, as the user set them. */
+static void set_multiplier(int axis, double factor, int precision, int from)
+{
+    wchar_t number[32], text[FIELD_MAX];
+    format_number(number, 32, factor);
+    if (precision > 0)
+        _snwprintf(text, FIELD_MAX, L"1:%ls, precision %d", number, precision);
+    else
+        _snwprintf(text, FIELD_MAX, L"1:%ls", number);
+    text[FIELD_MAX - 1] = 0;
+    syncing++;
+    SetWindowTextW(field_ctl[F_YAW + axis], text);
+    syncing--;
+    sync_curve(axis, from);
+}
+
+/* The multiplier as typed, if it is a number above 0. */
+static int typed_multiplier(int axis, double *factor)
+{
+    wchar_t buf[32], *end;
+    GetWindowTextW(multiplier_edit[axis], buf, 32);
+    double f = wcstod(buf, &end);
+    while (*end == L' ')
+        end++;
+    if (end == buf || *end || !(f > 0) || f > 1000)
+        return 0;
+    *factor = f;
+    return 1;
+}
+
+static int current_precision(int axis) { return (int)SendMessageW(precision_slider[axis], TBM_GETPOS, 0, 0); }
+
+/* The arrows step the multiplier by halves, to the next half. */
+static void step_multiplier(int axis, int up)
+{
+    double f;
+    if (!typed_multiplier(axis, &f))
+        f = curve[axis].shape == SHAPE_UNREADABLE ? 1 : curve[axis].factor;
+    double halves = up ? floor(f * 2 + 1e-6) + 1 : ceil(f * 2 - 1e-6) - 1;
+    if (halves < 1)
+        halves = 1;
+    set_multiplier(axis, halves / 2, current_precision(axis), FROM_STEP);
+}
+
+static void show_curves_as_text(int as_text)
+{
+    for (int i = 0; i < 6; i++) {
+        ShowWindow(field_ctl[F_YAW + i], as_text ? SW_SHOW : SW_HIDE);
+        HWND controls[] = {multiplier_edit[i], multiplier_step[i], precision_slider[i], precision_value[i],
+                           curve_extra[i][0], curve_extra[i][1]};
+        for (size_t j = 0; j < sizeof controls / sizeof *controls; j++)
+            ShowWindow(controls[j], as_text ? SW_HIDE : SW_SHOW);
+    }
 }
 
 /* ---- Settings ------------------------------------------------------------- */
@@ -817,6 +1128,11 @@ static void show_field(int i, const wchar_t *value)
     } else if (slider_field(i)) {
         SendMessageW(field_ctl[i], TBM_SETPOS, TRUE, (LPARAM)lround(_wtof(value)));
         SetWindowTextW(slider_value[i == F_RESPONSIVENESS], value);
+    } else if (i >= F_YAW && i <= F_Z) {
+        syncing++;
+        SetWindowTextW(field_ctl[i], value);
+        syncing--;
+        sync_curve(i - F_YAW, FROM_TEXT);
     } else
         SetWindowTextW(field_ctl[i], value);
     if (i == F_RECENTER || i == F_PAUSE) {
@@ -969,8 +1285,11 @@ static void refresh(void)
     seen = st;
     drain_log();
     update_tray(0);
-    if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd))
+    if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd)) {
         InvalidateRect(live_hwnd, NULL, FALSE);
+        for (int i = 0; i < 6; i++)
+            InvalidateRect(curve_plot[i], NULL, FALSE);
+    }
 }
 
 static HWND control(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id)
@@ -991,8 +1310,9 @@ static HWND edit(int field, int x, int y, int w)
 
 /* Layout, in pixels at 96 dpi. The log box takes what height is left. */
 #define CLIENT_W 720
-#define CLIENT_H 816
-#define LOG_TOP 644
+#define CURVES_TOP 506
+#define LOG_TOP (CURVES_TOP + 216)
+#define CLIENT_H (LOG_TOP + 172)
 
 static void build_window(void)
 {
@@ -1032,20 +1352,44 @@ static void build_window(void)
         SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
     }
 
-    static const wchar_t *const curve_labels[6] = {L"Yaw", L"Pitch", L"Roll", L"X", L"Y", L"Z"};
     for (int i = 0; i < 6; i++) {
-        int x = 22 + (i % 3) * 226, y = 508 + (i / 3) * 30;
-        label(curve_labels[i], x, y, 40);
-        field_ctl[F_YAW + i] = edit(F_YAW + i, x + 40, y, 170);
+        int x = 22 + (i % 3) * 226, y = CURVES_TOP + (i / 3) * 70, right = x + 72;
+        curve_plot[i] = CreateWindowExW(0, L"trackkat_curve", L"", WS_CHILD | WS_VISIBLE, S(x), S(y), S(64), S(64),
+                                        main_hwnd, NULL, inst, NULL);
+        SetWindowLongPtrW(curve_plot[i], GWLP_USERDATA, i);
+        HWND name = label(axis_names[i], right, y, 40);
+        SendMessageW(name, WM_SETFONT, (WPARAM)bold_font, FALSE);
+        curve_extra[i][0] = label(L"×", right + 52, y, 12);
+        multiplier_edit[i] = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, right + 66, y, 74, 23, ID_MULTIPLIER + i);
+        multiplier_step[i] = control(UPDOWN_CLASSW, L"", UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_HOTTRACK, 0, 0, 0, 0,
+                                     ID_STEP + i);
+        SendMessageW(multiplier_step[i], UDM_SETBUDDY, (WPARAM)multiplier_edit[i], 0);
+        SendMessageW(multiplier_step[i], UDM_SETRANGE32, 0, 1000);
+        SendMessageW(multiplier_step[i], UDM_SETPOS32, 0, 500);
+        curve_extra[i][1] = control(L"STATIC", L"Precision", SS_LEFT, right, y + 29, 52, 18, 0);
+        SendMessageW(curve_extra[i][1], WM_SETFONT, (WPARAM)small_font, FALSE);
+        precision_slider[i] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, right + 48, y + 26, 72,
+                                      22, ID_PRECISION + i);
+        SendMessageW(precision_slider[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
+        SendMessageW(precision_slider[i], TBM_SETPAGESIZE, 0, 10);
+        precision_value[i] = control(L"STATIC", L"0", SS_LEFT, right + 120, y + 29, 22, 18, 0);
+        SendMessageW(precision_value[i], WM_SETFONT, (WPARAM)small_font, FALSE);
+        field_ctl[F_YAW + i] = edit(F_YAW + i, right, y + 25, 140);
+        ShowWindow(field_ctl[F_YAW + i], SW_HIDE);
+        curve_note[i] = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, right, y + 49, 142, 16, 0);
+        SendMessageW(curve_note[i], WM_SETFONT, (WPARAM)small_font, FALSE);
     }
 
     field_ctl[F_LEAN] = control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
-                                WS_TABSTOP | BS_AUTOCHECKBOX, 22, 568, 370, 22, ID_FIELD + F_LEAN);
+                                WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 370, 22, ID_FIELD + F_LEAN);
     field_ctl[F_DRIFT] = control(L"BUTTON", L"Centre follows where you rest (drift = on)",
-                                 WS_TABSTOP | BS_AUTOCHECKBOX, 400, 568, 300, 22, ID_FIELD + F_DRIFT);
+                                 WS_TABSTOP | BS_AUTOCHECKBOX, 400, CURVES_TOP + 140, 300, 22, ID_FIELD + F_DRIFT);
 
-    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 600, 90, 26, IDOK);
-    settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 604, 578, 20, 0);
+    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, CURVES_TOP + 172, 90, 26, IDOK);
+    settings_text =
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, CURVES_TOP + 176, 440, 20, 0);
+    curves_as_text = control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 580, CURVES_TOP + 174, 120,
+                             22, ID_CURVES_AS_TEXT);
 
     log_hint = control(L"STATIC", L"What trackkat reports, but not the status shown above. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
                        460, 20, 0);
@@ -1058,7 +1402,7 @@ static void build_window(void)
 
     /* Group boxes last, beneath the controls they frame. */
     control(L"BUTTON", L"Calibration", BS_GROUPBOX, 10, 298, 700, 78, 0);
-    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 384, 700, 250, 0);
+    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 384, 700, LOG_TOP - 394, 0);
     log_group = control(L"BUTTON", L"Log", BS_GROUPBOX, 10, LOG_TOP, 700, CLIENT_H - LOG_TOP - 10, 0);
 }
 
@@ -1075,8 +1419,26 @@ static void layout(int width, int height)
 static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
-    case WM_COMMAND:
-        switch (LOWORD(wp)) {
+    case WM_COMMAND: {
+        int id = LOWORD(wp), code = HIWORD(wp);
+        if (id >= ID_FIELD + F_YAW && id <= ID_FIELD + F_Z) {
+            if (code == EN_CHANGE && !syncing)
+                sync_curve(id - ID_FIELD - F_YAW, FROM_TEXT);
+            return 0;
+        }
+        if (id >= ID_MULTIPLIER && id < ID_MULTIPLIER + 6) {
+            int axis = id - ID_MULTIPLIER;
+            double f;
+            if (code == EN_CHANGE && !syncing && typed_multiplier(axis, &f))
+                set_multiplier(axis, f, current_precision(axis), FROM_MULTIPLIER);
+            else if (code == EN_KILLFOCUS)
+                sync_curve(axis, FROM_TEXT);
+            return 0;
+        }
+        switch (id) {
+        case ID_CURVES_AS_TEXT:
+            show_curves_as_text(SendMessageW(curves_as_text, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            return 0;
         case ID_RECENTER:
             InterlockedOr(&actions, ACT_RECENTER);
             return 0;
@@ -1113,6 +1475,15 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         break;
+    }
+    case WM_NOTIFY: {
+        NMHDR *n = (NMHDR *)lp;
+        if (n->code == UDN_DELTAPOS && n->idFrom >= ID_STEP && n->idFrom < ID_STEP + 6) {
+            step_multiplier((int)n->idFrom - ID_STEP, ((NMUPDOWN *)lp)->iDelta > 0);
+            return 1;
+        }
+        break;
+    }
     case WM_HSCROLL:
         for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++)
             if ((HWND)lp == field_ctl[i]) {
@@ -1120,6 +1491,11 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 _snwprintf(v, 16, L"%d", (int)SendMessageW(field_ctl[i], TBM_GETPOS, 0, 0));
                 v[15] = 0;
                 show_field(i, v);
+            }
+        for (int i = 0; i < 6; i++)
+            if ((HWND)lp == precision_slider[i] && !syncing) {
+                double f = curve[i].factor > 0 ? curve[i].factor : 1;
+                set_multiplier(i, f, current_precision(i), FROM_PRECISION);
             }
         return 0;
     case WM_CTLCOLORSTATIC:
@@ -1215,7 +1591,7 @@ static void init_common_controls(void)
     typedef BOOL(WINAPI * init_fn)(const INITCOMMONCONTROLSEX *);
     HMODULE comctl = LoadLibraryW(L"comctl32.dll");
     init_fn init = comctl ? (init_fn)(void *)GetProcAddress(comctl, "InitCommonControlsEx") : NULL;
-    INITCOMMONCONTROLSEX icc = {sizeof icc, ICC_BAR_CLASSES | ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX icc = {sizeof icc, ICC_BAR_CLASSES | ICC_STANDARD_CLASSES | ICC_UPDOWN_CLASS};
     if (init)
         init(&icc);
 }
@@ -1273,6 +1649,10 @@ static int create_windows(void)
     wc.lpfnWndProc = live_proc;
     wc.hbrBackground = NULL;
     wc.lpszClassName = L"trackkat_live";
+    if (!RegisterClassW(&wc))
+        return 0;
+    wc.lpfnWndProc = curve_proc;
+    wc.lpszClassName = L"trackkat_curve";
     if (!RegisterClassW(&wc))
         return 0;
 
