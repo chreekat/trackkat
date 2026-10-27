@@ -94,6 +94,26 @@ its own format.
 
 Single-frame jumps no head could make are ignored.
 
+### Mirror images
+
+Three reflectors fit two poses equally well: the clip as it is, and its
+mirror image, tilted the other way toward the camera. On the mirror image,
+yaw and pitch go the wrong way while leaning is right. The two meet where
+the clip's triangle squarely faces the camera, as a clip whose post is bent
+upright often does, and trackkat can come out of that, or find the clip
+again after losing it, on the mirror image. It tells them apart by how your
+head turns: about your neck, behind the clip, never about a point in front
+of it. Within a second or two of glancing about it corrects a mirror image,
+keeping your centre where it was, and logs:
+
+```
+Corrected a mirror-image pose.
+```
+
+trackkat learns nothing while it isn't sure which pose is your head's. A
+calibration learnt from mirror images, whose neck pivot is in front of the
+clip, is forgotten when trackkat starts, with a line in the log saying so.
+
 ## Anti-cheat
 
 Some anti-cheat, such as BattlEye in Arma Reforger, refuses to let a game

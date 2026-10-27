@@ -18,8 +18,9 @@ module TrackKat.Tracker (
 
 import Data.Foldable (toList)
 import Data.List (intercalate, sortOn)
-import Data.Maybe (catMaybes, isJust, isNothing, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 
+import TrackKat.Branch
 import TrackKat.Calibration
 import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
 import TrackKat.Linear (M33, mulMM, norm, transpose)
@@ -41,6 +42,10 @@ data Event
     | -- | Everyday movement changed the calibration noticeably; what is
       -- applied follows it slowly.
       Refined Refinement Calibration
+    | -- | The pose tracked, or the one recentered on, was found to be the
+      -- mirror image of the head's (see "TrackKat.Branch") and was
+      -- switched for the head's.
+      Corrected
     deriving (Show)
 
 -- | What a frame showed.
@@ -106,6 +111,8 @@ data Tracker = Tracker
     , trSizes :: Three Size
     , trReference :: Maybe Pose
     , trLearner :: Learner
+    , trBranch :: Branch
+    -- ^ whether the poses tracked and recentered on are the head's
     , trSweep :: Maybe Sweep
     , trPending :: [Request]
     -- ^ oldest first
@@ -114,7 +121,7 @@ data Tracker = Tracker
 -- | A tracker that starts from the given calibration and recenters on the
 -- first frame it tracks.
 newTracker :: Intrinsics -> Model -> Calibration -> Tracker
-newTracker k m c = Tracker k m Nothing (pure noSize) Nothing (newLearner c) Nothing [Recenter]
+newTracker k m c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newBranch m) Nothing [Recenter]
 
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
@@ -134,7 +141,7 @@ request r t = t{trPending = trPending t ++ [r]}
 -- | Track a differently shaped clip from the next frame, recentering then,
 -- since the clip's axes move with its shape.
 setModel :: Model -> Tracker -> Tracker
-setModel m t = request Recenter t{trModel = m, trRecent = Nothing}
+setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLearner = changeClip m (trLearner t), trBranch = newBranch m}
 
 -- | Seconds of head turning to calibrate level from.
 calibrationSeconds :: Double
@@ -194,9 +201,13 @@ maxFit = 2
 sizeMemory :: Double
 sizeMemory = 10
 
+-- | How the clip was made out.
+data Finding = Followed | FoundAfresh
+
 -- | What a frame showed, when the clip was made out.
 data Sighting
     = Sighting
+        Finding
         Pose
         -- | RMS reprojection error, pixels
         Double
@@ -210,13 +221,42 @@ step :: Double -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
 step now stripes t =
     case sighting of
         Nothing -> (t{trLearner = lostSight (trLearner t)}, Lost (length blobs), [])
-        Just (Sighting pose fit sights unused) ->
+        Just (Sighting finding seenPose fit sights unused) ->
             let allSeen = all isJust sights
+                -- See Note [Which pose is the head's] in TrackKat.Branch.
+                others = if allSeen then Just (alternatives k m seenPose) else Nothing
+                watched = watch now pivot seenPose others $ case finding of
+                    Followed -> trBranch t
+                    FoundAfresh -> foundAfresh (trBranch t)
+                (pose, fix) = case (correction watched, followedMirror watched) of
+                    (c, Just other) | c `elem` [MirrorTracked, MirrorBoth] -> (other, c)
+                    (MirrorReference, _) -> (seenPose, MirrorReference)
+                    _ -> (seenPose, MirrorNeither)
+                reference
+                    | fix `elem` [MirrorReference, MirrorBoth] = (\old -> fromMaybe old (mirrorPose k m old)) <$> trReference t
+                    | otherwise = trReference t
+                correcting = fix /= MirrorNeither
                 recent = Recent pose now (if allSeen then now else maybe now recentAllSeen (trRecent t))
                 sizes = resize (metres pose) <$> trSizes t <*> sights
-                (t1, requested) = foldl (handle pose) (t{trRecent = Just recent, trSizes = sizes, trPending = []}, []) (trPending t)
+                -- Learning in progress from before a correction was of
+                -- the mirror image, and so was a requested calibration's
+                -- turning.
+                restarted =
+                    t
+                        { trRecent = Just recent
+                        , trSizes = sizes
+                        , trPending = []
+                        , trReference = reference
+                        , trBranch = corrected fix seenPose watched
+                        , trLearner = if correcting then lostSight (trLearner t) else trLearner t
+                        , trSweep = if correcting then fmap (\(Sweep deadline _) -> Sweep deadline []) (trSweep t) else trSweep t
+                        }
+                (t1, requested) = foldl (handle pose) (restarted, []) (trPending t)
                 ref = maybe pose id (trReference t1)
-                (learner, refinements) = learn now pose (trLearner t1)
+                -- Only a pose surely the head's is learnt from.
+                (learner, refinements)
+                    | settled (trBranch t1) = learn now pose (trLearner t1)
+                    | otherwise = (lostSight (trLearner t1), [])
                 (t2, calibrated) = calibrate pose ref t1{trLearner = learner}
                 applied = trLearner t2
                 seen =
@@ -226,7 +266,7 @@ step now stripes t =
                         unused
              in ( t2
                 , Tracked (relativePose (appliedLevel applied) (appliedPivot applied) ref pose) (norm (poseT pose)) fit seen
-                , reverse requested ++ [Refined r (learnerCalibration learner) | r <- refinements] ++ calibrated
+                , [Corrected | correcting] ++ reverse requested ++ [Refined r (learnerCalibration learner) | r <- refinements] ++ calibrated
                 )
   where
     -- Big enough to be a reflector: of a fair size, and not tiny beside the
@@ -248,7 +288,7 @@ step now stripes t =
         let at b = (blobX b, blobY b)
             whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
         (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
-        if plausible pose then Just (Sighting pose fit (Three (whole l) (whole r) (whole top)) (length blobs - 3)) else Nothing
+        if plausible pose then Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length blobs - 3)) else Nothing
     -- The best match to the prediction, unless its pose is an impossible
     -- jump; then, of the next few that see as many reflectors, the one whose
     -- pose is nearest. (Fewer reflectors can always be fitted by a pose
@@ -262,7 +302,7 @@ step now stripes t =
                 let (turn, move) = poseChange pivot (recentPose r) pose
                     jump = max (turn / maxTurn dt) (move / maxMove dt)
                 if fit <= maxFit && jump <= 1 && plausible pose
-                    then Just (jump, Sighting pose fit (matchSights c) (matchUnused c))
+                    then Just (jump, Sighting Followed pose fit (matchSights c) (matchUnused c))
                     else Nothing
          in case candidates of
                 [] -> Nothing
@@ -294,7 +334,7 @@ step now stripes t =
          in case seen of
                 Nothing -> size{sizeUsual = usual}
                 Just s -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
-    handle pose (acc, evs) Recenter = (acc{trReference = Just pose}, Recentered : evs)
+    handle pose (acc, evs) Recenter = (acc{trReference = Just pose, trBranch = recentered (trBranch acc)}, Recentered : evs)
     handle _ (acc, evs) Calibrate =
         (acc{trSweep = Just (Sweep (now + calibrationSeconds) [])}, CalibrationStarted : evs)
     calibrate pose ref acc = case trSweep acc of

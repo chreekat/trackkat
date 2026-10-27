@@ -379,7 +379,7 @@ main = do
                     | time < 90 = (35 * sin (2 * pi * time / 2.5), 8 * sin (2 * pi * time / 7))
                     | otherwise = (0, 15 * sin (2 * pi * time / 2))
             ]
-        runLearner frames = foldl (\(l, rs) (time, pose) -> let (l', new) = learn time pose l in (l', rs ++ new)) (newLearner defaultCalibration, []) frames
+        runLearner = runLearnerWith headset
         (learnt, refinements) = runLearner (glancing (const (V3 0 0 0)))
         c = learnerCalibration learnt
         (tiltDown, tiltRight) = cameraTilt (estimatedLevel c)
@@ -396,7 +396,7 @@ main = do
             moved = norm (V3 (tx hp) (ty hp) (tz hp))
         check ("turning alone doesn't move " ++ show (y, p) ++ " got " ++ show hp) $
             moved < 3 && abs (yaw hp - y) < 0.5 && abs (pitch hp - p) < 0.5 && abs (roll hp) < 0.5
-    let unlearnt = relativePose cameraLevel (appliedPivot (newLearner defaultCalibration)) straight (headAt neckAt 30 0 0)
+    let unlearnt = relativePose cameraLevel (appliedPivot (newLearner headset defaultCalibration)) straight (headAt neckAt 30 0 0)
     check ("without learning, turning moves " ++ show unlearnt) $ norm (V3 (tx unlearnt) (ty unlearnt) (tz unlearnt)) > 20
     -- A clip worn rolled 15 degrees sees a pivot square below and behind the
     -- head off to one side in its own axes; described at the centre, it is
@@ -421,7 +421,7 @@ main = do
             check "loaded level" $ angleBetween (levelUp (estimatedLevel loaded)) (levelUp (estimatedLevel c)) < 1e-3
             check "loaded pivot" $ closeV (estimatedPivot loaded) (estimatedPivot c)
             check "loaded evidence" $ abs (levelTurning loaded - levelTurning c) < 1e-3 && abs (pivotTurns loaded - pivotTurns c) < 1e-3
-            check "loaded calibration applies at once" $ closeV (appliedPivot (newLearner loaded)) (estimatedPivot c)
+            check "loaded calibration applies at once" $ closeV (appliedPivot (newLearner headset loaded)) (estimatedPivot c)
     check "empty calibration file" $ fmap renderCalibration (parseCalibration "") == Right (renderCalibration defaultCalibration)
     check "bad up" $ isLeft (parseCalibration "up = 0 0 0\n")
     check "bad line" $ isLeft (parseCalibration "# fine\nnonsense\n")
@@ -652,9 +652,80 @@ main = do
     forM_ [("bent", clipBent, bentWorn), ("straight", clipStraight, straightWorn)] $ \(name, m, wornAt) -> do
         let sweeping = [(t, headSeen wornAt (40 * sin (2 * pi * t / 7)) (25 * sin (2 * pi * t / 5.3)) (20 * sin (2 * pi * t / 4.1)), allLit) | t <- at120 20]
             swept = trackPath m sweeping
+            sweptCorrections = corrections (snd (trackFramesEvents m (rendered m sweeping)))
             stepSizes = zipWith (\(_, _, _, a) (_, _, _, b) -> maybe 0 fst (poseError <$> a <*> b)) swept (drop 1 swept)
-        check ("sweep with the " ++ name ++ " clip " ++ show (summed swept, maximum stepSizes)) $
-            lostCount swept == 0 && fst (worstError (unmerged swept)) < 1 && fst (worstError swept) < 4 && snd (worstError swept) < 20 && maximum stepSizes < 3
+        check ("sweep with the " ++ name ++ " clip " ++ show (summed swept, maximum stepSizes, sweptCorrections)) $
+            null sweptCorrections
+                && lostCount swept == 0
+                && fst (worstError (unmerged swept)) < 1
+                && fst (worstError swept) < 4
+                && snd (worstError swept) < 20
+                && maximum stepSizes < 3
+
+    -- Mirror images. A brief loss of the clip while nodding through where
+    -- its triangle squarely faces the camera: found again, it is solved
+    -- onto the mirror image, on which yaw and pitch are reversed, and
+    -- tracked there. Glancing about shows the mistake, and it is corrected.
+    let glance from t = if t < from then 0 else 25 * sin (2 * pi * (t - from) / 2.5)
+        slipTurn t = (glance 3 t, max 0 (min 20 (20 * (t - 1) / 1.5)))
+        slipping = [(t, uncurry (headSeen 30) (slipTurn t) 0, if t > 1.5 && t < 2.2 then (0, 0, 0) else allLit) | t <- at120 12]
+        (slipTracker, slipRows) = trackNoisy clipBent 0.2 slipping
+        slipped = map fst slipRows
+        slipFixed = lastMirrored slipped
+    check ("found again on the mirror image " ++ show (length (filter isMirrored slipped))) $ any isMirrored (after 2.2 slipped)
+    check ("mirror image corrected after " ++ show (slipFixed - 3) ++ " s of glancing") $ slipFixed < 3 + 2.5
+    check ("corrected once " ++ show (corrections slipRows)) $ length (corrections slipRows) == 1
+    -- Corrected, what is reported is what it would have been had the clip
+    -- not been lost.
+    let unhidden = map fst (snd (trackNoisy clipBent 0.2 [(t, pose, allLit) | (t, pose, _) <- slipping]))
+        reported rows = [(t, (yaw hp, pitch hp)) | (t, _, Tracked{outPose = hp}, _) <- after (slipFixed + 0.1) rows]
+        reportDifference = maximum (0 : zipWith (\(_, (y, p)) (_, (y', p')) -> max (abs (y - y')) (abs (p - p'))) (reported slipped) (reported unhidden))
+    check ("then followed " ++ show (summed (after (slipFixed + 0.1) slipped), reportDifference)) $
+        lostCount (after 2.3 slipped) == 0
+            && fst (worstError (after (slipFixed + 0.1) slipped)) < 1.5
+            && reportDifference < 0.5
+    check ("pivot learnt while tracking is plausible " ++ show (estimatedPivot (trackerCalibration slipTracker))) $
+        plausibleCalibration clipBent (trackerCalibration slipTracker)
+
+    -- Started on the mirror image: the post bent upright enough that, worn
+    -- so, the top reflector is nearer the camera than the lower ones, while
+    -- a cold start takes it to lean back. Glancing about doesn't bring the
+    -- tracking round to the head's pose by itself.
+    let uprightTurn t = (glance 0.5 t, 5 * sin (2 * pi * t / 4))
+        upright = [(t, uncurry (headSeen 60) (uprightTurn t) 0, allLit) | t <- at120 10]
+        (_, uprightRows) = trackNoisy clipBent 0.2 upright
+        uprighted = map fst uprightRows
+        uprightFixed = lastMirrored uprighted
+    check "a cold start takes the mirror image" $ all isMirrored (take 60 uprighted)
+    check ("started on the mirror image, corrected after " ++ show (uprightFixed - 0.5) ++ " s of glancing") $ uprightFixed < 0.5 + 2.5
+    check ("and followed " ++ show (summed (after (uprightFixed + 0.1) uprighted), outputError uprightTurn (after (uprightFixed + 0.1) uprighted))) $
+        lostCount uprighted == 0
+            && fst (worstError (after (uprightFixed + 0.1) uprighted)) < 1.5
+            && outputError uprightTurn (after (uprightFixed + 0.1) uprighted) < 3
+
+    -- Swaying the body while glancing is no reason to switch. (Where the
+    -- two poses meet, tracking can touch the mirror image for a frame or
+    -- two, as it did before it could tell them apart.)
+    let swayingHead = [(t, Pose r (placed ^+^ mulMV (rodrigues (V3 (deg 12) 0 0)) (V3 (30 * sin (2 * pi * t / 3.7)) 0 (20 * sin (2 * pi * t / 5.3)))), allLit) | t <- at120 20, let Pose r placed = headSeen 30 (glance 0 t) (8 * sin (2 * pi * t / 7)) 0]
+        (_, swayRows) = trackNoisy clipBent 0.2 swayingHead
+    check ("swaying isn't corrected " ++ show (corrections swayRows, length (filter isMirrored (map fst swayRows)))) $
+        null (corrections swayRows) && length (filter isMirrored (map fst swayRows)) < 12
+
+    -- Learning from mirror-image poses can't put the pivot in front of the
+    -- clip, where it seems to be on them.
+    let mirroredPoses = [(t, mp) | (t, truth, _) <- slipping, Just mp <- [mirrorPose defaultIntrinsics clipBent truth]]
+        mirrorLearnt = learnerCalibration (fst (runLearnerWith clipBent mirroredPoses))
+    check ("pivot not learnt from mirror images " ++ show (estimatedPivot mirrorLearnt)) $ plausibleCalibration clipBent mirrorLearnt
+
+    -- A saved pivot in front of and above the clip was learnt from mirror
+    -- images; it is forgotten on loading, and the level with it.
+    let polluted = "up = 0 -0.9 0.4\nturning = 3000\npivot = 0 -60 -40\npivot windows = 120\npivot information = 500 0 0 500 0 500\n"
+    check "a saved pivot in front of the clip is forgotten" $ case screenCalibration clipBent <$> parseCalibration polluted of
+        Right (Left _) -> True
+        _ -> False
+    check "a plausible saved pivot is kept" $ case screenCalibration headset <$> parseCalibration saved of
+        Right (Right kept) -> renderCalibration kept == saved
+        _ -> False
 
     n <- readIORef failures
     if n == 0 then putStrLn "all tests passed" else exitFailure
@@ -717,13 +788,60 @@ reflectorDiscs m (litL, litR, litT) pose =
 -- | Track frames of (time, true pose, stripes) from a fresh tracker: each
 -- frame's time, true pose, outcome, and the pose tracked.
 trackFrames :: Model -> [(Double, Pose, [Stripe])] -> [(Double, Pose, Outcome, Maybe Pose)]
-trackFrames m = snd . mapAccumL frame (newTracker defaultIntrinsics m defaultCalibration)
+trackFrames m = map fst . snd . trackFramesEvents m
+
+-- | Track frames as 'trackFrames' does, with each frame's events, and the
+-- tracker at the end.
+trackFramesEvents :: Model -> [(Double, Pose, [Stripe])] -> (Tracker, [((Double, Pose, Outcome, Maybe Pose), [Event])])
+trackFramesEvents m = mapAccumL frame (newTracker defaultIntrinsics m defaultCalibration)
   where
-    frame t (time, truth, stripes) = let (t', o, _) = step time stripes t in (t', (time, truth, o, trackerPose t'))
+    frame t (time, truth, stripes) = let (t', o, evs) = step time stripes t in (t', ((time, truth, o, trackerPose t'), evs))
 
 -- | Track a head along a path of (time, true pose, how lit each reflector is).
 trackPath :: Model -> [(Double, Pose, (Double, Double, Double))] -> [(Double, Pose, Outcome, Maybe Pose)]
-trackPath m path = trackFrames m [(t, pose, renderDiscs (reflectorDiscs m lit pose)) | (t, pose, lit) <- path]
+trackPath m path = trackFrames m (rendered m path)
+
+-- | Frames of a head along a path, as 'trackPath' sees them.
+rendered :: Model -> [(Double, Pose, (Double, Double, Double))] -> [(Double, Pose, [Stripe])]
+rendered m path = [(t, pose, renderDiscs (reflectorDiscs m lit pose)) | (t, pose, lit) <- path]
+
+-- | Track a head along a path as 'trackPath' does, with each reflector's
+-- centre moved by up to half the given pixels, differently each frame, as
+-- noise moves a blob's centroid.
+trackNoisy :: Model -> Double -> [(Double, Pose, (Double, Double, Double))] -> (Tracker, [((Double, Pose, Outcome, Maybe Pose), [Event])])
+trackNoisy m amp path =
+    trackFramesEvents m [(t, pose, renderDiscs (zipWith (jitter i) [0 ..] (reflectorDiscs m lit pose))) | (i, (t, pose, lit)) <- zip [0 :: Int ..] path]
+  where
+    jitter i j ((u, v), r) = ((u + amp * noise i j, v + amp * noise i (j + 0.5)), r)
+    noise i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5 :: Double
+
+-- | Times of the frames where a pose was corrected.
+corrections :: [((Double, Pose, Outcome, Maybe Pose), [Event])] -> [Double]
+corrections rows = [t | ((t, _, _, _), evs) <- rows, any isCorrected evs]
+  where
+    isCorrected Corrected = True
+    isCorrected _ = False
+
+-- | Whether the pose tracked is the mirror image of the true pose rather
+-- than the true pose.
+isMirrored :: (Double, Pose, Outcome, Maybe Pose) -> Bool
+isMirrored (_, truth, _, tracked) = case (mirrorPose defaultIntrinsics clipBent truth, tracked) of
+    (Just other, Just p) -> fst (poseError other p) < fst (poseError truth p) && fst (poseError truth p) > 3 && fst (poseError truth other) > 10
+    _ -> False
+
+-- | The time of the last frame tracked on the mirror image, or 0.
+lastMirrored :: [(Double, Pose, Outcome, Maybe Pose)] -> Double
+lastMirrored rows = maximum (0 : [t | r@(t, _, _, _) <- rows, isMirrored r])
+
+-- | The worst error, in degrees, of the yaw and pitch reported, against
+-- the head's true yaw and pitch at each time.
+outputError :: (Double -> (Double, Double)) -> [(Double, Pose, Outcome, Maybe Pose)] -> Double
+outputError turned rows = maximum (0 : [max (abs (yaw hp - y)) (abs (pitch hp - p)) | (t, _, Tracked{outPose = hp}, _) <- rows, let (y, p) = turned t])
+
+-- | Learn from (time, pose) pairs from scratch, for a head wearing the
+-- given clip: the learner, and what it reported.
+runLearnerWith :: Model -> [(Double, Pose)] -> (Learner, [Refinement])
+runLearnerWith m = foldl (\(l, rs) (time, pose) -> let (l', new) = learn time pose l in (l', rs ++ new)) (newLearner m defaultCalibration, [])
 
 -- | Degrees of turning and mm of movement between two poses.
 poseError :: Pose -> Pose -> (Double, Double)
