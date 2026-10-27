@@ -55,8 +55,8 @@ tooltip saying what it does.
 8. **Pause**: games see your head held still until you press it again.
 9. **Trim**: where you look becomes forward, say at an MFD, until you recenter.
 10. **Calibrate level**: after moving the camera, turn your head left and right for five seconds.
-11. Closing the window keeps trackkat running in the tray.
-12. What trackkat has learnt about your camera and neck.
+11. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
+12. What trackkat has learnt about your camera and neck; **Clear calibration** starts afresh.
 13. Keys and buttons for each action, separated by commas; here a HOTAS button too.
 14. **Add key or button…**: press a key, joystick button, or middle or side mouse button to add it.
 15. Smoothing: steadiness against jitter, responsiveness against lag.

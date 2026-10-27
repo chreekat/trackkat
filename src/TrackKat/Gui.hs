@@ -94,6 +94,8 @@ data Action
     | PauseAction
     | TrimAction
     | CalibrateAction
+    | -- | forget the learnt calibration and track afresh
+      ClearCalibrationAction
     | QuitAction
     | -- | the Save button: read the settings with 'savedSettings'
       SaveAction
@@ -106,7 +108,7 @@ takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
     keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7)], testBit bits b] ++ keys)
+    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9)], testBit bits b] ++ keys)
   where
     chosen k = do
         code <- fromIntegral <$> c_chosen_key (list k)
