@@ -62,9 +62,10 @@ tooltip saying what it does.
 15. Smoothing: steadiness against jitter, responsiveness against lag.
 16. Response curves: a multiplier (- and + step it by halves), a centre precision, and a plot with your head as a dot.
 17. Lean relative to where the game's view looks, or to the screen.
-18. **Save** writes the settings to `trackkat.conf`; they apply at once.
-19. **Curves as text**, for curves of any shape.
-20. The log; **Copy log** for bug reports.
+18. Whose NPClient games load: trackkat's, or TrackIR's for games whose anti-cheat refuses trackkat's.
+19. **Save** writes the settings to `trackkat.conf`; they apply at once.
+20. **Curves as text**, for curves of any shape.
+21. The log; **Copy log** for bug reports.
 
 ## Keys
 
