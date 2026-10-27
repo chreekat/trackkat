@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
     <radialGradient id="glow"><stop offset="0" stop-color="#ffffff"/><stop offset="0.4" stop-color="#c8f7ff"/><stop offset="1" stop-color="#3fd8ff" stop-opacity="0"/></radialGradient>
-    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b3f72"/><stop offset="1" stop-color="#2a2342"/></linearGradient>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7a68c0"/><stop offset="1" stop-color="#4a3c86"/></linearGradient>
   </defs>
-  <path fill="url(#fur)" d="M36 168 C36 126 44 104 50 94 L52 46 Q54 24 74 36 L106 62 C118 58 138 58 150 62 L182 36 Q202 24 204 46 L206 94 C212 104 220 126 220 168 C220 220 180 244 128 244 C76 244 36 220 36 168 Z"/>
+  <path fill="url(#fur)" stroke="#101010" stroke-width="8" d="M36 168 C36 126 44 104 50 94 L52 46 Q54 24 74 36 L106 62 C118 58 138 58 150 62 L182 36 Q202 24 204 46 L206 94 C212 104 220 126 220 168 C220 220 180 244 128 244 C76 244 36 220 36 168 Z"/>
   <circle fill="url(#glow)" cx="128" cy="96" r="28"/><circle fill="url(#glow)" cx="88" cy="146" r="30"/><circle fill="url(#glow)" cx="168" cy="146" r="30"/>
   <circle fill="#ffffff" cx="128" cy="96" r="13"/><circle fill="#ffffff" cx="88" cy="146" r="14"/><circle fill="#ffffff" cx="168" cy="146" r="14"/>
 </svg>
