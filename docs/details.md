@@ -4,12 +4,15 @@ The details behind the [README](../README.md).
 
 ## Tray icon
 
-trackkat shows an icon in the system tray: green while tracking, amber
+trackkat shows a cat in the system tray: green while tracking, amber
 while the clip is out of sight, grey while looking for the camera, red
 without one. A white dot means a game is connected; white bars mean paused.
 Click it to open trackkat's window; right-click it to recenter, pause,
 trim or quit. Quitting from the tray menu turns the camera's lights off and
 lets it go.
+
+The window needs OpenGL 3. Without it, trackkat says why in its console,
+and carries on tracking with only the tray icon.
 
 ## Started by hand, or by a game
 

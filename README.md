@@ -40,15 +40,15 @@ look around; there is nothing to calibrate by hand.
 
 ## The window
 
-Click the tray icon to open it. Rest the mouse on anything for a tooltip
-saying what it does.
+Click the cat in the tray to open it. Rest the mouse on anything for a
+tooltip saying what it does.
 
 ![trackkat's window, numbered](docs/window.png)
 
 1. Your head as games see it.
 2. Each axis: your head, what games see after the curves, and a bar.
-3. Rest the mouse on anything for help.
-4. Camera, clip, games and output: green is good.
+3. Hover over anything for help.
+4. Camera, clip, games and output: green is good. The clip's line notes a hidden reflector or stray light.
 5. The trim: where Trim made the new forward.
 6. Latency and other figures, for bug reports.
 7. **Recenter**: where you face now becomes straight ahead; clears trim.
@@ -60,7 +60,7 @@ saying what it does.
 13. Keys and buttons for each action, separated by commas; here a HOTAS button too.
 14. **Add key or button…**: press a key, joystick button, or middle or side mouse button to add it.
 15. Smoothing: steadiness against jitter, responsiveness against lag.
-16. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
+16. Response curves: a multiplier (- and + step it by halves), a centre precision, and a plot with your head as a dot.
 17. Lean relative to where the game's view looks, or to the screen.
 18. **Save** writes the settings to `trackkat.conf`; they apply at once.
 19. **Curves as text**, for curves of any shape.
@@ -103,9 +103,13 @@ More on trim, calibration, the tray icon and when trackkat quits by itself:
 
 ## Building
 
-Needs GHC 9.14, cabal and libusb-1.0 headers; dependencies are frozen in
-`cabal.project.freeze`. `cabal build all --enable-tests && cabal test`. On
-Windows, see `.github/workflows/build.yml` for pointing cabal at libusb.
+Needs GHC 9.14, cabal and libusb-1.0 headers, and for the window, which is
+Dear ImGui in a GLFW window, GLFW's and GLEW's headers and pkg-config files;
+dependencies are frozen in `cabal.project.freeze`.
+`cabal build all --enable-tests && cabal test`. `cabal run
+trackkat-window-demo` shows the window with a scripted head, on Linux too.
+On Windows, see `.github/workflows/build.yml` for pointing cabal at libusb
+and GLFW, and for the icon.
 
 ## Credits
 
