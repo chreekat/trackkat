@@ -61,6 +61,13 @@ executable tirprobe
     , base
     , trackkat
 
+flag icon
+  description:
+    Link icons/trackkat-icon.o, compiled from icons/trackkat.rc by windres,
+    into trackkat.exe: its icon and the tray's.
+  default:     False
+  manual:      True
+
 executable trackkat
   import:           shared
   hs-source-dirs:   app/trackkat
@@ -76,6 +83,9 @@ executable trackkat
 
   if !os(windows)
     buildable: False
+
+  if (os(windows) && flag(icon))
+    ld-options: icons/trackkat-icon.o
 
 test-suite tests
   import:           shared
