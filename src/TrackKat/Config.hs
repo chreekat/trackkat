@@ -1,7 +1,9 @@
 -- | trackkat's settings file, as @name = value@ lines: hotkey and joystick
--- button bindings, smoothing, response curves and the clip's shape.
+-- button bindings, smoothing, response curves, the clip's shape and which
+-- NPClient games load.
 module TrackKat.Config (
     Config (..),
+    NPClient (..),
     defaultConfig,
     parseConfig,
     renderConfig,
@@ -44,7 +46,14 @@ data Config = Config
     , trimBindings :: [Binding]
     , response :: Response
     , clip :: ClipShape
+    , npclient :: NPClient
     }
+    deriving (Eq, Show)
+
+-- | Whose NPClient DLL games load: trackkat's own, or that of NaturalPoint's
+-- TrackIR software, which is signed, so anti-cheat such as BattlEye lets
+-- games load it; trackkat then stands in for NaturalPoint's software.
+data NPClient = TrackKatNPClient | TrackIRNPClient
     deriving (Eq, Show)
 
 -- | The headset clip's triangle of reflectors, as distances in mm, left and
@@ -73,7 +82,7 @@ clipModel (ClipShape _ m) = m
 
 -- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
 -- DCS; strong smoothing; the headset clip trackkat was developed with, its
--- post as it is now bent.
+-- post as it is now bent; trackkat's own NPClient.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -92,6 +101,7 @@ defaultConfig =
                 , lean = LeanWithView
                 }
         , clip = defaultClip
+        , npclient = TrackKatNPClient
         }
   where
     gain g = Points [(1, g)]
@@ -174,6 +184,7 @@ setting (c, k@(Knobs on s r)) name value =
             "z" -> curve leanRange (\cv x -> x{zCurve = cv})
             "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
             "clip" -> (\cl -> (c{clip = cl}, k)) <$> parseClip value
+            "npclient" -> (\n -> (c{npclient = n}, k)) <$> parseNPClient value
             _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
@@ -246,6 +257,10 @@ renderConfig c =
         , "# right to the top. If the clip's post gets bent, measure it again"
         , "# and change this, or the view will be off."
         , "clip = " ++ renderClip (clip c)
+        , ""
+        , "# npclient = trackir: games load the NPClient of NaturalPoint's TrackIR"
+        , "# software, which anti-cheat allows; start trackkat before the game."
+        , "npclient = " ++ renderNPClient (npclient c)
         ]
   where
     r = response c
@@ -270,7 +285,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
-                ++ [("lean", renderLean (lean r)), ("clip", renderClip (clip c))]
+                ++ [("lean", renderLean (lean r)), ("clip", renderClip (clip c)), ("npclient", renderNPClient (npclient c))]
 
 parseLean :: String -> Either String Lean
 parseLean "view" = Right LeanWithView
@@ -280,6 +295,15 @@ parseLean _ = Left "lean is view or screen"
 renderLean :: Lean -> String
 renderLean LeanWithView = "view"
 renderLean LeanWithScreen = "screen"
+
+parseNPClient :: String -> Either String NPClient
+parseNPClient "trackkat" = Right TrackKatNPClient
+parseNPClient "trackir" = Right TrackIRNPClient
+parseNPClient _ = Left "npclient is trackkat or trackir"
+
+renderNPClient :: NPClient -> String
+renderNPClient TrackKatNPClient = "trackkat"
+renderNPClient TrackIRNPClient = "trackir"
 
 -- | Read three distances in mm, separated by spaces or commas or both.
 parseClip :: String -> Either String ClipShape

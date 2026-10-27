@@ -94,6 +94,28 @@ its own format.
 
 Single-frame jumps no head could make are ignored.
 
+## Anti-cheat
+
+Some anti-cheat, such as BattlEye in Arma Reforger, refuses to let a game
+load trackkat's NPClient, which isn't signed, but allows NaturalPoint's own,
+which is. With `npclient = trackir`, trackkat tells games to load
+NaturalPoint's NPClient from its TrackIR software's folder, and stands in
+for that software, which the DLL gets the pose from. So:
+
+- NaturalPoint's TrackIR software must be installed, but not running: quit
+  it, including from the tray. The camera stays on WinUSB.
+- Games can't start trackkat this way, so start trackkat before the game.
+- When a game starts head tracking, trackkat's log says so, with the game's
+  number:
+
+  ```
+  Game 3450 is using NaturalPoint's NPClient.
+  ```
+
+If the TrackIR software isn't found, trackkat says so and games load its own
+NPClient. Back on `npclient = trackkat`, games load trackkat's again; either
+way the change applies when the settings are saved.
+
 ## Testing NPClient
 
 - `npclient.log`, beside the DLLs, records what each game asked NPClient for
@@ -102,4 +124,6 @@ Single-frame jumps no head could make are ignored.
   or `npgame <game id>`), unscrambles and checksums what it gets as a game
   must, and prints the pose. Run it while trackkat is running.
 - `tools/test-npclient.sh` runs the same check under Wine, with a stand-in
-  for trackkat.
+  for trackkat. Given NaturalPoint's NPClient64.dll as `NP_GENUINE_DLL`, it
+  checks trackkat's stand-in for NaturalPoint's software through that DLL
+  too.
