@@ -65,3 +65,7 @@ lean = view
 # right to the top. If the clip's post gets bent, measure it again
 # and change this, or the view will be off.
 clip = 70 110 110
+
+# npclient = trackir: games load the NPClient of NaturalPoint's TrackIR
+# software, which anti-cheat allows; start trackkat before the game.
+npclient = trackkat

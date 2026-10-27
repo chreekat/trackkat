@@ -70,10 +70,13 @@ main = do
         let settingsFile = dir </> "trackkat.conf"
         (config, stamp) <- loadConfig settingsFile
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
+        startTrackIRStandIn >>= \case
+            Right () -> pure ()
+            Left TrackIRSoftwareRunning ->
+                say "NaturalPoint's TrackIR software is running: quit it, or games loading its NPClient get their pose from it, not trackkat."
+            Left (StandInFailed e) -> say ("Can't stand in for NaturalPoint's software (error " ++ show e ++ ").")
         publish still
-        setNPClientPath dir >>= \case
-            Right () -> say ("Games will load NPClient from " ++ dir)
-            Left e -> say ("Can't point games at NPClient (registry error " ++ show e ++ ").")
+        pointGames dir (npclient config)
         unwatched <- startHotkeys (hotkeyBindings config)
         forM_ unwatched $ \case
             (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
@@ -104,6 +107,32 @@ main = do
                             -- thread, leave at once.
                             hFlush stdout
                             quitProcess
+
+-- | Tell games to load the NPClient chosen, trackkat's from its own folder,
+-- falling back to that if NaturalPoint's isn't installed.
+pointGames :: FilePath -> NPClient -> IO ()
+pointGames dir choice = do
+    found <- case choice of
+        TrackKatNPClient -> pure dir
+        TrackIRNPClient ->
+            findTrackIRFolder >>= \case
+                Just folder -> pure folder
+                Nothing -> do
+                    say "npclient = trackir, but NaturalPoint's TrackIR software isn't installed; games will load trackkat's NPClient."
+                    pure dir
+    setNPClientPath found >>= \case
+        Right ()
+            | found == dir -> say ("Games will load trackkat's NPClient from " ++ dir)
+            | otherwise -> say ("Games will load NaturalPoint's NPClient from " ++ found ++ "; start trackkat before the game.")
+        Left e -> say ("Can't point games at NPClient (registry error " ++ show e ++ ").")
+
+-- | Report the games that start head tracking through NaturalPoint's
+-- NPClient.
+reportTrackIRGames :: IO ()
+reportTrackIRGames = takeTrackIRGame >>= mapM_ (say . describe)
+  where
+    describe (game, Just name) = printf "Game %d (%s) is using NaturalPoint's NPClient; scrambling its data." game name
+    describe (game, Nothing) = printf "Game %d is using NaturalPoint's NPClient." game
 
 -- | Print a line, and add it to the log in trackkat's window.
 say :: String -> IO ()
@@ -136,6 +165,7 @@ controls start path s = go 0 Nothing
         threadDelay 20000
         actions <- takeActions
         mapM_ act actions
+        reportTrackIRGames
         now <- getMonotonicTime
         if
             | any quits actions -> pure ()
@@ -279,6 +309,7 @@ watchSettings path s = go
                         Right (text, new) -> do
                             writeIORef (sSettings s) new
                             rebindHotkeys (hotkeyBindings new)
+                            when (npclient new /= npclient config) $ pointGames (takeDirectory path) (npclient new)
                             say (describeChanges config new)
                             when (clip new /= clip config) $ do
                                 atomicModifyIORef' (sTracker s) (\t -> (setModel (clipModel (clip new)) t, ()))

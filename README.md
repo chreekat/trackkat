@@ -90,6 +90,8 @@ at once, while you play.
 - **A game doesn't move?** `npclient.log`, beside the DLLs, records what each
   game asked for and got. `npgame` loads NPClient as a game does and prints
   the pose.
+- **Anti-cheat blocks NPClient** (BattlEye, in Arma Reforger)? Set
+  `npclient = trackir`; see [anti-cheat](docs/details.md#anti-cheat).
 - **trackdemo**, in the zip, is a quicker test than a game: a cockpit that
   follows your head, using NPClient as a game does. **C** recenters through
   NPClient, **Esc** quits.

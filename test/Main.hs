@@ -450,6 +450,17 @@ main = do
     check "lean default" $ lean (response defaultConfig) == LeanWithView
     check "bad lean" $ parseConfig "lean = sideways" == Left "line 1: lean is view or screen"
 
+    -- Whose NPClient games load.
+    check "trackkat's NPClient by default" $ npclient defaultConfig == TrackKatNPClient
+    check "npclient setting" $ fmap npclient (parseConfig "npclient = trackir\n") == Right TrackIRNPClient
+    check "bad npclient" $ parseConfig "npclient = opentrack" == Left "line 1: npclient is trackkat or trackir"
+    let withTrackIR = defaultConfig{npclient = TrackIRNPClient}
+    check "npclient round-trips" $ parseConfig (renderConfig withTrackIR) == Right withTrackIR
+    check "npclient rendered" $ "npclient = trackkat" `elem` lines (renderConfig defaultConfig)
+    check "npclient change described" $
+        describeChanges defaultConfig withTrackIR == "Settings reloaded: npclient = trackir"
+    check "npclient editable" $ editSettings [("npclient", "trackir")] "npclient = trackkat\n" == Right "npclient = trackir\n"
+
     -- Trimming: where the view looks becomes forward, until recentering.
     let trimmed t y p = fst (shape plain t 0 HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
         axes hp = [yaw hp, pitch hp, roll hp, tx hp, ty hp, tz hp]

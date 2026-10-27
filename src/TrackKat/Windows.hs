@@ -1,5 +1,8 @@
--- | trackkat.exe's Windows plumbing: see cbits/windows.c and
--- cbits/joystick.c.
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
+
+-- | trackkat.exe's Windows plumbing: see cbits/windows.c, cbits/trackir.c
+-- and cbits/joystick.c.
 module TrackKat.Windows (
     openShared,
     publish,
@@ -8,6 +11,10 @@ module TrackKat.Windows (
     gamesTracking,
     singleInstance,
     setNPClientPath,
+    findTrackIRFolder,
+    StandInProblem (..),
+    startTrackIRStandIn,
+    takeTrackIRGame,
     Hotkey (..),
     Watched (..),
     startHotkeys,
@@ -18,11 +25,11 @@ module TrackKat.Windows (
 ) where
 
 import Data.Bits ((.&.))
-import Foreign.C.String (CWString, peekCWString, withCWString)
+import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray)
-import Foreign.Ptr (Ptr)
+import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
 
 import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
@@ -35,6 +42,10 @@ foreign import ccall unsafe "hts_game_reads" c_game_reads :: IO CLong
 foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
 foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
+foreign import ccall unsafe "hts_find_trackir_dir" c_find_trackir_dir :: CWString -> CInt -> IO CInt
+foreign import ccall safe "hts_trackir_start" c_trackir_start :: IO CInt
+foreign import ccall unsafe "hts_trackir_take_game" c_trackir_take_game :: IO CInt
+foreign import ccall unsafe "hts_scrambled_game" c_scrambled_game :: CInt -> IO CString
 foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
 foreign import ccall unsafe "hts_bind_key" c_bind_key :: CInt -> CUInt -> CUInt -> IO ()
 foreign import ccall unsafe "hts_bind_button" c_bind_button :: CInt -> CWString -> CInt -> CInt -> IO ()
@@ -73,6 +84,42 @@ setNPClientPath :: FilePath -> IO (Either Int ())
 setNPClientPath dir =
     withCWString (if last dir == '\\' then dir else dir ++ "\\") $ \p ->
         (\rc -> if rc == 0 then Right () else Left (fromIntegral rc)) <$> c_set_npclient_path p
+
+-- | The folder of NaturalPoint's TrackIR software, ending in a backslash,
+-- if it is installed with its NPClient.
+findTrackIRFolder :: IO (Maybe FilePath)
+findTrackIRFolder = allocaArray size $ \buf -> do
+    found <- c_find_trackir_dir buf (fromIntegral size)
+    if found /= 0 then Just <$> peekCWString buf else pure Nothing
+  where
+    size = 260
+
+-- | Why trackkat can't stand in for NaturalPoint's software.
+data StandInProblem
+    = -- | it is running itself, and so serves its NPClient
+      TrackIRSoftwareRunning
+    | -- | a Windows error code
+      StandInFailed Int
+
+-- | Stand in for NaturalPoint's TrackIR software, so that games can load
+-- NaturalPoint's NPClient and still get the pose from trackkat.
+startTrackIRStandIn :: IO (Either StandInProblem ())
+startTrackIRStandIn =
+    c_trackir_start >>= \case
+        0 -> pure (Right ())
+        -1 -> pure (Left TrackIRSoftwareRunning)
+        e -> pure (Left (StandInFailed (fromIntegral e)))
+
+-- | The profile ID a game has given NaturalPoint's NPClient since the last
+-- call, with the game's name if its data is scrambled.
+takeTrackIRGame :: IO (Maybe (Int, Maybe String))
+takeTrackIRGame = do
+    game <- c_trackir_take_game
+    if game < 0
+        then pure Nothing
+        else do
+            name <- c_scrambled_game game
+            Just . (fromIntegral game,) <$> (if name == nullPtr then pure Nothing else Just <$> peekCString name)
 
 -- | An action bound to keys and joystick buttons.
 data Hotkey = RecenterKey | PauseKey | TrimKey
