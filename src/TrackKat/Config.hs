@@ -66,7 +66,8 @@ defaultConfig =
   where
     gain g = Points [(1, g)]
 
--- | A key with modifiers held, or a joystick button numbered from 1.
+-- | A key, or a mouse button named as one, with modifiers held; or a
+-- joystick button numbered from 1.
 data Binding = Key [Modifier] String | JoystickButton Joystick Int
     deriving (Eq, Show)
 
@@ -151,6 +152,8 @@ renderConfig c =
         , "# buttons you press for a minute after it starts, and for a minute"
         , "# after you type j and Enter in its window, ready to copy here. Two"
         , "# controllers with the same name are told apart as Name (2), and so on."
+        , "# The middle and side mouse buttons are MouseMiddle, Mouse4 and Mouse5,"
+        , "# with keys held or not, as in Ctrl+Mouse4."
         , "# Separate several keys or buttons with commas:"
         , "#   recenter = F12, Throttle - HOTAS Warthog button 23"
         , "# Leave a setting empty for no keys or buttons."
@@ -362,8 +365,8 @@ parseBindings value
 renderBindings :: [Binding] -> String
 renderBindings = intercalate ", " . map renderBinding
 
--- | Read a binding: a key such as @Ctrl+Shift+F12@, modifiers then one key,
--- or a joystick button such as @Throttle - HOTAS Warthog (2) button 23@.
+-- | Read a binding: a key or mouse button such as @Ctrl+Shift+F12@ or
+-- @Mouse4@, modifiers then one key, or a joystick button such as @Throttle - HOTAS Warthog (2) button 23@.
 parseBinding :: String -> Either String Binding
 parseBinding s = case joystickButton (trim s) of
     Just (name, number) -> do
@@ -379,7 +382,10 @@ parseBinding s = case joystickButton (trim s) of
             let k = last parts
             case lookupKey k of
                 Just (canonical, _) -> Right (Key (nub mods) canonical)
-                Nothing -> Left ("unknown key " ++ show k)
+                Nothing
+                    | map toLower k `elem` ["mouseleft", "mouseright", "mouse1", "mouse2"] ->
+                        Left "the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
+                    | otherwise -> Left ("unknown key " ++ show k)
   where
     splitPlus str = case break (== '+') str of
         (a, []) -> [trim a | not (all isSpace a)]
@@ -473,6 +479,10 @@ keys =
            , ("Down", 0x28)
            , ("Left", 0x25)
            , ("Right", 0x27)
+           , -- Mouse buttons, by their virtual-key codes.
+             ("MouseMiddle", 0x04)
+           , ("Mouse4", 0x05)
+           , ("Mouse5", 0x06)
            ]
 
 trim :: String -> String
