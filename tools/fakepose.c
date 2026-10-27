@@ -1,5 +1,5 @@
 /* fakepose: stand in for trackkat.exe, publishing a known moving pose, for
- * testing NPClient without a camera.
+ * testing NPClient, ours or NaturalPoint's, without a camera.
  *
  * usage: fakepose [seconds] */
 
@@ -14,6 +14,7 @@ long hts_recenter_count(void);
 long hts_game_reads(void);
 int hts_single_instance(void);
 int hts_games_tracking(void);
+int hts_trackir_start(void);
 
 int main(int argc, char **argv)
 {
@@ -24,6 +25,11 @@ int main(int argc, char **argv)
     }
     if (hts_shared_open() != 0) {
         fprintf(stderr, "could not create shared memory\n");
+        return 1;
+    }
+    int rc = hts_trackir_start();
+    if (rc != 0) {
+        fprintf(stderr, "could not stand in for NaturalPoint's software (%d)\n", rc);
         return 1;
     }
     const double deg = 3.14159265358979323846 / 180;

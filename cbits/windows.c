@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "joystick.h"
+#include "trackir.h"
 #include "trackkat_shared.h"
 
 /* ---- FreeTrack shared memory ------------------------------------------- */
@@ -67,6 +68,12 @@ void hts_publish(float yaw, float pitch, float roll, float x, float y, float z)
     store_float(&d->RawY, y);
     store_float(&d->RawZ, z);
     InterlockedIncrement((volatile LONG *)&d->DataID);
+    trackir_publish(d);
+}
+
+volatile TrackKatControl *hts_control_block(void)
+{
+    return control;
 }
 
 /* Recenter requests from games, counted since the block was created. */
@@ -93,7 +100,8 @@ int hts_games_tracking(void)
             continue;
         DWORD code = 0;
         HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
-        int alive = p && GetExitCodeProcess(p, &code) && code == STILL_ACTIVE;
+        /* Anti-cheat may refuse even this to a running game. */
+        int alive = p ? GetExitCodeProcess(p, &code) && code == STILL_ACTIVE : GetLastError() == ERROR_ACCESS_DENIED;
         if (p)
             CloseHandle(p);
         if (alive)
@@ -130,6 +138,70 @@ int hts_set_npclient_path(const wchar_t *dir)
                         (DWORD)((wcslen(dir) + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
     return (int)rc;
+}
+
+/* Whether dir, ending in a backslash, holds the 64-bit NPClient. */
+static int has_npclient(const wchar_t *dir)
+{
+    wchar_t path[MAX_PATH];
+    if (wcslen(dir) + wcslen(L"NPClient64.dll") >= MAX_PATH)
+        return 0;
+    wcscpy(path, dir);
+    wcscat(path, L"NPClient64.dll");
+    DWORD attributes = GetFileAttributesW(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+/* Read a folder from the registry into a buffer of len characters, ending
+ * it with a backslash. */
+static int read_folder(HKEY key, const wchar_t *subkey, const wchar_t *value, wchar_t *out, DWORD len)
+{
+    DWORD size = (len - 1) * sizeof(wchar_t);
+    if (RegGetValueW(key, subkey, value, RRF_RT_REG_SZ, NULL, out, &size) != ERROR_SUCCESS)
+        return 0;
+    size_t n = wcslen(out);
+    if (n == 0)
+        return 0;
+    if (out[n - 1] != L'\\') {
+        out[n] = L'\\';
+        out[n + 1] = 0;
+    }
+    return 1;
+}
+
+/* Find NaturalPoint's TrackIR software's folder, ending in a backslash, by
+ * its uninstall entry, or else where it installs by default; out holds len
+ * characters. Returns 0 unless the folder has NPClient64.dll in it. */
+int hts_find_trackir_dir(wchar_t *out, int len)
+{
+    static const REGSAM views[] = {KEY_WOW64_32KEY, KEY_WOW64_64KEY};
+    for (int v = 0; v < 2; v++) {
+        HKEY key;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", 0,
+                          KEY_READ | views[v], &key) != ERROR_SUCCESS)
+            continue;
+        wchar_t name[256], display[256];
+        int found = 0;
+        for (DWORD i = 0; !found; i++) {
+            DWORD n = 256;
+            if (RegEnumKeyExW(key, i, name, &n, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+                break;
+            DWORD size = sizeof display;
+            found = RegGetValueW(key, name, L"DisplayName", RRF_RT_REG_SZ, NULL, display, &size) == ERROR_SUCCESS
+                    && _wcsnicmp(display, L"TrackIR", 7) == 0
+                    && read_folder(key, name, L"InstallLocation", out, (DWORD)len) && has_npclient(out);
+        }
+        RegCloseKey(key);
+        if (found)
+            return 1;
+    }
+    DWORD n = GetEnvironmentVariableW(L"ProgramFiles(x86)", out, (DWORD)len);
+    if (n == 0 || n >= (DWORD)len)
+        n = GetEnvironmentVariableW(L"ProgramFiles", out, (DWORD)len);
+    if (n == 0 || n + wcslen(L"\\TrackIR5\\") >= (DWORD)len)
+        return 0;
+    wcscat(out, L"\\TrackIR5\\");
+    return has_npclient(out);
 }
 
 /* ---- Hotkeys and joystick buttons ---------------------------------------- */

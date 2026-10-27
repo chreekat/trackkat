@@ -45,6 +45,8 @@ library
     c-sources:
       cbits/gui.c
       cbits/joystick.c
+      cbits/npclient_common.c
+      cbits/trackir.c
       cbits/windows.c
     include-dirs:    cbits
     extra-libraries: advapi32 gdi32 hid shell32 user32

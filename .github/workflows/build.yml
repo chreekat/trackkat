@@ -39,11 +39,11 @@ jobs:
           $path = $env:PATH
           foreach ($t in @(@{ prefix = "ucrt64"; dll = "NPClient64.dll" }, @{ prefix = "mingw32"; dll = "NPClient.dll" })) {
             $env:PATH = "$msys\$($t.prefix)\bin;$path"
-            & gcc @flags -o $t.dll npclient/npclient.c
+            & gcc @flags -o $t.dll npclient/npclient.c cbits/npclient_common.c
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           $env:PATH = "$msys\ucrt64\bin;$path"
-          & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32
+          & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32 -luser32
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Compiler messages become annotations, which show without the log.
           $out = & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c `
