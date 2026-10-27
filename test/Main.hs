@@ -1,12 +1,17 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Main (main) where
 
+import Control.Exception (IOException, try)
 import Control.Monad (forM_, unless)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
 import Data.Either (isLeft)
 import Data.IORef
 import Data.Maybe (isNothing)
+import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
+import System.IO (readFile')
 
 import TrackKat.Calibration
 import TrackKat.Config
@@ -516,6 +521,16 @@ main = do
     check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
+
+    -- The example settings file in the repository is the one trackkat
+    -- writes when there is none. TRACKKAT_ACCEPT=1 rewrites it.
+    let example = "trackkat.conf.example"
+    lookupEnv "TRACKKAT_ACCEPT" >>= \case
+        Just _ -> writeFile example (renderConfig defaultConfig)
+        Nothing -> do
+            written <- try (readFile' example)
+            check (example ++ " is the default settings file; TRACKKAT_ACCEPT=1 cabal test rewrites it") $
+                either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) written
 
     n <- readIORef failures
     if n == 0 then putStrLn "all tests passed" else exitFailure
