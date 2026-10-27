@@ -1,5 +1,6 @@
 -- | Shaping the head pose for games: rejecting impossible jumps, smoothing,
--- per-axis response curves, and turning leans to follow the view.
+-- per-axis response curves, trimming where forward is, and turning leans to
+-- follow the view.
 module TrackKat.Response (
     Curve (..),
     Multiplier (..),
@@ -13,6 +14,9 @@ module TrackKat.Response (
     tuned,
     Lean (..),
     leanWithView,
+    Trim (..),
+    trimTo,
+    applyTrim,
     Response (..),
     Shaper,
     newShaper,
@@ -134,6 +138,31 @@ leanWithView p = p{tx = tx p * c + tz p * s, tz = tz p * c - tx p * s}
     c = cos (yaw p * pi / 180)
     s = sin (yaw p * pi / 180)
 
+-- | Where forward is for the view: an offset added to the view's yaw and
+-- pitch, in degrees, after the curves. Roll and movement are never trimmed.
+data Trim
+    = NoTrim
+    | Trim Double Double
+    deriving (Eq, Show)
+
+-- | Trim so that where the view looks now is forward. The view already
+-- includes any earlier trim, so trims add up.
+trimTo :: HeadPose -> Trim
+trimTo p = Trim (wrapDegrees (yaw p)) (clampPitch (pitch p))
+
+-- | Turn a view by a trim. A trimmed view's yaw is kept within 180 degrees
+-- either side, and its pitch within 90, straight up or down.
+applyTrim :: Trim -> HeadPose -> HeadPose
+applyTrim NoTrim p = p
+applyTrim (Trim y pt) p = p{yaw = wrapDegrees (yaw p + y), pitch = clampPitch (pitch p + pt)}
+
+-- | An angle in degrees, from -180 up to 180.
+wrapDegrees :: Double -> Double
+wrapDegrees a = a - 360 * fromIntegral (floor ((a + 180) / 360) :: Integer)
+
+clampPitch :: Double -> Double
+clampPitch = max (-90) . min 90
+
 data Response = Response
     { smoothing :: Smoothing
     , yawCurve, pitchCurve, rollCurve, xCurve, yCurve, zCurve :: Curve
@@ -168,10 +197,10 @@ jumpPersistence = 3
 
 -- | Shape a pose seen at the given time in seconds. Impossible jumps are
 -- ignored unless they persist, then each axis is smoothed and put through
--- its curve, and leaning follows the view if the response says so. Leaning
--- is turned last, by the yaw the game will show.
-shape :: Response -> Double -> HeadPose -> Shaper -> (HeadPose, Shaper)
-shape r now pose s = case shLast s of
+-- its curve, the view is trimmed, and leaning follows the view if the
+-- response says so. Leaning is turned last, by the yaw the game will show.
+shape :: Response -> Trim -> Double -> HeadPose -> Shaper -> (HeadPose, Shaper)
+shape r forward now pose s = case shLast s of
     Just (_, previous)
         | jump previous pose && shRejected s + 1 < jumpPersistence ->
             (output (shAxes s) previous, s{shRejected = shRejected s + 1})
@@ -187,7 +216,7 @@ shape r now pose s = case shLast s of
         _ -> [Axis v 0 | v <- values pose]
     output axes fallback = case maybe (values fallback) (map (\(Axis v _) -> v)) axes of
         [y, p, ro, x, yy, z] ->
-            leaning
+            leaning . applyTrim forward $
                 HeadPose
                     { yaw = applyCurve (yawCurve r) y
                     , pitch = applyCurve (pitchCurve r) p

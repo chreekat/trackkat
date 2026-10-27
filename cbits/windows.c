@@ -149,7 +149,7 @@ int hts_set_npclient_path(const wchar_t *dir)
 
 /* A key or joystick button, and what pressing it does. */
 typedef struct {
-    LONG action; /* HOTKEY_RECENTER or HOTKEY_PAUSE */
+    LONG action; /* HOTKEY_RECENTER, HOTKEY_PAUSE or HOTKEY_TRIM */
     LONG key;    /* mods << 16 | vk, or 0 for a joystick button */
     wchar_t joystick[JOYSTICK_NAME_LEN];
     int index;   /* which of the joysticks with that name, from 1 */
@@ -306,7 +306,7 @@ int hts_hotkeys_start(int *joysticks_error)
     return (int)keyboard_error;
 }
 
-/* Actions pressed for since the last call: bit 1 recenter, bit 2 pause. */
+/* Actions pressed for since the last call, as HOTKEY_* bits. */
 int hts_hotkeys_take(void)
 {
     return (int)InterlockedExchange(&hotkey_presses, 0);

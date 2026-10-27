@@ -25,6 +25,8 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_SAVE 0x10
 #define ACT_KEY_RECENTER 0x20 /* a key was pressed to add to the bindings */
 #define ACT_KEY_PAUSE 0x40
+#define ACT_TRIM 0x80
+#define ACT_KEY_TRIM 0x100
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
@@ -32,10 +34,12 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 #define TEXT_MAX 512
 #define FIELD_MAX 256
 
-/* The settings the window edits, by their names in trackkat.conf. */
-enum { F_RECENTER, F_PAUSE, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_DRIFT, F_COUNT };
-static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"smoothing", L"steadiness",
+/* The settings the window edits, by their names in trackkat.conf. The
+ * binding lists come first, in the order hts_gui_capturing numbers them. */
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_DRIFT, F_COUNT };
+static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness",
                                                     L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"drift"};
+#define LISTS 3 /* binding lists: recenter, pause, trim */
 
 typedef struct State {
     int camera;
@@ -45,6 +49,8 @@ typedef struct State {
     float view[6];                 /* the same, as games see it */
     int paused;
     int games;
+    int trimmed;
+    float trim[2]; /* yaw and pitch added to the view, in degrees */
     wchar_t stats[TEXT_MAX];
     wchar_t calibration[TEXT_MAX];
     wchar_t settings_message[TEXT_MAX];
@@ -53,7 +59,7 @@ typedef struct State {
 /* ---- Shared with Haskell, under the lock --------------------------------- */
 
 static SRWLOCK lock = SRWLOCK_INIT;
-static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, L"", L"",
+static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, L"", L"",
                        L"Separate several keys or buttons with commas."};
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
@@ -68,9 +74,9 @@ static size_t log_len;
 static unsigned long long log_total;
 
 static volatile LONG actions;
-static volatile LONG chosen_keys[2]; /* modifiers << 16 | virtual key, per binding list */
-static volatile LONG capturing = -1;  /* the binding list waiting for a key or button, or -1 */
-static wchar_t added[2][FIELD_MAX];   /* bindings to add to the lists */
+static volatile LONG chosen_keys[LISTS]; /* modifiers << 16 | virtual key, per binding list */
+static volatile LONG capturing = -1;      /* the binding list waiting for a key or button, or -1 */
+static wchar_t added[LISTS][FIELD_MAX];   /* bindings to add to the lists */
 static unsigned added_lists;          /* bit per list with a binding to add */
 static volatile LONG stopping;
 
@@ -134,6 +140,15 @@ void hts_gui_paused(int paused)
     ReleaseSRWLockExclusive(&lock);
 }
 
+void hts_gui_trim(int trimmed, float yaw, float pitch)
+{
+    AcquireSRWLockExclusive(&lock);
+    shared.trimmed = trimmed;
+    shared.trim[0] = yaw;
+    shared.trim[1] = pitch;
+    ReleaseSRWLockExclusive(&lock);
+}
+
 void hts_gui_games(int games)
 {
     AcquireSRWLockExclusive(&lock);
@@ -191,25 +206,27 @@ int hts_gui_take_actions(void)
     return (int)InterlockedExchange(&actions, 0);
 }
 
-/* The last key pressed to add to a binding list (0 recenter, 1 pause), as
- * modifiers << 16 | virtual key. */
+static int list_index(int which) { return which < 0 || which >= LISTS ? 0 : which; }
+
+/* The last key pressed to add to a binding list (0 recenter, 1 pause, 2
+ * trim), as modifiers << 16 | virtual key. */
 int hts_gui_chosen_key(int which)
 {
-    return (int)InterlockedCompareExchange(&chosen_keys[which ? 1 : 0], 0, 0);
+    return (int)InterlockedCompareExchange(&chosen_keys[list_index(which)], 0, 0);
 }
 
 /* Which binding list waits for a key or joystick button to add: 0 recenter,
- * 1 pause, or -1 none. */
+ * 1 pause, 2 trim, or -1 none. */
 int hts_gui_capturing(void)
 {
     return (int)InterlockedCompareExchange(&capturing, 0, 0);
 }
 
-/* Add a binding to a list in the window (0 recenter, 1 pause), as written in
- * trackkat.conf, and stop waiting for one. */
+/* Add a binding to a list in the window (0 recenter, 1 pause, 2 trim), as
+ * written in trackkat.conf, and stop waiting for one. */
 void hts_gui_add_binding(int which, const wchar_t *binding)
 {
-    which = which ? 1 : 0;
+    which = list_index(which);
     AcquireSRWLockExclusive(&lock);
     copy_text(added[which], FIELD_MAX, binding);
     added_lists |= 1u << which;
@@ -231,10 +248,13 @@ enum {
     ID_ADD_RECENTER,
     ID_ADD_PAUSE,
     ID_SMOOTHING,
+    ID_TRIM,
+    ID_ADD_TRIM,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
     ID_MENU_PAUSE,
+    ID_MENU_TRIM,
     ID_MENU_QUIT,
     ID_CURVES_AS_TEXT,
     ID_MULTIPLIER = 400, /* + axis */
@@ -244,12 +264,12 @@ enum {
 
 static HINSTANCE inst;
 static HWND tray_hwnd, main_hwnd, live_hwnd;
-static HWND recenter_button, pause_button, calibration_text, settings_text, log_box;
+static HWND recenter_button, pause_button, trim_button, calibration_text, settings_text, log_box;
 static HWND log_group, copy_button, log_hint;
 static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
 static wchar_t field_text[F_COUNT][FIELD_MAX]; /* values of the checkbox and sliders */
-static HWND add_button[2];
+static HWND add_button[LISTS];
 /* Each axis's curve: a plot, a multiplier with arrows to step it, a centre
  * precision, and what they mean; or, as text, the edit in field_ctl. */
 static HWND curve_plot[6], multiplier_edit[6], multiplier_step[6], precision_slider[6], precision_value[6];
@@ -402,6 +422,7 @@ static void tray_menu(void)
     AppendMenuW(m, MF_STRING, ID_MENU_OPEN, L"&Open trackkat");
     AppendMenuW(m, MF_STRING, ID_MENU_RECENTER, L"&Recenter");
     AppendMenuW(m, MF_STRING | (seen.paused ? MF_CHECKED : 0), ID_MENU_PAUSE, L"&Pause");
+    AppendMenuW(m, MF_STRING, ID_MENU_TRIM, L"&Trim: make this view forward");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, ID_MENU_QUIT, L"&Quit");
     SetMenuDefaultItem(m, ID_MENU_OPEN, FALSE);
@@ -660,10 +681,17 @@ static void paint_live(HDC dc, int width, int height)
         buf[63] = 0;
     }
     status_line(dc, x0, y, seen.games > 0 ? C_ACCENT : C_GREY, L"Games", seen.games > 0 ? buf : L"None");
+    /* The trim shares the games' row, which is short. */
+    if (seen.trimmed) {
+        _snwprintf(buf, 64, L"yaw %+.0f° pitch %+.0f°", seen.trim[0], seen.trim[1]);
+        buf[63] = 0;
+    }
+    status_line(dc, x0 + S(180), y, seen.trimmed ? C_ACCENT : C_GREY, L"Trim", seen.trimmed ? buf : L"None");
     y += S(18);
     status_line(dc, x0, y, seen.paused ? C_AMBER : C_GREEN, L"Output",
                 seen.paused ? L"Paused: games see your head held still" : L"Live");
     y += S(18);
+
     if (seen.camera == CAMERA_TRACKING && seen.stats[0])
         text_at(dc, small_font, C_DIM, x0, y, width - x0 - S(10), S(18), DT_LEFT, seen.stats);
 }
@@ -1023,7 +1051,9 @@ static void start_capture(int which)
  * it waiting. */
 static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
-    int which = GetDlgCtrlID(w) == ID_ADD_PAUSE;
+    static const LONG chosen_action[LISTS] = {ACT_KEY_RECENTER, ACT_KEY_PAUSE, ACT_KEY_TRIM};
+    int id = GetDlgCtrlID(w);
+    int which = id == ID_ADD_PAUSE ? 1 : id == ID_ADD_TRIM ? 2 : 0;
     int waiting = InterlockedCompareExchange(&capturing, 0, 0) == which;
     switch (msg) {
     case WM_GETDLGCODE:
@@ -1036,7 +1066,7 @@ static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             break;
         if (!is_modifier(wp)) {
             InterlockedExchange(&chosen_keys[which], (LONG)(hts_modifiers_held() << 16 | (unsigned)wp));
-            InterlockedOr(&actions, which ? ACT_KEY_PAUSE : ACT_KEY_RECENTER);
+            InterlockedOr(&actions, chosen_action[which]);
             swallow_key_up = 1;
             end_capture();
         }
@@ -1135,10 +1165,11 @@ static void show_field(int i, const wchar_t *value)
         sync_curve(i - F_YAW, FROM_TEXT);
     } else
         SetWindowTextW(field_ctl[i], value);
-    if (i == F_RECENTER || i == F_PAUSE) {
+    if (i == F_RECENTER || i == F_PAUSE || i == F_TRIM) {
         wchar_t label[FIELD_MAX + 32];
-        binding_label(label, FIELD_MAX + 32, i == F_RECENTER ? L"Recenter" : seen.paused ? L"Resume" : L"Pause", value);
-        SetWindowTextW(i == F_RECENTER ? recenter_button : pause_button, label);
+        binding_label(label, FIELD_MAX + 32,
+                      i == F_RECENTER ? L"Recenter" : i == F_TRIM ? L"Trim" : seen.paused ? L"Resume" : L"Pause", value);
+        SetWindowTextW(i == F_RECENTER ? recenter_button : i == F_TRIM ? trim_button : pause_button, label);
     }
 }
 
@@ -1251,7 +1282,7 @@ static void refresh(void)
 {
     State st;
     unsigned fields, lists;
-    wchar_t values[F_COUNT][FIELD_MAX], additions[2][FIELD_MAX];
+    wchar_t values[F_COUNT][FIELD_MAX], additions[LISTS][FIELD_MAX];
     AcquireSRWLockExclusive(&lock);
     st = shared;
     fields = pushed_fields;
@@ -1267,9 +1298,9 @@ static void refresh(void)
     for (int i = 0; i < F_COUNT; i++)
         if (fields & 1u << i)
             show_field(i, values[i]);
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < LISTS; i++)
         if (lists & 1u << i) {
-            add_binding(i ? F_PAUSE : F_RECENTER, additions[i]);
+            add_binding(F_RECENTER + i, additions[i]);
             if (InterlockedCompareExchange(&capturing, 0, 0) == i)
                 end_capture();
         }
@@ -1319,34 +1350,37 @@ static void build_window(void)
     live_hwnd = CreateWindowExW(0, L"trackkat_live", L"", WS_CHILD | WS_VISIBLE, S(10), S(10), S(700), S(242),
                                 main_hwnd, NULL, inst, NULL);
 
-    recenter_button = control(L"BUTTON", L"Recenter", WS_TABSTOP | BS_PUSHBUTTON, 10, 262, 150, 28, ID_RECENTER);
-    pause_button = control(L"BUTTON", L"Pause", WS_TABSTOP | BS_PUSHBUTTON, 170, 262, 150, 28, ID_PAUSE);
-    control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 330, 262, 150, 28, ID_CALIBRATE);
-    HWND hint = control(L"STATIC", L"Closing this window keeps trackkat running in the tray.", SS_LEFT, 492, 264,
-                        218, 30, 0);
+    recenter_button = control(L"BUTTON", L"Recenter", WS_TABSTOP | BS_PUSHBUTTON, 10, 262, 116, 28, ID_RECENTER);
+    pause_button = control(L"BUTTON", L"Pause", WS_TABSTOP | BS_PUSHBUTTON, 136, 262, 116, 28, ID_PAUSE);
+    trim_button = control(L"BUTTON", L"Trim", WS_TABSTOP | BS_PUSHBUTTON, 262, 262, 116, 28, ID_TRIM);
+    control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 388, 262, 116, 28, ID_CALIBRATE);
+    HWND hint = control(L"STATIC", L"Closing this window keeps trackkat running in the tray.", SS_LEFT, 514, 264,
+                        196, 30, 0);
     SendMessageW(hint, WM_SETFONT, (WPARAM)small_font, FALSE);
 
     calibration_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 52, 0);
 
-    for (int i = 0; i < 2; i++) {
-        int y = 406 + i * 30;
-        label(i ? L"Pause" : L"Recenter", 22, y, 80);
+    static const wchar_t *const list_labels[LISTS] = {L"Recenter", L"Pause", L"Trim"};
+    static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM};
+    for (int i = 0; i < LISTS; i++) {
+        int y = 402 + i * 26;
+        label(list_labels[i], 22, y, 80);
         field_ctl[F_RECENTER + i] = edit(F_RECENTER + i, 104, y, 470);
         add_button[i] = control(L"BUTTON", L"Add key or button…", WS_TABSTOP | BS_PUSHBUTTON, 580, y - 1, 120,
-                                25, i ? ID_ADD_PAUSE : ID_ADD_RECENTER);
+                                25, add_ids[i]);
         button_proc = (WNDPROC)SetWindowLongPtrW(add_button[i], GWLP_WNDPROC, (LONG_PTR)add_button_proc);
     }
 
     field_ctl[F_SMOOTHING] =
-        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 472, 92, 22, ID_FIELD + F_SMOOTHING);
-    label(L"Steadiness", 120, 472, 70);
-    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 470, 140, 26,
+        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 481, 92, 22, ID_FIELD + F_SMOOTHING);
+    label(L"Steadiness", 120, 481, 70);
+    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 477, 140, 26,
                                       ID_FIELD + F_STEADINESS);
-    slider_value[0] = label(L"", 330, 472, 40);
-    label(L"Responsiveness", 380, 472, 96);
-    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 470, 140,
+    slider_value[0] = label(L"", 330, 481, 40);
+    label(L"Responsiveness", 380, 481, 96);
+    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 477, 140,
                                           26, ID_FIELD + F_RESPONSIVENESS);
-    slider_value[1] = label(L"", 618, 472, 40);
+    slider_value[1] = label(L"", 618, 481, 40);
     for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++) {
         SendMessageW(field_ctl[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
         SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
@@ -1445,12 +1479,20 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_PAUSE:
             InterlockedOr(&actions, ACT_PAUSE);
             return 0;
+        case ID_TRIM:
+            InterlockedOr(&actions, ACT_TRIM);
+            return 0;
         case ID_CALIBRATE:
             InterlockedOr(&actions, ACT_CALIBRATE);
             return 0;
         case ID_ADD_RECENTER:
+            start_capture(0);
+            return 0;
         case ID_ADD_PAUSE:
-            start_capture(LOWORD(wp) == ID_ADD_PAUSE);
+            start_capture(1);
+            return 0;
+        case ID_ADD_TRIM:
+            start_capture(2);
             return 0;
         case ID_COPY_LOG:
             copy_log();
@@ -1554,6 +1596,9 @@ static LRESULT CALLBACK tray_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             break;
         case ID_MENU_PAUSE:
             InterlockedOr(&actions, ACT_PAUSE);
+            break;
+        case ID_MENU_TRIM:
+            InterlockedOr(&actions, ACT_TRIM);
             break;
         case ID_MENU_QUIT:
             InterlockedOr(&actions, ACT_QUIT);

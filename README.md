@@ -56,6 +56,27 @@ Keys work from anywhere, including inside games:
 Either can be a joystick or HOTAS button instead, or as well; see
 [Settings](#settings).
 
+**Trim** makes where you look in the game the new forward. In DCS, to work
+the left MFD and the keyboard unit while entering waypoints, look at them
+and press trim: the view now rests there, and you can still glance around
+from it. Presses add up, so you can trim again from a trimmed view, and
+recentering goes back to straight ahead. Only turning left and right and
+up and down are trimmed, not tilting or leaning, and leaning follows the
+trimmed view. Trim has no key until you give it one (`trim` in
+[Settings](#settings)); the window's **Trim** button and the tray menu
+trim too. trackkat prints the new forward, in degrees as games see them
+(pitch positive down), and when recentering clears it:
+
+```
+Trimmed: forward is now yaw -42 pitch +18.
+Trim cleared.
+```
+
+The view jumps when you trim: where you look becomes forward, and your
+head, still turned toward it, turns the view on from there; look back
+toward the screen to bring the trimmed view ahead. While paused, trimming
+takes the held view as forward, and games stay held until you resume.
+
 Recentering while the clip is out of sight centres the view at once; the
 pose you hold when the clip comes back becomes the new centre.
 
@@ -76,14 +97,14 @@ Centre has followed you since recentering: yaw +0.3  pitch -0.1  roll +0.0   x +
 trackkat shows an icon in the system tray: green while tracking, amber
 while the clip is out of sight, grey while looking for the camera, red
 without one. A white dot means a game is connected; white bars mean paused.
-Click it to open trackkat's window; right-click it to recenter, pause or
-quit.
+Click it to open trackkat's window; right-click it to recenter, pause,
+trim or quit.
 
 The window shows your head as games see it, with each axis as your head
 moves it and as games get it after the curves; whether the camera, the clip
-and games are connected; the latency figures; what has been learnt in
-[calibration](#calibration); and how far the centre has followed you since
-recentering. It has buttons to recenter, pause and
+and games are connected; the trim; the latency figures; what has been
+learnt in [calibration](#calibration); and how far the centre has followed
+you since recentering. It has buttons to recenter, pause, trim and
 calibrate, and edits the [settings](#settings). Its log shows what
 trackkat reports, such as recentering, calibration, joysticks, settings
 reloads and errors, but not the once-a-second status line the console
@@ -161,7 +182,8 @@ line and carries on with the settings it had. If you had trackkat before
 smoothing and curves existed, delete the file and trackkat writes a fresh
 one with the new settings documented.
 
-- `recenter = F12`, `pause = Ctrl+F9`: keys, or joystick buttons such as
+- `recenter = F12`, `pause = Ctrl+F9`, `trim = Ctrl+F12`: keys, or
+  joystick buttons such as
   `recenter = Throttle - HOTAS Warthog button 23`. Separate several with
   commas: `pause = F9, Joystick - HOTAS Warthog button 5`. In trackkat's
   window, **Add key or button…** adds the next key or joystick button you
@@ -176,7 +198,8 @@ one with the new settings documented.
   Joysticks are named as Windows names them; if two attached have the same
   name, the second is `Name (2)`. trackkat also prints when a joystick is
   connected or disconnected. Joysticks plugged in while it runs, or that
-  come back after sleep, work straight away.
+  come back after sleep, work straight away. A setting left empty, as in
+  `trim =`, has no keys or buttons; that is how trim starts.
 - `steadiness = 90`, from 0 to 100: how still the view stays while your
   head is still. Raise it if the view jitters; lower it if the view feels
   floaty or drifts into place.

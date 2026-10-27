@@ -79,15 +79,16 @@ main = do
         setNPClientPath dir >>= \case
             Right () -> say ("Games will load NPClient from " ++ dir)
             Left e -> say ("Can't point games at NPClient (registry error " ++ show e ++ ").")
-        unwatched <- startHotkeys (recenterBindings config) (pauseBindings config)
+        unwatched <- startHotkeys (hotkeyBindings config)
         forM_ unwatched $ \case
             (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say $
             printf
-                "Recenter: %s   Pause: %s   (Enter also recenters, c Enter calibrates level)"
-                (renderBindings (recenterBindings config))
-                (renderBindings (pauseBindings config))
+                "Recenter: %s   Pause: %s   Trim: %s   (Enter also recenters, c Enter calibrates level)"
+                (keysAndButtons (recenterBindings config))
+                (keysAndButtons (pauseBindings config))
+                (keysAndButtons (trimBindings config))
         let calibrationFile = dir </> "trackkat.calibration"
         session <- newSession config =<< loadCalibration calibrationFile
         showButtons session
@@ -166,6 +167,7 @@ controls start path s = go 0 Nothing
     quits _ = False
     act RecenterAction = recenter s
     act PauseAction = togglePause s
+    act TrimAction = trim s
     act CalibrateAction = calibrate s
     act QuitAction = say "Quitting."
     act SaveAction = saveSettings path
@@ -279,7 +281,7 @@ watchSettings path s = go
                             go stamp' config
                         Right (text, new) -> do
                             writeIORef (sSettings s) new
-                            rebindHotkeys (recenterBindings new) (pauseBindings new)
+                            rebindHotkeys (hotkeyBindings new)
                             say (describeChanges config new)
                             showSettings text
                             go stamp' new
@@ -304,6 +306,8 @@ data Session = Session
     , sClip :: IORef Clip
     , sPaused :: IORef (Maybe HeadPose)
     -- ^ the pose games see while paused
+    , sTrim :: IORef Trim
+    -- ^ where forward is for the view, until the next recenter
     , sLatest :: IORef HeadPose
     -- ^ the last pose sent, shaped
     , sButtonsShown :: IORef Double
@@ -321,6 +325,7 @@ newSession config c =
         <*> newIORef newShaper
         <*> newIORef ClipLost
         <*> newIORef Nothing
+        <*> newIORef NoTrim
         <*> newIORef centred
         <*> newIORef 0
         <*> newEmptyMVar
@@ -329,11 +334,16 @@ newSession config c =
 centred :: HeadPose
 centred = HeadPose 0 0 0 0 0 0
 
--- | Recenter on the next frame that shows the clip. If the clip is out of
--- sight, games see the view centred straight away.
+-- | Recenter on the next frame that shows the clip, undoing any trim. If
+-- the clip is out of sight, games see the view centred straight away.
 recenter :: Session -> IO ()
 recenter s = do
     atomicModifyIORef' (sTracker s) (\t -> (request Recenter t, ()))
+    atomicModifyIORef' (sTrim s) (NoTrim,) >>= \case
+        NoTrim -> pure ()
+        Trim _ _ -> do
+            showTrim NoTrim
+            say "Trim cleared."
     readIORef (sClip s) >>= \case
         ClipSeen -> pure ()
         ClipLost -> do
@@ -354,6 +364,23 @@ togglePause s = do
     say $ case output of
         Live -> "Resumed."
         Paused -> "Paused: games see your head held still."
+
+-- | Make where games look now the view's forward. While paused, that is the
+-- view games are held at, and they stay held there; the trim applies from
+-- when the view moves again.
+trim :: Session -> IO ()
+trim s = do
+    paused <- readIORef (sPaused s)
+    view <- maybe (readIORef (sLatest s)) pure paused
+    let t = trimTo view
+    writeIORef (sTrim s) t
+    showTrim t
+    say ("Trimmed: forward is now " ++ describeTrim t ++ ".")
+
+-- | A trim as the console and log show it.
+describeTrim :: Trim -> String
+describeTrim NoTrim = "straight ahead"
+describeTrim (Trim y p) = printf "yaw %+.0f pitch %+.0f" y p
 
 console :: Session -> IO ()
 console s = do
@@ -426,8 +453,9 @@ track s cam = do
                     Tracked hp _ _ -> do
                         writeIORef (sClip s) ClipSeen
                         r <- response <$> readIORef (sSettings s)
+                        t <- readIORef (sTrim s)
                         shaped <- atomicModifyIORef' (sShaper s) $ \sh ->
-                            let (p, sh') = shape r now hp sh in (sh', p)
+                            let (p, sh') = shape r t now hp sh in (sh', p)
                         writeIORef (sLatest s) shaped
                     Lost _ -> writeIORef (sClip s) ClipLost
                 paused <- readIORef (sPaused s)
@@ -504,6 +532,18 @@ handleControls s seenRecenters = do
     before <- atomicModifyIORef' seenRecenters (\b -> (fromGames, b))
     when (RecenterKey `elem` keys || fromGames /= before) $ recenter s
     when (PauseKey `elem` keys) $ togglePause s
+    when (TrimKey `elem` keys) $ trim s
+
+-- | The keys and buttons bound to each hotkey.
+hotkeyBindings :: Config -> Hotkey -> [Binding]
+hotkeyBindings c RecenterKey = recenterBindings c
+hotkeyBindings c PauseKey = pauseBindings c
+hotkeyBindings c TrimKey = trimBindings c
+
+-- | Bindings as the console lists them.
+keysAndButtons :: [Binding] -> String
+keysAndButtons [] = "none"
+keysAndButtons bs = renderBindings bs
 
 -- | Refinements are applied slowly, so only a new centre or a requested
 -- calibration resets shaping.

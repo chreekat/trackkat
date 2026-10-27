@@ -36,18 +36,20 @@ import TrackKat.Response
 data Config = Config
     { recenterBindings :: [Binding]
     , pauseBindings :: [Binding]
+    , trimBindings :: [Binding]
     , response :: Response
     , drift :: Drift
     }
     deriving (Eq, Show)
 
--- | TrackIR's own keys; linear curves with gains tuned in DCS; strong
--- smoothing; a centre that follows the head.
+-- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
+-- DCS; strong smoothing; a centre that follows the head.
 defaultConfig :: Config
 defaultConfig =
     Config
         { recenterBindings = [Key [] "F12"]
         , pauseBindings = [Key [] "F9"]
+        , trimBindings = []
         , response =
             Response
                 { smoothing = knobSmoothing defaultKnobs
@@ -122,6 +124,7 @@ setting (c, k@(Knobs on s r)) name value =
      in case name of
             "recenter" -> (\b -> (c{recenterBindings = b}, k)) <$> parseBindings value
             "pause" -> (\b -> (c{pauseBindings = b}, k)) <$> parseBindings value
+            "trim" -> (\b -> (c{trimBindings = b}, k)) <$> parseBindings value
             "smoothing" -> case value of
                 "on" -> Right (c, Knobs True s r)
                 "off" -> Right (c, Knobs False s r)
@@ -150,8 +153,15 @@ renderConfig c =
         , "# controllers with the same name are told apart as Name (2), and so on."
         , "# Separate several keys or buttons with commas:"
         , "#   recenter = F12, Throttle - HOTAS Warthog button 23"
-        , "recenter = " ++ renderBindings (recenterBindings c)
-        , "pause = " ++ renderBindings (pauseBindings c)
+        , "# Leave a setting empty for no keys or buttons."
+        , "#"
+        , "# trim makes where you look in the game the new forward, for yaw and"
+        , "# pitch, so you can look around from there; recentering undoes it."
+        , "# It has no keys or buttons unless you give it some:"
+        , "#   trim = Ctrl+F12"
+        , settingText "recenter" (renderBindings (recenterBindings c))
+        , settingText "pause" (renderBindings (pauseBindings c))
+        , settingText "trim" (renderBindings (trimBindings c))
         , ""
         , "# Smoothing calms the view while your head is still, at the cost of"
         , "# some lag when you move. Both settings run from 0 to 100."
@@ -219,7 +229,10 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
   where
     settings c =
         let r = response c
-         in [("recenter", renderBindings (recenterBindings c)), ("pause", renderBindings (pauseBindings c))]
+         in [ ("recenter", renderBindings (recenterBindings c))
+            , ("pause", renderBindings (pauseBindings c))
+            , ("trim", renderBindings (trimBindings c))
+            ]
                 ++ ( case smoothingKnobs (smoothing r) of
                         Knobs False _ _ -> [("smoothing", "off")]
                         Knobs True s rs -> [("smoothing", "on"), ("steadiness", renderNumber s), ("responsiveness", renderNumber rs)]
@@ -263,6 +276,11 @@ settingValues str = [(n, fromMaybe d (lookup n written)) | (n, d) <- settingLine
 settingLines :: String -> [(String, String)]
 settingLines str = [(n, v) | Just (n, v) <- map settingLine (lines str)]
 
+-- | A line setting a name to a value; nothing follows the = when the value
+-- is empty.
+settingText :: String -> String -> String
+settingText n v = n ++ " =" ++ (if null v then "" else " " ++ v)
+
 settingLine :: String -> Maybe (String, String)
 settingLine l = case break (== '=') (takeWhile (/= '#') l) of
     (name, '=' : value) -> Just (trim name, trim value)
@@ -284,13 +302,13 @@ editSettings new str
     current = settingValues str
     changed = [(n, v) | (n, v) <- new, lookup n current /= Just v]
     replace ls (n, v) = case findIndices ((== Just n) . fmap fst . settingLine) ls of
-        [] -> ls ++ [n ++ " = " ++ v]
+        [] -> ls ++ [settingText n v]
         is -> [if i == last is then rewrite l else l | (i, l) <- zip [0 :: Int ..] ls]
       where
         rewrite l =
             let (name, rest) = break (== '=') l
                 comment = dropWhile (/= '#') rest
-             in dropWhileEnd isSpace name ++ " = " ++ v ++ (if null comment then "" else " " ++ comment)
+             in settingText (dropWhileEnd isSpace name) v ++ (if null comment then "" else " " ++ comment)
 
 -- | Read a curve: points like @0.5:0 1.5:1@, inputs increasing from zero,
 -- or a multiplier with a centre precision like @1:6, precision 40@, given
@@ -335,9 +353,11 @@ parseKnob name value = case parseNumber value of
     _ -> Left (name ++ " is a number from 0 to 100")
 
 -- | Read bindings separated by commas, such as
--- @F12, Throttle - HOTAS Warthog button 23@.
+-- @F12, Throttle - HOTAS Warthog button 23@, or none from an empty value.
 parseBindings :: String -> Either String [Binding]
-parseBindings = traverse parseBinding . splitOn ','
+parseBindings value
+    | all isSpace value = Right []
+    | otherwise = traverse parseBinding (splitOn ',' value)
 
 renderBindings :: [Binding] -> String
 renderBindings = intercalate ", " . map renderBinding

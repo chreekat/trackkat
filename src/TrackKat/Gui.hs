@@ -21,6 +21,7 @@ module TrackKat.Gui (
     showFrame,
     Output (..),
     showOutput,
+    showTrim,
     showGames,
     showStats,
     showCalibration,
@@ -36,6 +37,7 @@ import Foreign.Marshal.Array (allocaArray)
 
 import TrackKat.Config (Binding, bindingFromCodes, renderBinding)
 import TrackKat.Pose (HeadPose (..))
+import TrackKat.Response (Trim (..))
 import TrackKat.Windows (Hotkey (..))
 
 foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
@@ -52,6 +54,7 @@ foreign import ccall unsafe "hts_gui_camera" c_camera :: CInt -> CWString -> IO 
 foreign import ccall unsafe "hts_gui_frame"
     c_frame :: CInt -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
+foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_stats" c_stats :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> IO ()
@@ -89,6 +92,7 @@ windowOpen = (/= 0) <$> c_window_open
 data Action
     = RecenterAction
     | PauseAction
+    | TrimAction
     | CalibrateAction
     | QuitAction
     | -- | the Save button: read the settings with 'savedSettings'
@@ -101,8 +105,8 @@ data Action
 takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
-    keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4)], testBit bits b] ++ keys)
+    keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8)], testBit bits b]
+    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7)], testBit bits b] ++ keys)
   where
     chosen k = do
         code <- fromIntegral <$> c_chosen_key (list k)
@@ -114,6 +118,7 @@ capturing =
     c_capturing >>= \case
         0 -> pure (Just RecenterKey)
         1 -> pure (Just PauseKey)
+        2 -> pure (Just TrimKey)
         _ -> pure Nothing
 
 -- | Add a binding to a list in the window, and stop waiting for one.
@@ -124,6 +129,7 @@ addBinding k b = withCWString (renderBinding b) (c_add_binding (list k))
 list :: Hotkey -> CInt
 list RecenterKey = 0
 list PauseKey = 1
+list TrimKey = 2
 
 -- | Add a line to the log the window shows.
 guiLog :: String -> IO ()
@@ -164,6 +170,11 @@ data Output = Live | Paused
 showOutput :: Output -> IO ()
 showOutput Live = c_paused 0
 showOutput Paused = c_paused 1
+
+-- | Where forward is for the view.
+showTrim :: Trim -> IO ()
+showTrim NoTrim = c_trim 0 0 0
+showTrim (Trim y p) = c_trim 1 (realToFrac y) (realToFrac p)
 
 -- | How many games are tracking.
 showGames :: Int -> IO ()
