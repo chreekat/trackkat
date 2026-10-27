@@ -229,7 +229,7 @@ startingSize = do
                 (_, _, _, h) <- GLFW.getMonitorWorkarea m
                 (_, scale) <- GLFW.getMonitorContentScale m
                 pure (round (fromIntegral h / max 1 scale) - 40)
-    pure (780, min 1080 fits)
+    pure (780, min 1100 fits)
 
 -- | How often the window is drawn while on the screen.
 framesPerSecond :: Double
@@ -433,9 +433,10 @@ livePanel fr = do
         let x0 = pad + size + px fr 18
             right = width - pad
         setCursorPos (pure (ImVec2 x0 pad) :: IO ImVec2)
-        axes fr x0 (right - x0)
-        setCursorPosY (pad + px fr 176)
-        lights fr x0
+        withStyleVar ImGuiStyleVar_ItemSpacing (pure (ImVec2 (px fr 8) (px fr 4)) :: IO ImVec2) $ do
+            axes fr x0 (right - x0)
+            setCursorPosY (pad + px fr 152)
+            lights fr x0 right
         setCursorPos (pure (ImVec2 x0 (height - pad - px fr 17)) :: IO ImVec2)
         case stCamera st of
             Tracking | not (null (stStats st)) -> small fr $ do
@@ -507,40 +508,37 @@ axes fr x0 width = do
         label bar (regular (frFonts fr)) sz dim (cvLeft bar + cvWidth bar - plusWidth - px fr 5, middle) plus
         tip fr "Blue: where games see each axis, out to the end of its range (behind you, straight up, 300 mm). Yellow tick: your head."
 
--- | The status lights, in two columns from x0.
-lights :: Frame -> Float -> IO ()
-lights fr x0 = do
+-- | The status lights, from x0, their values wrapping at the right.
+lights :: Frame -> Float -> Float -> IO ()
+lights fr x0 right = do
     let st = frStatus fr
-        x1 = x0 + px fr 262
-        light x c name value help = do
-            setCursorPosX x
+        light c name value help = do
+            setCursorPosX x0
             withGroup $ do
                 lineHeight <- realToFrac <$> Raw.getTextLineHeight
                 d <- canvas (px fr 8) lineHeight
                 dot d{cvTop = cvTop d + (lineHeight - px fr 8) / 2, cvHeight = px fr 8} c
-                besideAt (x + px fr 16)
+                besideAt (x0 + px fr 16)
                 small fr (coloured dim name)
-                besideAt (x + px fr 66)
-                str value
+                besideAt (x0 + px fr 66)
+                withTextWrapPos right (str value)
             tip fr help
         games = stGames st
     case stCamera st of
-        Tracking -> light x0 green "Camera" "Connected" cameraHelp
-        Searching -> light x0 grey "Camera" "Looking for it…" cameraHelp
-        CameraDown why -> light x0 red "Camera" (if null why then "Not found" else why) cameraHelp
-    Raw.sameLine
-    light x1 (if games > 0 then accent else grey) "Games" (if games == 0 then "None" else show games ++ " connected") gamesHelp
+        Tracking -> light green "Camera" "Connected" cameraHelp
+        Searching -> light grey "Camera" "Looking for it…" cameraHelp
+        CameraDown why -> light red "Camera" (if null why then "Not found" else why) cameraHelp
     case (stCamera st, stSighting st) of
-        (Tracking, InSight _ seen) -> light x0 green "Clip" (intercalate ", " ("In sight" : seenNotes seen)) clipHelp
-        (Tracking, OutOfSight n) -> light x0 amber "Clip" (printf "Out of sight (%d of 3 reflectors)" n) clipHelp
-        _ -> light x0 grey "Clip" "—" clipHelp
-    Raw.sameLine
+        (Tracking, InSight _ seen) -> light green "Clip" (intercalate ", " ("In sight" : seenNotes seen)) clipHelp
+        (Tracking, OutOfSight n) -> light amber "Clip" (printf "Out of sight (%d of 3 reflectors)" n) clipHelp
+        _ -> light grey "Clip" "—" clipHelp
+    light (if games > 0 then accent else grey) "Games" (if games == 0 then "None" else show games ++ " connected") gamesHelp
     case stTrim st of
-        NoTrim -> light x1 grey "Trim" "None" trimHelp
-        Trim y p -> light x1 accent "Trim" (printf "yaw %+.0f° pitch %+.0f°" y p) trimHelp
+        NoTrim -> light grey "Trim" "None" trimHelp
+        Trim y p -> light accent "Trim" (printf "yaw %+.0f° pitch %+.0f°" y p) trimHelp
     case stOutput st of
-        Live -> light x0 green "Output" "Live" outputHelp
-        Paused -> light x0 amber "Output" "Paused: games see your head held still" outputHelp
+        Live -> light green "Output" "Live" outputHelp
+        Paused -> light amber "Output" "Paused: games see your head held still" outputHelp
   where
     cameraHelp = "Green when trackkat has the camera; grey while it looks for it; red, with the reason, when it can't use it. trackkat picks it up again after unplugging or sleep."
     gamesHelp = "Games reading your head through trackkat's NPClient. The camera's second green light shows this too."
