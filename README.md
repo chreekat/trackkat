@@ -1,22 +1,12 @@
 # trackkat
 
-Replacement driver and control software for the NaturalPoint TrackIR 5.
+Replacement software for the NaturalPoint TrackIR 5 (revision 3, USB id
+`131D:0159`) on Windows. It tracks the TrackClip and gives games your head
+pose through its own `NPClient` DLLs, like NaturalPoint's software, and
+starts by itself when a game wants head tracking.
 
-Goals: survive suspend/hibernate, never crash, start automatically when a game
-wants head tracking, and keep fully adjustable per-axis curves.
-
-Status: **first game output.** `trackkat` tracks the TrackClip and serves the
-pose to games through its own `NPClient` DLLs, like NaturalPoint's software.
-`tirprobe` is the diagnostic tool.
-
-Supported hardware: TrackIR 5 revision 3 (USB id `131D:0159`).
-
-## Getting tirprobe
-
-Download the latest build of `main` (no GitHub login needed):
+**Download** the latest build (no GitHub login needed):
 <https://github.com/chreekat/trackkat/releases/download/dev/trackkat-windows.zip>
-
-The zip contains `tirprobe.exe` and `libusb-1.0.dll`; keep them in the same folder.
 
 ## One-time setup: switch the camera to WinUSB
 
@@ -36,270 +26,83 @@ To undo: Device Manager → the TrackIR → Update driver → Browse my computer
 Let me pick → choose NaturalPoint's driver. Reinstalling the TrackIR software
 also restores it.
 
-## Using trackkat with games
+## First run
 
-1. Quit NaturalPoint's TrackIR software for good; trackkat replaces it.
-2. Run `trackkat.exe` once from the unzipped folder. It registers that folder
-   as where games find `NPClient`, writes `trackkat.conf` there, and starts
-   tracking. Keep the folder where it is: games load the DLLs from it, and
-   start `trackkat.exe` from it themselves when it isn't running.
-3. Face the camera and press F12 (recenter). trackkat works out the rest as
-   you look around (see [Calibration](#calibration)).
-4. Start the game. Its TrackIR support should find trackkat; the camera's
-   second green light shows when a game is reading the pose.
+1. Unzip somewhere to keep, and run `trackkat.exe` once from that folder. It
+   tells games to load NPClient from there and writes `trackkat.conf`
+   beside it. After that, games start trackkat themselves.
+2. Face the camera and press **F12** to recenter.
+3. Start the game. The camera's second green light shows when a game is
+   reading your head.
 
-Keys work from anywhere, including inside games:
+trackkat learns how your camera is tipped and where your neck pivots as you
+look around; there is nothing to calibrate by hand.
 
-- **F12** recenters. A game's own "recenter TrackIR" binding does too.
-- **F9** pauses: games see your head held still until you press it again.
+## The window
 
-Either can be a joystick or HOTAS button, or the middle or a side mouse
-button, instead or as well; see [Settings](#settings).
+Click the tray icon to open it. Rest the mouse on anything for a tooltip
+saying what it does.
 
-**Trim** makes where you look in the game the new forward. In DCS, to work
-the left MFD and the keyboard unit while entering waypoints, look at them
-and press trim: the view now rests there, and you can still glance around
-from it. Presses add up, so you can trim again from a trimmed view, and
-recentering goes back to straight ahead. Only turning left and right and
-up and down are trimmed, not tilting or leaning, and leaning follows the
-trimmed view. Trim has no key until you give it one (`trim` in
-[Settings](#settings)); the window's **Trim** button and the tray menu
-trim too. trackkat prints the new forward, in degrees as games see them
-(pitch positive down), and when recentering clears it:
+![trackkat's window, numbered](docs/window.png)
 
-```
-Trimmed: forward is now yaw -42 pitch +18.
-Trim cleared.
-```
+1. Your head as games see it.
+2. Each axis: your head, what games see after the curves, and a bar.
+3. Rest the mouse on anything for help.
+4. Camera, clip, games and output: green is good.
+5. The trim: where Trim made the new forward.
+6. Latency and other figures, for bug reports.
+7. **Recenter**: where you face now becomes straight ahead; clears trim.
+8. **Pause**: games see your head held still until you press it again.
+9. **Trim**: where you look becomes forward, say at an MFD, until you recenter.
+10. **Calibrate level**: after moving the camera, turn your head left and right for five seconds.
+11. Closing the window keeps trackkat running in the tray.
+12. What trackkat has learnt about your camera and neck.
+13. Keys and buttons for each action, separated by commas; here a HOTAS button too.
+14. **Add key or button…**: press a key, joystick button, or middle or side mouse button to add it.
+15. Smoothing: steadiness against jitter, responsiveness against lag.
+16. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
+17. Lean relative to where the game's view looks, or to the screen.
+18. **Save** writes the settings to `trackkat.conf`; they apply at once.
+19. **Curves as text**, for curves of any shape.
+20. The log; **Copy log** for bug reports.
 
-The view jumps when you trim: where you look becomes forward, and your
-head, still turned toward it, turns the view on from there; look back
-toward the screen to bring the trimmed view ahead. While paused, trimming
-takes the held view as forward, and games stay held until you resume.
+## Keys
 
-Recentering while the clip is out of sight centres the view at once; the
-pose you hold when the clip comes back becomes the new centre.
+- **F12** recenters, from anywhere, as does a game's own recenter binding.
+- **F9** pauses.
+- **Trim** has no key until you give it one.
 
-### trackkat's window and tray icon
+Any of them can be other keys, joystick or HOTAS buttons, or the middle or
+side mouse buttons.
 
-trackkat shows an icon in the system tray: green while tracking, amber
-while the clip is out of sight, grey while looking for the camera, red
-without one. A white dot means a game is connected; white bars mean paused.
-Click it to open trackkat's window; right-click it to recenter, pause,
-trim or quit.
+## Settings
 
-The window shows your head as games see it, with each axis as your head
-moves it and as games get it after the curves; whether the camera, the clip
-and games are connected; the trim; the latency figures; and what has been
-learnt in [calibration](#calibration). It has buttons to recenter, pause,
-trim and calibrate, and edits the [settings](#settings). Its log shows what
-trackkat reports, such as recentering, calibration, joysticks, settings
-reloads and errors, but not the once-a-second status line the console
-prints; **Copy log** copies it, for bug reports. Closing the window
-keeps trackkat running in the tray.
+Change settings in the window and click **Save**, or edit `trackkat.conf`,
+beside `trackkat.exe`, in any text editor; it explains every setting. Either
+way they apply at once, while you play.
 
-**Started by hand**, trackkat opens its window and keeps its console, where
-Enter recenters, `c` Enter calibrates and Ctrl-C quits. Running it again
-shows the window of the one already running.
+## When something doesn't work
 
-**Started by a game**, trackkat shows only its tray icon, with no console.
-Once no game has been tracking for a minute, and its window isn't open, it
-quits by itself, so a game restarted within the minute finds it still
-running. It prints when it starts counting down, and when it quits:
+- **No camera?** Check the WinUSB setup above, and that NaturalPoint's
+  software isn't running. [`tirprobe`](docs/tirprobe.md) talks to the camera
+  directly.
+- **A game doesn't move?** `npclient.log`, beside the DLLs, records what each
+  game asked for and got. `npgame` loads NPClient as a game does and prints
+  the pose.
+- **trackdemo**, in the zip, is a quicker test than a game: a cockpit that
+  follows your head, using NPClient as a game does. **C** recenters through
+  NPClient, **Esc** quits.
 
-```
-No game or window is using trackkat; quitting in 60 s unless one starts.
-Quitting: no game or window used trackkat for 60 s.
-```
+  ![trackdemo looking around its cockpit, driven by a scripted pose](docs/trackdemo.gif)
 
-Quitting from the tray menu turns the camera's lights off and lets it go.
-
-### Calibration
-
-trackkat learns two things from how you move your head, and keeps them in
-`trackkat.calibration` beside `trackkat.exe`, so it carries on from where it
-left off:
-
-- **Which way is up.** The camera is usually tipped down at you, so its own
-  axes would mix some of a left-right turn into roll. trackkat takes up to
-  be the axis your head turns about when you glance left and right. Nods,
-  tilts and slow drifts don't count.
-- **Where your neck pivots.** The clip sits in front of, above and to one
-  side of the point your head turns about, so turning your head also moves
-  the clip. trackkat finds the point that stays still while you turn (and
-  your body doesn't) and measures movement there, so that turning your head
-  doesn't also move the view, and only leaning does.
-
-Both keep being refined while you play, with older movement counting less,
-so if you move the camera they follow within a few minutes of looking
-around (if you tip it by more than about 30 degrees, calibrate up again). Changes apply slowly enough not to move the view, and trackkat
-prints a line when one is worth mentioning:
-
-```
-Level learnt: camera tipped 14.2 degrees down and 1.3 to its right, from 900 degrees of head turning.
-Neck pivot learnt: 95 mm below the clip, 80 behind it and 60 to its right, from 40 head turns.
-```
-
-To calibrate up at once, click **Calibrate level** in trackkat's window (or
-type `c` and Enter in its console), then turn your head left and right for
-five seconds. Delete `trackkat.calibration` to
-start afresh; it explains its own format.
-
-### Trying it out: trackdemo
-
-`trackdemo.exe`, in the same zip, starts in a moment, where a game can take
-minutes: a cockpit view that follows your head, with the pose, status and
-checksum counts NPClient delivers. It loads NPClient as a game does, so it
-starts trackkat if it isn't running; if NPClient can't be found or trackkat
-isn't tracking, it says so and keeps trying. **C** sends a recenter through
-NPClient, as a game would; **Esc** quits.
-
-![trackdemo looking around its cockpit, driven by a scripted pose](docs/trackdemo.gif)
-
-### Settings
-
-`trackkat.conf`, beside `trackkat.exe`, holds the keys and buttons,
-smoothing and response curves; it explains its own format. Edit it in
-trackkat's window and click **Save**, or in any text editor. Changes apply
-as soon as the file is saved, while trackkat runs, so you can tune smoothing
-and curves while you play. Saving from the window changes only the settings
-you changed there, on their own lines, and keeps the rest of the file,
-comments included. If the file has a mistake, trackkat names the
-line and carries on with the settings it had. If you had trackkat before
-smoothing and curves existed, delete the file and trackkat writes a fresh
-one with the new settings documented.
-
-- `recenter = F12`, `pause = Ctrl+F9`, `trim = Ctrl+F12`: keys, mouse
-  buttons, or joystick buttons such as
-  `recenter = Throttle - HOTAS Warthog button 23`. Separate several with
-  commas: `pause = F9, Joystick - HOTAS Warthog button 5`. In trackkat's
-  window, **Add key or button…** adds the next key, mouse button (over the
-  window) or joystick button you press. For a minute after it starts, and
-  for a minute after you type `j` and Enter in its console, trackkat prints
-  each joystick button you press, ready to copy:
-
-  ```
-  Joystick button pressed: Throttle - HOTAS Warthog button 23
-  ```
-
-  Joysticks are named as Windows names them; if two attached have the same
-  name, the second is `Name (2)`. trackkat also prints when a joystick is
-  connected or disconnected. Joysticks plugged in while it runs, or that
-  come back after sleep, work straight away. A setting left empty, as in
-  `trim =`, has no keys or buttons; that is how trim starts.
-
-  The mouse buttons are `MouseMiddle`, `Mouse4` and `Mouse5` (the side
-  buttons, back and forward), with keys held or not: `recenter = Ctrl+Mouse4`.
-  Other programs still see them. The left and right buttons can't be bound.
-  Extra buttons on mice such as Logitech's are invisible to Windows until
-  the mouse's own software (G HUB) gives them a keystroke; give them F13 to
-  F24, which no keyboard has and DCS doesn't use, and bind those here.
-- `steadiness = 90`, from 0 to 100: how still the view stays while your
-  head is still. Raise it if the view jitters; lower it if the view feels
-  floaty or drifts into place.
-- `responsiveness = 45`, from 0 to 100: how closely the view keeps up when
-  you move. Raise it if the view lags behind your head; lower it if the view
-  jitters as you move slowly.
-- `smoothing = off` turns smoothing off altogether; `smoothing = on` turns it
-  back on.
-- `yaw = 1:6`, and likewise `pitch`, `roll`, `x`, `y`, `z`: response
-  curves, the same both sides of centre. Most simply a multiplier: `1:6`
-  turns the view 6 degrees for each degree you turn your head, so turning
-  30 degrees looks straight behind you. The defaults multiply yaw by 6,
-  pitch 7, roll 4, x 3, y 4 and z 2.5.
-
-  A centre precision from 0 to 100, as in `yaw = 1:6, precision 40`, makes
-  small movements gentler, for aiming and reading gauges, and larger ones
-  steeper, while the same head movement still reaches the end of the view:
-  180 degrees for yaw, 90 for pitch and roll, 300 mm for x, y and z. With
-  multiplier m, that end at R/m and precision p as a fraction k, a movement
-  x up to R/m becomes R·((1 − k)·u + k·u³) with u = x·m/R, the expo of
-  radio-controlled models: near centre the view moves m·(1 − k) times as
-  far as your head, at the end m·(1 + 2k) times, and past it carries on
-  that steeply. So `yaw = 1:6, precision 40` still looks straight behind
-  at 30 degrees, but a 5 degree glance turns the view 18 degrees rather than 30.
-
-  For any other shape, give input:output points, in degrees or mm, which
-  straight lines join, starting from 0:0. For example
-  `yaw = 10:10 45:120` turns your view 120 degrees when you turn your head 45.
-  Past the last point the curve carries straight on.
-
-  In trackkat's window each axis has a multiplier, a centre precision and
-  a plot of its curve, with a dot where your head is now. **Advanced**
-  shows the curves as text instead, for points; an axis with points shows
-  as a custom curve, and the window leaves it alone unless you change its
-  multiplier or precision.
-- `lean = view`: leaning moves you relative to where you look in the game.
-  With the view turned to look behind you, leaning left (toward the left of
-  the screen) leans out of the right side of the cockpit, as your body would
-  if it turned with your gaze. Only turning left and right counts: your body
-  stays upright when you look up or down. `lean = screen` moves you the same
-  way whichever way you look.
-
-Single-frame jumps no head could make are ignored.
-
-If the camera is unplugged, or the PC sleeps, trackkat waits and picks it up
-again when it comes back.
-
-### When a game doesn't respond
-
-- `npclient.log`, beside the DLLs, records what each game asked NPClient for
-  and what it got.
-- `npgame` loads NPClient like a game does (as DCS, game 1003, by default,
-  or `npgame <game id>`), unscrambles and checksums what it gets as a game
-  must, and prints the pose. Run it while trackkat is running.
-- [`trackdemo`](#trying-it-out-trackdemo) is a quicker test than a real
-  game.
-- `tools/test-npclient.sh` runs the same check under Wine, with a stand-in
-  for trackkat.
-
-## Running the probe
-
-Open a terminal in the folder with `tirprobe.exe` and run `tirprobe`. Wear the
-TrackClip, face the camera and press **Enter** to recenter. About ten times a
-second it prints your head pose relative to that position:
-
-```
-yaw   +3.2  pitch   -1.0  roll   +0.4   x    +2  y    -1  z    +5 mm   distance  812 mm  fit 0.00 px
-```
-
-tirprobe learns which way is up and where your neck pivots as trackkat does,
-but starts afresh each time. To calibrate up at once: type `c`, press Enter,
-and turn your head left and right for five seconds. It prints the camera
-tilt it found. Until then, angles are measured about the camera's own axes,
-so a camera tipped downward mixes some yaw into roll.
-
-The first green light on the camera shows when all three reflectors are being
-tracked.
-
-Options:
-
-- `--clip LR,LT,RT`: your clip's reflector spacing in mm, centre to centre:
-  left–right (the two on the headband), left–top, right–top, as seen from the
-  camera. The top reflector's post is assumed to lean back. The angles depend
-  on the shape of this triangle, so measure your clip. Default: `70,116,116`.
-- `--focal F`: camera focal length in pixels (default 660, from the 51.7°
-  field of view). Only affects the distance and the size of the angles.
-- `--blobs`: show raw blob positions instead of the pose.
-- `--threshold N` (30–253, default 140), `--ir 5|6|7` (illuminator
-  brightness), `--no-status-led`.
-- `--raw`: hex-dump every USB transfer; use this when reporting problems:
-  `tirprobe --raw > probe.txt`.
-- `--list`: list every USB device and whether it can be opened.
-
-Ctrl-C stops the camera cleanly.
+More on trim, calibration, the tray icon and when trackkat quits by itself:
+[docs/details.md](docs/details.md).
 
 ## Building
 
-Needs GHC 9.14, cabal and libusb-1.0 headers. Dependencies are frozen in
-`cabal.project.freeze`.
-
-```
-cabal build all --enable-tests && cabal test
-```
-
-On Windows, point cabal at libusb with `--extra-include-dirs` and
-`--extra-lib-dirs` (see `.github/workflows/build.yml`).
+Needs GHC 9.14, cabal and libusb-1.0 headers; dependencies are frozen in
+`cabal.project.freeze`. `cabal build all --enable-tests && cabal test`. On
+Windows, see `.github/workflows/build.yml` for pointing cabal at libusb.
 
 ## Credits
 
