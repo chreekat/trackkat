@@ -1,0 +1,3 @@
+// trackkat's icon, for windres: the programs' own, in Explorer, and their
+// windows', which load it by this number.
+1 ICON "trackkat.ico"
