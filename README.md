@@ -61,8 +61,8 @@ tooltip saying what it does.
 14. **Add key or button…**: press a key, joystick button, or middle or side mouse button to add it.
 15. Smoothing: steadiness against jitter, responsiveness against lag.
 16. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
-17. Lean relative to where the game's view looks, or to the screen.
-18. **Save** writes the settings to `trackkat.conf`; they apply at once.
+17. Lean relative to where the game's view looks, or to the screen; and anti-cheat mode, for games such as Arma Reforger.
+18. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
 19. **Curves as text**, for curves of any shape.
 20. The log; **Copy log** for bug reports.
 
@@ -77,10 +77,10 @@ side mouse buttons.
 
 ## Settings
 
-Change settings in the window and click **Save**, or edit `trackkat.conf`,
-beside `trackkat.exe`, in any text editor; it explains every setting, as
-[`trackkat.conf.example`](trackkat.conf.example) shows. Either way they apply
-at once, while you play.
+Change settings in the window, which saves them as you go, or edit
+`trackkat.conf`, beside `trackkat.exe`, in any text editor; it explains every
+setting, as [`trackkat.conf.example`](trackkat.conf.example) shows. Either way
+they apply at once, while you play.
 
 ## When something doesn't work
 

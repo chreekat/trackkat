@@ -36,9 +36,10 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
-enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness",
-                                                    L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean"};
+                                                    L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
+                                                    L"npclient"};
 #define LISTS 3 /* binding lists: recenter, pause, trim */
 
 typedef struct State {
@@ -60,7 +61,7 @@ typedef struct State {
 
 static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, L"", L"",
-                       L"Separate several keys or buttons with commas."};
+                       L"Changes are saved as you make them. Separate several keys or buttons with commas."};
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
 static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings as the user asked to save them */
@@ -1070,6 +1071,15 @@ static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     return CallWindowProcW(button_proc, w, msg, wp, lp);
 }
 
+#define ID_AUTOSAVE 1
+
+/* Save the settings after the given number of milliseconds without further
+ * changes, so dragging a slider saves once, when it stops. */
+static void save_soon(UINT ms)
+{
+    SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL);
+}
+
 /* Add a binding to a list's text, unless it is there already. */
 static void add_binding(int field, const wchar_t *binding)
 {
@@ -1101,6 +1111,7 @@ static void add_binding(int field, const wchar_t *binding)
         joined[FIELD_MAX - 1] = 0;
     }
     SetWindowTextW(field_ctl[field], joined);
+    save_soon(1);
 }
 
 /* Whether a label fits on a button, in the button's font. */
@@ -1152,6 +1163,8 @@ static void show_field(int i, const wchar_t *value)
     copy_text(field_text[i], FIELD_MAX, value);
     if (i == F_LEAN)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"screen") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+    else if (i == F_NPCLIENT)
+        SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"trackir") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
         SendMessageW(field_ctl[i], BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1180,7 +1193,7 @@ static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
     for (int i = 0; i < F_COUNT; i++)
-        if (i == F_SMOOTHING || i == F_LEAN || slider_field(i))
+        if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
         else
             GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
@@ -1560,16 +1573,22 @@ static void build_window(void)
     }
 
     field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
-                                    WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 500, 22, ID_FIELD + F_LEAN),
+                                    WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 370, 22, ID_FIELD + F_LEAN),
                             L"On, leaning follows the view: looking behind you, leaning left leans out of the "
                             L"cockpit's right side. Off, leaning moves you the same way whichever way you look.");
+    field_ctl[F_NPCLIENT] = tip(
+        control(L"BUTTON", L"Anti-cheat mode (npclient = trackir)", WS_TABSTOP | BS_AUTOCHECKBOX, 410, CURVES_TOP + 140,
+                290, 22, ID_FIELD + F_NPCLIENT),
+        L"For games whose anti-cheat blocks trackkat's NPClient, such as Arma Reforger: games load the NPClient of "
+        L"NaturalPoint's TrackIR software instead, which must be installed but not running. Games can't start "
+        L"trackkat then, so start it first. Applies to games started after you change it.");
 
-    tip(control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, CURVES_TOP + 172, 90, 26, IDOK),
-        L"Write these settings to trackkat.conf, beside trackkat.exe; they apply at once. Only what you changed is "
-        L"rewritten, so your own edits and comments there stay.");
     settings_text = tip(
-        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, CURVES_TOP + 176, 440, 20, 0),
-        L"Whether the last Save worked, and if not, why.");
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 540, 20, 0),
+        L"Settings are written to trackkat.conf, beside trackkat.exe, as you change them, and apply at once: "
+        L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
+        L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
+        L"not, why.");
     curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 580, CURVES_TOP + 174,
                                  120, 22, ID_CURVES_AS_TEXT),
                          L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "
@@ -1609,9 +1628,16 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_COMMAND: {
         int id = LOWORD(wp), code = HIWORD(wp);
+        if (id >= ID_FIELD + F_RECENTER && id < ID_FIELD + F_RECENTER + LISTS) {
+            if (code == EN_KILLFOCUS)
+                save_soon(1);
+            return 0;
+        }
         if (id >= ID_FIELD + F_YAW && id <= ID_FIELD + F_Z) {
             if (code == EN_CHANGE && !syncing)
                 sync_curve(id - ID_FIELD - F_YAW, FROM_TEXT);
+            else if (code == EN_KILLFOCUS)
+                save_soon(1);
             return 0;
         }
         if (id >= ID_MULTIPLIER && id < ID_MULTIPLIER + 6) {
@@ -1619,8 +1645,10 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             double f;
             if (code == EN_CHANGE && !syncing && typed_multiplier(axis, &f))
                 set_multiplier(axis, f, current_precision(axis), FROM_MULTIPLIER);
-            else if (code == EN_KILLFOCUS)
+            else if (code == EN_KILLFOCUS) {
                 sync_curve(axis, FROM_TEXT);
+                save_soon(1);
+            }
             return 0;
         }
         switch (id) {
@@ -1654,10 +1682,17 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_FIELD + F_LEAN:
             copy_text(field_text[F_LEAN], FIELD_MAX,
                       SendMessageW(field_ctl[F_LEAN], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"view" : L"screen");
+            save_soon(1);
+            return 0;
+        case ID_FIELD + F_NPCLIENT:
+            copy_text(field_text[F_NPCLIENT], FIELD_MAX,
+                      SendMessageW(field_ctl[F_NPCLIENT], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"trackir" : L"trackkat");
+            save_soon(1);
             return 0;
         case ID_FIELD + F_SMOOTHING:
             show_field(F_SMOOTHING,
                        SendMessageW(field_ctl[F_SMOOTHING], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
+            save_soon(1);
             return 0;
         case IDOK:
             save_settings();
@@ -1672,6 +1707,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         NMHDR *n = (NMHDR *)lp;
         if (n->code == UDN_DELTAPOS && n->idFrom >= ID_STEP && n->idFrom < ID_STEP + 6) {
             step_multiplier((int)n->idFrom - ID_STEP, ((NMUPDOWN *)lp)->iDelta > 0);
+            save_soon(500);
             return 1;
         }
         break;
@@ -1689,7 +1725,15 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 double f = curve[i].factor > 0 ? curve[i].factor : 1;
                 set_multiplier(i, f, current_precision(i), FROM_PRECISION);
             }
+        save_soon(500);
         return 0;
+    case WM_TIMER:
+        if (wp == ID_AUTOSAVE) {
+            KillTimer(w, ID_AUTOSAVE);
+            save_settings();
+            return 0;
+        }
+        break;
     case WM_CTLCOLORSTATIC:
         /* Read-only, but it takes selections, so it looks like it. */
         if ((HWND)lp == log_box) {
