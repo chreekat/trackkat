@@ -16,6 +16,7 @@ import Text.Read (readMaybe)
 
 import TrackKat.Calibration
 import TrackKat.Camera
+import TrackKat.Config (clip, clipModel, clipShape, defaultConfig)
 import TrackKat.Frame
 import TrackKat.Pose
 import TrackKat.Tracker
@@ -42,9 +43,9 @@ usage =
         , "to calibrate which way is up."
         , ""
         , "  --blobs           show the raw blob positions instead of the pose"
-        , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, left-right,"
-        , "                    left-top, right-top, with the top reflector's post"
-        , "                    leaning back (default: 70,110,110)"
+        , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, as you wear"
+        , "                    it: left-right, left-top, right-top, with the top"
+        , "                    reflector's post leaning back (default: 70,110,110)"
         , "  --focal F         camera focal length in pixels (default 660)"
         , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
         , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
@@ -63,8 +64,8 @@ parseArgs ("--blobs" : r) o = parseArgs r o{optBlobs = True}
 parseArgs ("--focal" : n : r) o | Just v <- readMaybe n, v > 0 = parseArgs r o{optFocal = v}
 parseArgs ("--clip" : spec : r) o
     | [Just lr, Just lt, Just rt] <- map readMaybe (splitOn ',' spec)
-    , Just m <- triangle 45 lr lt rt =
-        parseArgs r o{optModel = m}
+    , Just cl <- clipShape lr lt rt =
+        parseArgs r o{optModel = clipModel cl}
     | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
 parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLed = False}}
 parseArgs ("--threshold" : n : r) o | Just v <- readMaybe n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
@@ -114,9 +115,8 @@ listAll ctx = do
             status
             (if USB.devVendor d == vendorId then "   <-- NaturalPoint" else "" :: String)
 
--- | The headset clip this was developed with, its post as it is now bent.
 defaultClip :: Model
-defaultClip = maybe (error "defaultClip") id (triangle 45 70 110 110)
+defaultClip = clipModel (clip defaultConfig)
 
 splitOn :: Char -> String -> [String]
 splitOn c str = case break (== c) str of
