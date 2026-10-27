@@ -187,8 +187,6 @@ renderConfig c =
         , "#   recenter = F12, Throttle - HOTAS Warthog button 23"
         , "#   pause = Ctrl+F9, Mouse4"
         , "#   trim = NumPad5"
-        , "# trim makes where you look in the game the new forward; recentering"
-        , "# undoes it."
         , "#"
         , "# The easiest way to figure out joystick button names is by using"
         , "# trackkat's window. For a gaming mouse's extra buttons, give them F13"
