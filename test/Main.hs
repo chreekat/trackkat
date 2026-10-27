@@ -6,6 +6,7 @@ import Control.Exception (IOException, try)
 import Control.Monad (forM_, unless)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C
 import Data.Either (isLeft)
 import Data.IORef
 import Data.List (mapAccumL, sortOn)
@@ -551,6 +552,17 @@ main = do
             written <- try (readFile' example)
             check (example ++ " is the default settings file; TRACKKAT_ACCEPT=1 cabal test rewrites it") $
                 either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) written
+
+    -- The tray icon, drawn by cbits/gui.c, is the cat of icons/tray.svg, as
+    -- is the program's icon.
+    tray <- B.readFile "icons/tray.svg"
+    gui <- B.readFile "cbits/gui.c"
+    program <- B.readFile "icons/trackkat.svg"
+    let catPath = B.takeWhile (/= quote) (B.drop 3 (snd (B.breakSubstring (C.pack "d=\"") tray)))
+        quote = fromIntegral (fromEnum '"')
+        quoted = C.pack "\"" <> catPath <> C.pack "\""
+    check "the tray's cat is icons/tray.svg's" (not (B.null catPath) && quoted `B.isInfixOf` gui)
+    check "the program's cat is icons/tray.svg's" ((C.pack "d=" <> quoted) `B.isInfixOf` program)
 
     -- Following the clip through what the camera shows: reflectors fading
     -- at a slant, running together, breaking up, and stray reflections.

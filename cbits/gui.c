@@ -10,6 +10,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -297,15 +298,88 @@ static int S(int x) { return MulDiv(x, dpi, 96); }
 
 /* ---- Icons ---------------------------------------------------------------- */
 
-/* Icons are a disc coloured by state: green tracking, amber with the clip out
- * of sight, grey looking for the camera, red without one. A white dot means a
- * game is connected (like the camera's second light); white bars mean paused. */
+/* The tray icon is the cat of icons/tray.svg filled with a colour by state:
+ * green tracking, amber with the clip out of sight, grey looking for the
+ * camera, red without one; with a dark outline, so that it shows on light
+ * and dark taskbars alike. The window has the program's own icon. */
 enum { LOOK_TRACKING, LOOK_CLIP_LOST, LOOK_SEARCHING, LOOK_DOWN };
 static const COLORREF look_colour[4] = {RGB(60, 180, 100), RGB(235, 160, 40), RGB(140, 145, 155), RGB(215, 70, 60)};
 
-static double coverage(double inside) { return inside < 0 ? 0 : inside > 1 ? 1 : inside; }
+/* The cat's outline, in a 256 by 256 drawing, as icons/tray.svg's path
+ * writes it, which the tests check: absolute M, L, Q, C and Z only. */
+static const char cat_path[] =
+    "M36 168 C36 126 44 104 50 94 L52 46 Q54 24 74 36 L106 62 C118 58 138 58 150 62 L182 36 Q202 24 204 46 L206 94 C212 104 220 126 220 168 C220 220 180 244 128 244 C76 244 36 220 36 168 Z";
 
-static HICON make_icon(int size, int look, int mark)
+#define CAT_POINTS 256
+#define CURVE_STEPS 16
+
+/* The cat as a polygon, its curves as straight pieces. Returns how many
+ * points. */
+static int cat_polygon(double xs[CAT_POINTS], double ys[CAT_POINTS])
+{
+    const char *p = cat_path;
+    int n = 0;
+    double x = 0, y = 0;
+    while (*p) {
+        char command = *p++;
+        int args = command == 'C' ? 6 : command == 'Q' ? 4 : command == 'Z' ? 0 : 2;
+        double v[6];
+        for (int i = 0; i < args; i++) {
+            char *end;
+            v[i] = strtod(p, &end);
+            p = end;
+        }
+        while (*p == ' ')
+            p++;
+        if (command == 'M' || command == 'L') {
+            if (n < CAT_POINTS) {
+                xs[n] = v[0];
+                ys[n] = v[1];
+                n++;
+            }
+        } else if (command == 'Q' || command == 'C')
+            for (int step = 1; step <= CURVE_STEPS && n < CAT_POINTS; step++) {
+                double t = (double)step / CURVE_STEPS, u = 1 - t;
+                if (command == 'Q') {
+                    xs[n] = u * u * x + 2 * u * t * v[0] + t * t * v[2];
+                    ys[n] = u * u * y + 2 * u * t * v[1] + t * t * v[3];
+                } else {
+                    xs[n] = u * u * u * x + 3 * u * u * t * v[0] + 3 * u * t * t * v[2] + t * t * t * v[4];
+                    ys[n] = u * u * u * y + 3 * u * u * t * v[1] + 3 * u * t * t * v[3] + t * t * t * v[5];
+                }
+                n++;
+            }
+        if (n > 0) {
+            x = xs[n - 1];
+            y = ys[n - 1];
+        }
+    }
+    return n;
+}
+
+/* Whether a point is inside the polygon; sets *edge to its distance from
+ * the polygon's edge. */
+static int inside(const double *xs, const double *ys, int n, double x, double y, double *edge)
+{
+    int in = 0;
+    double best = 1e30;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        if ((ys[i] > y) != (ys[j] > y) && x < xs[i] + (y - ys[i]) * (xs[j] - xs[i]) / (ys[j] - ys[i]))
+            in = !in;
+        double dx = xs[j] - xs[i], dy = ys[j] - ys[i], len2 = dx * dx + dy * dy;
+        double t = len2 > 0 ? ((x - xs[i]) * dx + (y - ys[i]) * dy) / len2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        double ex = xs[i] + t * dx - x, ey = ys[i] + t * dy - y, d = ex * ex + ey * ey;
+        if (d < best)
+            best = d;
+    }
+    *edge = sqrt(best);
+    return in;
+}
+
+/* The tray icon at a size in pixels, antialiased by sampling each pixel 4
+ * by 4 times. */
+static HICON make_icon(int size, int look)
 {
     BITMAPINFO bi;
     memset(&bi, 0, sizeof bi);
@@ -320,27 +394,39 @@ static HICON make_icon(int size, int look, int mark)
     HBITMAP mask = CreateBitmap(size, size, 1, 1, NULL);
     if (!colour || !mask)
         return NULL;
-    DWORD *px = bits;
-    double c = size / 2.0, r = size / 2.0 - 0.5, edge = size / 16.0;
+    static double xs[CAT_POINTS], ys[CAT_POINTS];
+    int n = cat_polygon(xs, ys);
+    /* The cat, outline included, spans about 224 of the drawing's 256
+     * units, centred on (128, 138). At least a pixel and a quarter of
+     * outline, however small the icon. */
+    double k = size / 224.0, half_outline = 0.625 / k > 5 ? 0.625 / k : 5;
     COLORREF fill = look_colour[look];
+    DWORD *px = bits;
     for (int j = 0; j < size; j++)
         for (int i = 0; i < size; i++) {
-            double dx = i + 0.5 - c, dy = j + 0.5 - c, d = sqrt(dx * dx + dy * dy);
-            double a = coverage(r - d + 0.5);
-            /* A darker rim, so the disc shows on light and dark taskbars. */
-            double rim = coverage(d - (r - edge) + 0.5) * 0.45;
-            double cr = GetRValue(fill) * (1 - rim), cg = GetGValue(fill) * (1 - rim), cb = GetBValue(fill) * (1 - rim);
-            double w = 0;
-            if (mark == 1)
-                w = coverage(size * 0.2 - d + 0.5);
-            else if (mark == 2) {
-                double bx = fabs(fabs(dx) - size * 0.14), by = fabs(dy);
-                w = coverage(size * 0.07 - bx + 0.5) * coverage(size * 0.24 - by + 0.5);
-            }
-            cr += (255 - cr) * w;
-            cg += (255 - cg) * w;
-            cb += (255 - cb) * w;
-            px[j * size + i] = (DWORD)(a * 255) << 24 | (DWORD)cr << 16 | (DWORD)cg << 8 | (DWORD)cb;
+            double r = 0, g = 0, b = 0;
+            int covered = 0;
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++) {
+                    double x = (i + (sx + 0.5) / 4 - size / 2.0) / k + 128;
+                    double y = (j + (sy + 0.5) / 4 - size / 2.0) / k + 138;
+                    double edge;
+                    int in = inside(xs, ys, n, x, y, &edge);
+                    if (edge < half_outline) {
+                        r += 16;
+                        g += 16;
+                        b += 16;
+                    } else if (in) {
+                        r += GetRValue(fill);
+                        g += GetGValue(fill);
+                        b += GetBValue(fill);
+                    } else
+                        continue;
+                    covered++;
+                }
+            px[j * size + i] = covered ? (DWORD)(covered * 255 / 16) << 24 | (DWORD)(r / covered) << 16 |
+                                             (DWORD)(g / covered) << 8 | (DWORD)(b / covered)
+                                       : 0;
         }
     ICONINFO ii;
     memset(&ii, 0, sizeof ii);
@@ -360,8 +446,6 @@ static int current_look(const State *st)
     return st->camera == CAMERA_SEARCHING ? LOOK_SEARCHING : LOOK_DOWN;
 }
 
-static int current_mark(const State *st) { return st->paused ? 2 : st->games > 0 ? 1 : 0; }
-
 /* ---- Tray ----------------------------------------------------------------- */
 
 static void describe(const State *st, wchar_t *buf, size_t size)
@@ -379,32 +463,22 @@ static void update_tray(int force)
 {
     if (InterlockedCompareExchange(&stopping, 0, 0))
         return;
-    int look = current_look(&seen), mark = current_mark(&seen);
+    int look = current_look(&seen);
     wchar_t tip[128];
     describe(&seen, tip, 128);
-    int key = look * 3 + mark;
-    if (!force && tray_added && key == icon_shown && wcscmp(tip, tip_shown) == 0)
+    if (!force && tray_added && look == icon_shown && wcscmp(tip, tip_shown) == 0)
         return;
     HICON old = nid.hIcon;
-    nid.hIcon = make_icon(GetSystemMetrics(SM_CXSMICON), look, mark);
+    if (look != icon_shown || !old)
+        nid.hIcon = make_icon(GetSystemMetrics(SM_CXSMICON), look);
     copy_text(nid.szTip, 128, tip);
     if (tray_added)
         tray_added = Shell_NotifyIconW(NIM_MODIFY, &nid);
     if (!tray_added)
         tray_added = Shell_NotifyIconW(NIM_ADD, &nid);
-    if (old)
+    if (old && old != nid.hIcon)
         DestroyIcon(old);
-    if (key != icon_shown && main_hwnd) {
-        HICON big = make_icon(GetSystemMetrics(SM_CXICON), look, mark);
-        HICON small = make_icon(GetSystemMetrics(SM_CXSMICON), look, mark);
-        HICON old_big = (HICON)SendMessageW(main_hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
-        HICON old_small = (HICON)SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
-        if (old_big)
-            DestroyIcon(old_big);
-        if (old_small)
-            DestroyIcon(old_small);
-    }
-    icon_shown = key;
+    icon_shown = look;
     copy_text(tip_shown, 128, tip);
 }
 
@@ -1867,6 +1941,10 @@ static int create_windows(void)
         return 0;
     wc.lpfnWndProc = main_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    /* The program's icon (icons/trackkat.rc), at the sizes this screen
+     * wants; Windows' own if the build left it out. */
+    wc.hIcon = LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+                          GetSystemMetrics(SM_CYICON), LR_SHARED);
     wc.lpszClassName = L"trackkat_window";
     if (!RegisterClassW(&wc))
         return 0;
@@ -1896,6 +1974,12 @@ static int create_windows(void)
                                 CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, height, NULL, NULL, inst, NULL);
     if (!main_hwnd)
         return 0;
+    /* The title bar's and taskbar's small icon, drawn at its own size
+     * rather than shrunk from the big one. */
+    HANDLE small = LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                              GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+    if (small)
+        SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
     build_window();
 
     taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
