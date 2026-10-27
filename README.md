@@ -84,8 +84,10 @@ moves it and as games get it after the curves; whether the camera, the clip
 and games are connected; the latency figures; what has been learnt in
 [calibration](#calibration); and how far the centre has followed you since
 recentering. It has buttons to recenter, pause and
-calibrate, and edits the [settings](#settings). Its log shows everything
-trackkat prints; **Copy log** copies it, for bug reports. Closing the window
+calibrate, and edits the [settings](#settings). Its log shows what
+trackkat reports, such as recentering, calibration, joysticks, settings
+reloads and errors, but not the once-a-second status line the console
+prints; **Copy log** copies it, for bug reports. Closing the window
 keeps trackkat running in the tray.
 
 **Started by hand**, trackkat opens its window and keeps its console, where

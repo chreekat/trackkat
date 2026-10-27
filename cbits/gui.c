@@ -1047,7 +1047,7 @@ static void build_window(void)
     control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, 600, 90, 26, IDOK);
     settings_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, 604, 578, 20, 0);
 
-    log_hint = control(L"STATIC", L"Everything trackkat prints. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
+    log_hint = control(L"STATIC", L"What trackkat reports, but not the status shown above. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
                        460, 20, 0);
     SendMessageW(log_hint, WM_SETFONT, (WPARAM)small_font, FALSE);
     copy_button = control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 600, LOG_TOP + 18, 100, 24, ID_COPY_LOG);

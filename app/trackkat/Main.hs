@@ -450,7 +450,9 @@ track s cam = do
                 when (now - shown >= 1) $ do
                     writeIORef lastStatus now
                     w <- atomicModifyIORef' window (\w -> (emptyWindow, w))
-                    say (status outcome paused gameConnected ++ "   " ++ summary w)
+                    -- The window shows the pose and figures live, so its
+                    -- log is left to events.
+                    putStrLn (status outcome paused gameConnected ++ "   " ++ summary w)
                     showStats (summary w)
             Corrupt why _ -> do
                 say ("# dropped a corrupt packet: " ++ why)
