@@ -1,0 +1,54 @@
+name: Support another game
+description: A game that doesn't respond to trackkat, or responds wrongly.
+title: "Game: "
+labels: ["game"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Games find trackkat through NaturalPoint's NPClient interface. Most work straight away; the ones that don't usually need their game id, a key, or different signs for an axis. Check that `trackdemo` follows your head first: if it doesn't, it's not the game.
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      description: Name, version, and where you got it (Steam, standalone, …).
+      placeholder: Arma Reforger, Steam
+    validations:
+      required: true
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What happens
+      options:
+        - The view doesn't move at all
+        - Some axes move the wrong way
+        - The view moves but jumps or stutters
+        - Something else (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: npclient-log
+    attributes:
+      label: npclient.log
+      description: |
+        Start the game, try head tracking, quit, then paste `npclient.log` from beside trackkat's DLLs. It shows which game id the game asks for and what it gets.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: trackkat-log
+    attributes:
+      label: trackkat's log
+      description: Copy log in trackkat's window, or the console output, while the game is running.
+      render: text
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Which axes are wrong and how, the game's head tracking settings, anything else you noticed.
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Testing
+      options:
+        - label: I can test development builds with this game.

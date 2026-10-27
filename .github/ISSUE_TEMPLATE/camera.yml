@@ -1,0 +1,49 @@
+name: Support another camera
+description: You want more devices? This is how you get more devices.
+title: "Camera: "
+labels: ["camera"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        trackkat talks to the camera over USB itself, so each model needs its protocol worked out and tested on real hardware. Your answers and a USB dump are what make that possible.
+  - type: input
+    id: model
+    attributes:
+      label: Camera
+      description: Make, model and revision, as printed on the camera or its box.
+      placeholder: TrackIR 4 Pro
+    validations:
+      required: true
+  - type: input
+    id: usb-id
+    attributes:
+      label: USB id
+      description: |
+        Device Manager → the camera → Properties → Details → Hardware Ids, or `tirprobe --list`.
+      placeholder: USB\VID_xxxx&PID_xxxx&REV_xxxx
+    validations:
+      required: true
+  - type: textarea
+    id: list
+    attributes:
+      label: tirprobe --list
+      description: The output of `tirprobe --list` with the camera plugged in and switched to WinUSB (see the README).
+      render: text
+  - type: textarea
+    id: raw
+    attributes:
+      label: tirprobe --raw
+      description: |
+        Run `tirprobe --raw > probe.txt` for a few seconds while wearing the clip, then drag probe.txt here. If trackkat doesn't recognise the camera yet, say so; we'll find another way to capture it.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: The clip or cap you use, what NaturalPoint's or other software does with this camera, links to protocol notes.
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Testing
+      options:
+        - label: I can test development builds with this camera and paste their output.
