@@ -58,16 +58,10 @@ int main(int argc, char **argv)
         float y = (float)(-4 * sin(t * 0.8)), z = (float)(15 * sin(t * 0.4));
         int lost = fmod(t, 12) > 10;
         hts_gui_frame(lost ? 2 : -1, yaw, pitch, roll, x, y, z, yaw * 6, pitch * 7, roll * 4, x * 3, y * 4, z * 2.5f);
-        if (i % 60 == 0) {
-            wchar_t line[256];
-            _snwprintf(line, 256,
-                       L"yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm   "
-                       L"latency 0.11 ms (max 0.42)  gap max 9 ms  stripes max 31  GC 3 (max 0.21 ms)",
-                       yaw, pitch, roll, x, y, z);
-            line[255] = 0;
-            hts_gui_log(line);
+        if (i % 60 == 0)
             hts_gui_stats(L"latency 0.11 ms (max 0.42)  gap max 9 ms  stripes max 31  GC 3 (max 0.21 ms)");
-        }
+        if (i % 600 == 300)
+            hts_gui_log(i % 1200 == 300 ? L"Recentered." : L"Joystick button pressed: Throttle - HOTAS Warthog button 23");
         int acts = hts_gui_take_actions();
         if (acts) {
             printf("actions 0x%x, window %s\n", acts, hts_gui_window_open() ? "open" : "closed");
