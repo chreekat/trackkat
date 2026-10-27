@@ -112,6 +112,8 @@ for that software, which the DLL gets the pose from. So:
   Game 3450 is using NaturalPoint's NPClient.
   ```
 
+Tested: Arma Reforger (game 8310) tracks this way.
+
 If the TrackIR software isn't found, trackkat says so and games load its own
 NPClient. Back on `npclient = trackkat`, games load trackkat's again; either
 way the change applies when the settings are saved.
