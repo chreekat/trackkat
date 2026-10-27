@@ -27,6 +27,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_KEY_PAUSE 0x40
 #define ACT_TRIM 0x80
 #define ACT_KEY_TRIM 0x100
+#define ACT_CLEAR_CALIBRATION 0x200
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
@@ -246,6 +247,8 @@ enum {
     ID_RECENTER = 100,
     ID_PAUSE,
     ID_CALIBRATE,
+    ID_QUIT,
+    ID_CLEAR_CALIBRATION,
     ID_COPY_LOG,
     ID_ADD_RECENTER,
     ID_ADD_PAUSE,
@@ -1480,14 +1483,17 @@ static void build_window(void)
     tip(control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 388, 262, 116, 28, ID_CALIBRATE),
         L"Learn which way is up now: click, then turn your head left and right for five seconds. trackkat learns "
         L"it as you play anyway, so this is for after moving the camera.");
-    HWND hint = control(L"STATIC", L"Closing this window keeps trackkat running in the tray.", SS_LEFT, 514, 264,
-                        196, 30, 0);
-    SendMessageW(hint, WM_SETFONT, (WPARAM)small_font, FALSE);
+    tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 514, 262, 116, 28, ID_QUIT),
+        L"Stop tracking and quit: the camera's lights go off and trackkat leaves the tray. Closing this window "
+        L"instead keeps trackkat running in the tray.");
 
-    calibration_text = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 52, 0),
+    calibration_text = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 540, 52, 0),
                            L"What trackkat has learnt from how you turn your head: how the camera is tipped, and "
                            L"where your neck pivots. It keeps learning as you play, and keeps it in "
-                           L"trackkat.calibration; delete that to start afresh.");
+                           L"trackkat.calibration.");
+    tip(control(L"BUTTON", L"Clear calibration", WS_TABSTOP | BS_PUSHBUTTON, 572, 318, 126, 28, ID_CLEAR_CALIBRATION),
+        L"Forget what trackkat has learnt and start tracking afresh: it learns again as you turn your head. Use it "
+        L"after moving the camera or bending the clip, or if turning your head turns the view the wrong way.");
 
     static const wchar_t *const list_labels[LISTS] = {L"Recenter", L"Pause", L"Trim"};
     static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM};
@@ -1663,6 +1669,12 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_TRIM:
             InterlockedOr(&actions, ACT_TRIM);
+            return 0;
+        case ID_CLEAR_CALIBRATION:
+            InterlockedOr(&actions, ACT_CLEAR_CALIBRATION);
+            return 0;
+        case ID_QUIT:
+            InterlockedOr(&actions, ACT_QUIT);
             return 0;
         case ID_CALIBRATE:
             InterlockedOr(&actions, ACT_CALIBRATE);

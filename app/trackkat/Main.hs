@@ -195,6 +195,7 @@ controls start path s = go 0 Nothing
     act PauseAction = togglePause s
     act TrimAction = trim s
     act CalibrateAction = calibrate s
+    act ClearCalibrationAction = clearCalibration s
     act QuitAction = say "Quitting."
     act SaveAction = saveSettings path
     act (KeyChosen k (Just b)) = addBinding k b
@@ -242,8 +243,9 @@ loadCalibration path = do
             say noCalibration
             showCalibration noCalibration
             pure defaultCalibration
-  where
-    noCalibration = "No calibration yet: trackkat learns it as you turn your head."
+
+noCalibration :: String
+noCalibration = "No calibration yet: trackkat learns it as you turn your head."
 
 -- | Save each calibration handed over, only the latest when several wait,
 -- so that saving never holds up tracking. The file is replaced whole.
@@ -381,6 +383,18 @@ recenter s = do
 
 calibrate :: Session -> IO ()
 calibrate s = atomicModifyIORef' (sTracker s) (\t -> (request Calibrate t, ()))
+
+-- | Forget the learnt calibration, saved too, and track afresh, solving the
+-- next frame from scratch and recentering on it.
+clearCalibration :: Session -> IO ()
+clearCalibration s = do
+    model <- clipModel . clip <$> readIORef (sSettings s)
+    atomicWriteIORef (sTracker s) (newTracker defaultIntrinsics model defaultCalibration)
+    writeIORef (sShaper s) newShaper
+    _ <- tryTakeMVar (sSaving s)
+    putMVar (sSaving s) defaultCalibration
+    say "Calibration cleared: trackkat learns it afresh as you turn your head."
+    showCalibration noCalibration
 
 -- | Pause, holding the pose games see, or resume.
 togglePause :: Session -> IO ()
