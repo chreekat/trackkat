@@ -40,8 +40,8 @@ look around; there is nothing to calibrate by hand.
 
 ## The window
 
-Click the tray icon to open it. Rest the mouse on anything for a tooltip
-saying what it does.
+Click the cat in the tray to open it. Rest the mouse on anything for a
+tooltip saying what it does.
 
 ![trackkat's window, numbered](docs/window.png)
 
