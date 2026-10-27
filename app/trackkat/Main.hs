@@ -9,7 +9,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, withAsync)
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
-import Control.Monad (forM_, forever, unless, when)
+import Control.Monad (forM_, forever, unless, when, (<=<))
 import Data.Functor (($>))
 import Data.IORef
 import Data.Time.Clock (UTCTime)
@@ -89,7 +89,7 @@ main = do
                 (keysAndButtons (pauseBindings config))
                 (keysAndButtons (trimBindings config))
         let calibrationFile = dir </> "trackkat.calibration"
-        session <- newSession config =<< loadCalibration calibrationFile
+        session <- newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile
         showButtons session
         withAsync (console session) $ \_ ->
             withAsync (watchSettings settingsFile session stamp config) $ \_ ->
@@ -224,13 +224,14 @@ loadConfig path = do
                     say (path ++ ": " ++ err)
                     exitFailure
 
--- | Read what was learnt in earlier sessions, or start afresh.
-loadCalibration :: FilePath -> IO Calibration
-loadCalibration path = do
+-- | Read what was learnt in earlier sessions about a head wearing the given
+-- clip, or start afresh.
+loadCalibration :: Model -> FilePath -> IO Calibration
+loadCalibration m path = do
     exists <- doesFileExist path
     found <-
         if exists
-            then (parseCalibration <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException)))
+            then ((screenCalibration m <=< parseCalibration) <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException)))
             else pure (Left "not found")
     case found of
         Right c -> do
@@ -583,6 +584,7 @@ describeEvent _ (Calibrated c) =
      in printf "Calibrated: camera tipped %.1f degrees down, %.1f to its right." down right
 describeEvent _ (Refined LevelRefined c) = describeLevel c
 describeEvent centre (Refined PivotRefined c) = describePivot centre c
+describeEvent _ Corrected = "Corrected a mirror-image pose."
 
 -- | A calibration to save.
 learnt :: Event -> [Calibration]
@@ -597,6 +599,7 @@ calibrationNews :: Maybe Pose -> Calibration -> Event -> Maybe String
 calibrationNews centre c Recentered = Just (describeCalibration centre c)
 calibrationNews centre _ (Calibrated c) = Just (describeEvent centre (Calibrated c) ++ "\n" ++ describePivot centre c)
 calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
+calibrationNews _ _ Corrected = Nothing
 calibrationNews centre _ e = Just (describeEvent centre e)
 
 -- | The calibration box's account of a calibration.

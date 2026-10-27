@@ -184,6 +184,7 @@ describeEvent _ (Calibrated c) =
      in printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right" down right
 describeEvent _ (Refined LevelRefined c) = "# " ++ describeLevel c
 describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
+describeEvent _ Corrected = "# corrected a mirror-image pose"
 
 showOutcome :: Outcome -> String
 showOutcome (Lost n) = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"

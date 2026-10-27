@@ -8,7 +8,10 @@
 -- The pivot is the point in the head that stays still while the head turns
 -- and the body doesn't. Each half second of tracking with enough turning
 -- gives a least-squares fit of such a point; if the fit is good (the body
--- was still) it joins the estimate, again with old windows fading.
+-- was still) and the point is where a neck can be, behind the reflectors,
+-- it joins the estimate, again with old windows fading. Learning waits
+-- while the pose may be the mirror image of the head's (see
+-- "TrackKat.Branch").
 --
 -- What the tracker applies follows the estimates slowly enough that the
 -- view doesn't visibly move when they change.
@@ -22,6 +25,9 @@ module TrackKat.Calibration (
     pivotTurns,
     describeLevel,
     describePivot,
+    plausiblePivot,
+    plausibleCalibration,
+    screenCalibration,
 
     -- * Learning
     Learner,
@@ -32,7 +38,17 @@ module TrackKat.Calibration (
     Refinement (..),
     learn,
     lostSight,
+    changeClip,
     calibrateLevel,
+
+    -- * Windows of turning
+    TurnWindow,
+    windowSeconds,
+    startWindow,
+    addPose,
+    windowStart,
+    windowTurn,
+    turnFit,
 
     -- * Saving
     renderCalibration,
@@ -92,7 +108,7 @@ estimatedLevel = levelFromUp . estimatedUp
 -- | The point the head turns about, in the clip's axes (x to the wearer's
 -- left, y down, z back, from the middle of the two lower reflectors), mm.
 estimatedPivot :: Calibration -> V3
-estimatedPivot c = clampPivot (fromMaybe priorPivot (solve3 (pivotInfo c) (pivotMoment c)))
+estimatedPivot c = fromMaybe priorPivot (solve3 (pivotInfo c) (pivotMoment c))
 
 -- | Degrees of head turning up was learnt from, with older turns faded.
 levelTurning :: Calibration -> Double
@@ -188,12 +204,29 @@ withLevel l c = c{upSum = (upMemory / 2) *^ levelUp l, upWeight = upMemory / 2}
 priorPivot :: V3
 priorPivot = V3 0 100 100
 
--- | Where the pivot may be: a box well beyond the range of heads and clip
--- placements, so that a misleading fit can't put it anywhere absurd.
-clampPivot :: V3 -> V3
-clampPivot (V3 x y z) = V3 (clamp 150 x) (max 0 (min 200 y)) (max (-50) (min 200 z))
-  where
-    clamp m = max (-m) . min m
+-- | Whether a pivot, in the clip's axes, is where a neck can be: behind the
+-- reflectors, on the side away from where they face, and within a head's
+-- reach of them. However the clip sits on the head, and however its post
+-- is bent, the head is behind the reflectors; a pivot in front of them was
+-- learnt from mirror-image poses (see 'mirrorPose'), on which the head
+-- seems to turn about a point in front of the clip.
+plausiblePivot :: Model -> V3 -> Bool
+plausiblePivot m p = dot p (towardHead m) >= 30 && norm p <= 300
+
+-- | Whether what was learnt of the pivot is plausible for the given clip.
+-- A calibration whose pivot isn't came from mirror-image poses, and its
+-- level likely did too.
+plausibleCalibration :: Model -> Calibration -> Bool
+plausibleCalibration m = plausiblePivot m . estimatedPivot
+
+-- | A saved calibration as it is, or, if it isn't plausible for the given
+-- clip, why it should be forgotten.
+screenCalibration :: Model -> Calibration -> Either String Calibration
+screenCalibration m c
+    | plausibleCalibration m c = Right c
+    | otherwise =
+        Left
+            "its neck pivot is in front of the clip, where no neck is: it was learnt from mirror-image poses, with yaw and pitch reversed"
 
 -- | How much the prior counts, against about 5 for each window of turning.
 -- Mostly it pins the part of the pivot that turning left and right can't
@@ -220,8 +253,8 @@ pivotMemory :: Double
 pivotMemory = 1000
 
 -- | Sums over a window's poses, enough to fit the point that stays still.
-data Window = Window
-    { wStart :: !Double
+data TurnWindow = TurnWindow
+    { windowStart :: !Double
     -- ^ time of the first pose
     , wFirst :: !M33
     -- ^ rotation of the first pose
@@ -238,10 +271,10 @@ data Window = Window
     -- ^ furthest the head turned from the first pose, radians
     }
 
-startWindow :: Double -> Pose -> Window
-startWindow now (Pose r t) = Window now r 1 r (mulMV (transpose r) t) t (dot t t) 0
+startWindow :: Double -> Pose -> TurnWindow
+startWindow now (Pose r t) = TurnWindow now r 1 r (mulMV (transpose r) t) t (dot t t) 0
 
-addPose :: Pose -> Window -> Window
+addPose :: Pose -> TurnWindow -> TurnWindow
 addPose (Pose r t) w =
     w
         { wCount = wCount w + 1
@@ -252,40 +285,68 @@ addPose (Pose r t) w =
         , wSpan = max (wSpan w) (norm (rotationVector (r `mulMM` transpose (wFirst w))))
         }
 
--- | Add a window if the head turned enough during it and a fixed point
--- explains its movement.
+-- | Add a window if the head turned enough during it, a fixed point
+-- explains its movement, and that point and the estimate with it are where
+-- a neck can be on the given clip.
 --
 -- With rotations R_i and translations t_i, a point p in the clip's axes is
 -- at R_i p + t_i. Fitting p and the still position c to R_i p + t_i = c by
 -- least squares, and eliminating c, leaves normal equations A p = b, with
 -- A = n I - S^T S / n, b = S^T T / n - sum R_i^T t_i, S and T the sums of
 -- R_i and t_i. A fit of the window alone, held near the current estimate
--- along the axis it can't see, must explain it within 'windowFit' and lie
--- in the plausible box.
-addWindow :: Window -> Calibration -> Maybe Calibration
-addWindow w c
-    | wSpan w < windowSpan * pi / 180 || fit > windowFit || clampPivot own /= own = Nothing
-    | otherwise =
-        let dataTrace = traceM (pivotInfo c) - 3 * priorStrength
-            fade = if dataTrace + traceM a > pivotMemory then max 0 ((pivotMemory - traceM a) / dataTrace) else 1
-            prior = scaleM priorStrength identity
-         in Just
-                c
-                    { pivotInfo = prior `addM` scaleM fade (pivotInfo c `addM` scaleM (-1) prior) `addM` a
-                    , pivotMoment = priorStrength *^ priorPivot ^+^ fade *^ (pivotMoment c ^-^ priorStrength *^ priorPivot) ^+^ b
-                    , pivotWindows = fade * pivotWindows c + 1
-                    }
+-- along the axis it can't see, must explain it within 'windowFit'.
+addWindow :: Model -> TurnWindow -> Calibration -> Maybe Calibration
+addWindow m w c
+    | wSpan w < windowSpan * pi / 180 || fit > windowFit || not (plausiblePivot m own) = Nothing
+    | not (plausiblePivot m (estimatedPivot added)) = Nothing
+    | otherwise = Just added
+  where
+    (a, b) = normalEquations w
+    (own, fit) = fixedPoint priorStrength (estimatedPivot c) w
+    dataTrace = traceM (pivotInfo c) - 3 * priorStrength
+    fade = if dataTrace + traceM a > pivotMemory then max 0 ((pivotMemory - traceM a) / dataTrace) else 1
+    prior = scaleM priorStrength identity
+    added =
+        c
+            { pivotInfo = prior `addM` scaleM fade (pivotInfo c `addM` scaleM (-1) prior) `addM` a
+            , pivotMoment = priorStrength *^ priorPivot ^+^ fade *^ (pivotMoment c ^-^ priorStrength *^ priorPivot) ^+^ b
+            , pivotWindows = fade * pivotWindows c + 1
+            }
+
+-- | The normal equations A p = b of a window's fit of a fixed point.
+normalEquations :: TurnWindow -> (M33, V3)
+normalEquations w = (a, b)
   where
     n = fromIntegral (wCount w)
     s = wRot w
     a = scaleM n identity `addM` scaleM (-1 / n) (transpose s `mulMM` s)
     b = (1 / n) *^ mulMV (transpose s) (wTrans w) ^-^ wRotT w
+
+-- | The point, in the clip's axes, that moved least during a window, held
+-- toward the given point with the given strength (against 1 for each pose
+-- and squared mm moved); and the RMS distance, mm, it moved.
+fixedPoint :: Double -> V3 -> TurnWindow -> (V3, Double)
+fixedPoint strength near w = (p, sqrt (max 0 (dot p (mulMV a p) - 2 * dot b p + squares) / n))
+  where
+    (a, b) = normalEquations w
+    n = fromIntegral (wCount w)
     squares = wSquares w - dot (wTrans w) (wTrans w) / n
-    current = estimatedPivot c
-    own = case solve3 (a `addM` scaleM priorStrength identity) (b ^+^ priorStrength *^ current) of
-        Just p -> p
-        Nothing -> current
-    fit = sqrt (max 0 (dot own (mulMV a own) - 2 * dot b own + squares) / n)
+    p = fromMaybe near (solve3 (a `addM` scaleM strength identity) (b ^+^ strength *^ near))
+
+-- | The furthest, in degrees, the head turned during a window from where
+-- it was at its start.
+windowTurn :: TurnWindow -> Double
+windowTurn w = wSpan w * 180 / pi
+
+-- | How badly a window's poses fit turning about a point near the given
+-- one, in the clip's axes: the mean square, mm squared, of how far the best
+-- such point moved, plus the given weight times its squared distance from
+-- the given point.
+turnFit :: Double -> V3 -> TurnWindow -> Double
+turnFit weight near w = moved * moved + weight * dot off off
+  where
+    (p, moved) = fixedPoint (weight * fromIntegral (wCount w)) near w
+    off = p ^-^ near
 
 solve3 :: M33 -> V3 -> Maybe V3
 solve3 (M33 (V3 a b d) (V3 e f g) (V3 h i j)) (V3 x y z) =
@@ -307,10 +368,12 @@ traceM (M33 (V3 a _ _) (V3 _ b _) (V3 _ _ c)) = a + b + c
 -- | Learning in progress, and the calibration the tracker applies, which
 -- follows the estimates slowly.
 data Learner = Learner
-    { lCalibration :: !Calibration
+    { lModel :: !Model
+    -- ^ the clip, which says where a neck can be
+    , lCalibration :: !Calibration
     , lTurn :: !(Maybe (Double, M33))
     -- ^ time and rotation at the start of the turn being watched
-    , lWindow :: !(Maybe Window)
+    , lWindow :: !(Maybe TurnWindow)
     , lLast :: !(Maybe Double)
     -- ^ time of the last pose seen
     , lUp :: !V3
@@ -323,9 +386,10 @@ data Learner = Learner
     -- ^ pivot as last reported
     }
 
--- | Start learning from a calibration, applying it at once.
-newLearner :: Calibration -> Learner
-newLearner c = Learner c Nothing Nothing Nothing up pivot up pivot
+-- | Start learning about a head wearing the given clip from a calibration,
+-- applying it at once.
+newLearner :: Model -> Calibration -> Learner
+newLearner m c = Learner m c Nothing Nothing Nothing up pivot up pivot
   where
     up = estimatedUp c
     pivot = estimatedPivot c
@@ -395,7 +459,7 @@ learn now pose l =
         Nothing -> (lCalibration l, Just (now, r))
     (c2, window') = case maybe (startWindow now pose) (addPose pose) (lWindow l) of
         w
-            | now - wStart w >= windowSeconds -> (fromMaybe c1 (addWindow w c1), Nothing)
+            | now - windowStart w >= windowSeconds -> (fromMaybe c1 (addWindow (lModel l) w c1), Nothing)
             | otherwise -> (c1, Just w)
     upEst = estimatedUp c2
     pivotEst = estimatedPivot c2
@@ -410,9 +474,14 @@ towards limit from to
   where
     d = norm (to ^-^ from)
 
--- | The clip went out of sight: turns and windows in progress end.
+-- | The clip went out of sight, or its pose is in doubt: turns and windows
+-- in progress end.
 lostSight :: Learner -> Learner
 lostSight l = l{lTurn = Nothing, lWindow = Nothing, lLast = Nothing}
+
+-- | Learn about a head wearing a different clip from now on.
+changeClip :: Model -> Learner -> Learner
+changeClip m l = l{lModel = m}
 
 -- | Take an explicitly calibrated level, applying it at once.
 calibrateLevel :: Level -> Learner -> Learner

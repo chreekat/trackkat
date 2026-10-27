@@ -17,7 +17,9 @@ tirprobe learns which way is up and where your neck pivots as trackkat does,
 but starts afresh each time. To calibrate up at once: type `c`, press Enter,
 and turn your head left and right for five seconds. It prints the camera
 tilt it found. Until then, angles are measured about the camera's own axes,
-so a camera tipped downward mixes some yaw into roll.
+so a camera tipped downward mixes some yaw into roll. Like trackkat, it
+corrects a mirror-image pose, with yaw and pitch reversed, from how your
+head turns, and prints `# corrected a mirror-image pose`.
 
 The first green light on the camera shows when the clip is being tracked.
 
