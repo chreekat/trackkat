@@ -268,7 +268,10 @@ cycleOnce w win fonts editor = do
             if now < due
                 then GLFW.waitEventsTimeout (due - now)
                 else do
-                    writeIORef (edNextFrame editor) (max now (due + 1 / framesPerSecond))
+                    -- Keep to the beat, unless a frame came so late that
+                    -- the next is due already.
+                    let next = due + 1 / framesPerSecond
+                    writeIORef (edNextFrame editor) (if next > now then next else now + 1 / framesPerSecond)
                     drawFrame w win fonts editor st
 
 drawFrame :: Window -> GLFW.Window -> Fonts -> Editor -> Status -> IO ()
