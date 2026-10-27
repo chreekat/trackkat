@@ -229,7 +229,7 @@ startingSize = do
                 (_, _, _, h) <- GLFW.getMonitorWorkarea m
                 (_, scale) <- GLFW.getMonitorContentScale m
                 pure (round (fromIntegral h / max 1 scale) - 40)
-    pure (780, min 1100 fits)
+    pure (780, min 1120 fits)
 
 -- | How often the window is drawn while on the screen.
 framesPerSecond :: Double
@@ -782,7 +782,7 @@ logPane w win fr = do
         ScrolledBack -> pure ()
     withFontWithSize (mono (frFonts fr)) (realToFrac (px fr smallFontSize)) $ do
         lineStep <- getTextLineHeightWithSpacing
-        withChild "log" (ImVec2 0 (max (px fr 170) availH)) True ImGuiWindowFlags_None $ \_ -> do
+        withChild "log" (ImVec2 0 (max (px fr 160) availH)) True ImGuiWindowFlags_None $ \_ -> do
             withListClipper Nothing (toList lines') str
             end <- getCursorPosY
             height <- getWindowHeight
