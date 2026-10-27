@@ -629,6 +629,7 @@ static void paint_live(HDC dc, int width, int height)
     text_at(dc, small_font, C_DIM, x0 + S(50), S(6), S(80), S(18), DT_RIGHT, L"head");
     text_at(dc, small_font, C_DIM, x0 + S(130), S(6), S(80), S(18), DT_RIGHT, L"games see");
     int bar_l = x0 + S(226), bar_r = width - S(10);
+    text_at(dc, small_font, C_DIM, bar_l, S(6), bar_r - bar_l, S(18), DT_RIGHT, L"Rest the mouse on anything for help");
     for (int i = 0; i < 6; i++) {
         int y = S(26) + i * S(20);
         wchar_t buf[32];
@@ -1370,6 +1371,106 @@ static HWND edit(int field, int x, int y, int w)
     return control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, x, y, w, 23, ID_FIELD + field);
 }
 
+/* ---- Help ----------------------------------------------------------------- */
+
+static HWND tips; /* the tooltips shown when the mouse rests on something */
+
+static void make_tips(void)
+{
+    tips = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                           CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, main_hwnd, NULL, inst, NULL);
+    /* A width makes long tips wrap; long enough to read them. */
+    SendMessageW(tips, TTM_SETMAXTIPWIDTH, 0, S(360));
+    SendMessageW(tips, TTM_SETDELAYTIME, TTDT_AUTOPOP, 30000);
+}
+
+static void add_tip(TTTOOLINFOW *ti, const wchar_t *text)
+{
+    ti->cbSize = TTTOOLINFOW_V2_SIZE; /* understood by every version of the common controls */
+    ti->lpszText = (wchar_t *)text;
+    SendMessageW(tips, TTM_ADDTOOLW, 0, (LPARAM)ti);
+}
+
+/* Show help when the mouse rests on a control. Returns the control. */
+static HWND tip(HWND ctl, const wchar_t *text)
+{
+    wchar_t cls[16];
+    /* A label lets the mouse through to the window beneath, unless told. */
+    if (GetClassNameW(ctl, cls, 16) && _wcsicmp(cls, L"Static") == 0)
+        SetWindowLongPtrW(ctl, GWL_STYLE, GetWindowLongPtrW(ctl, GWL_STYLE) | SS_NOTIFY);
+    TTTOOLINFOW ti;
+    memset(&ti, 0, sizeof ti);
+    ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    ti.hwnd = main_hwnd;
+    ti.uId = (UINT_PTR)ctl;
+    add_tip(&ti, text);
+    return ctl;
+}
+
+/* Show help when the mouse rests on part of a window trackkat draws: its
+ * left, top, right and bottom in pixels. */
+static void tip_area(HWND w, UINT_PTR id, int l, int t, int r, int b, const wchar_t *text)
+{
+    TTTOOLINFOW ti;
+    memset(&ti, 0, sizeof ti);
+    ti.uFlags = TTF_SUBCLASS;
+    ti.hwnd = w;
+    ti.uId = id;
+    SetRect(&ti.rect, l, t, r, b);
+    add_tip(&ti, text);
+}
+
+/* Help for the parts of the live view, where paint_live draws them. */
+static void live_tips(void)
+{
+    RECT rc;
+    GetClientRect(live_hwnd, &rc);
+    int size = rc.bottom - S(16), x0 = S(8) + size + S(16), bar_l = x0 + S(226), right = rc.right - S(10);
+    int rows = S(26) + 6 * S(20), status = rows + S(6);
+    tip_area(live_hwnd, 1, S(8), S(8), S(8) + size, S(8) + size,
+             L"Your head as games see it, turned and moved as the game's view will be. The blue line shows where "
+             L"it looks.");
+    tip_area(live_hwnd, 2, x0, 0, x0 + S(130), rows,
+             L"Your head as the camera measures it, from the centre you set by recentering: degrees turned, mm "
+             L"moved.");
+    tip_area(live_hwnd, 3, x0 + S(130), 0, bar_l - S(4), rows,
+             L"What games get: your head after smoothing, the curves and any trim. While paused, or with the clip "
+             L"out of sight, it holds still.");
+    tip_area(live_hwnd, 4, bar_l, 0, right, rows,
+             L"Blue: where games see each axis, out to the end of its range (behind you, straight up, 300 mm). "
+             L"Yellow tick: your head.");
+    tip_area(live_hwnd, 5, x0, status, right, status + S(18),
+             L"Green when trackkat has the camera; grey while it looks for it; red, with the reason, when it can't "
+             L"use it. trackkat picks it up again after unplugging or sleep.");
+    tip_area(live_hwnd, 6, x0, status + S(18), right, status + S(36),
+             L"Whether the camera sees all three reflectors on the TrackClip. Out of sight, games see your head "
+             L"held where it was until it comes back.");
+    tip_area(live_hwnd, 7, x0, status + S(36), x0 + S(180), status + S(54),
+             L"Games reading your head through trackkat's NPClient. The camera's second green light shows this "
+             L"too.");
+    tip_area(live_hwnd, 8, x0 + S(180), status + S(36), right, status + S(54),
+             L"Where Trim made the new forward, in degrees as games see it (pitch positive down). Recenter clears "
+             L"it.");
+    tip_area(live_hwnd, 9, x0, status + S(54), right, status + S(72),
+             L"Live: games follow your head. Paused: games see your head held still until you press Pause again.");
+    tip_area(live_hwnd, 10, x0, status + S(72), right, rc.bottom,
+             L"Over the last second: how long trackkat took from a camera frame to games having the pose (average "
+             L"and worst), the longest wait between frames, the most stripes in a frame and garbage collections. "
+             L"For bug reports.");
+}
+
+/* What a binding list's label, field and button say. */
+static const wchar_t *const list_tips[LISTS] = {
+    L"Keys and buttons that recenter, separated by commas, such as F12, Ctrl+Mouse4 or Throttle - HOTAS Warthog "
+    L"button 23. They work from anywhere, even inside a game.",
+    L"Keys and buttons that pause, separated by commas, such as F9, Mouse5 or Joystick - HOTAS Warthog button 5. "
+    L"They work from anywhere, even inside a game.",
+    L"Keys and buttons that trim, separated by commas, such as Ctrl+F12 or Throttle - HOTAS Warthog button 24. "
+    L"Empty, as it starts, trim has no key."};
+static const wchar_t *const add_button_tip =
+    L"Click, then press the key, joystick button, or middle or side mouse button (over this window) to add. Click "
+    L"again to stop waiting.";
+
 /* Layout, in pixels at 96 dpi. The log box takes what height is left. */
 #define CLIENT_W 720
 #define CURVES_TOP 506
@@ -1378,88 +1479,141 @@ static HWND edit(int field, int x, int y, int w)
 
 static void build_window(void)
 {
+    make_tips();
     live_hwnd = CreateWindowExW(0, L"trackkat_live", L"", WS_CHILD | WS_VISIBLE, S(10), S(10), S(700), S(242),
                                 main_hwnd, NULL, inst, NULL);
+    live_tips();
 
-    recenter_button = control(L"BUTTON", L"Recenter", WS_TABSTOP | BS_PUSHBUTTON, 10, 262, 116, 28, ID_RECENTER);
-    pause_button = control(L"BUTTON", L"Pause", WS_TABSTOP | BS_PUSHBUTTON, 136, 262, 116, 28, ID_PAUSE);
-    trim_button = control(L"BUTTON", L"Trim", WS_TABSTOP | BS_PUSHBUTTON, 262, 262, 116, 28, ID_TRIM);
-    control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 388, 262, 116, 28, ID_CALIBRATE);
+    recenter_button = tip(control(L"BUTTON", L"Recenter", WS_TABSTOP | BS_PUSHBUTTON, 10, 262, 116, 28, ID_RECENTER),
+                          L"Make the way you face now straight ahead, and clear any trim. Its keys, or a game's own "
+                          L"recenter binding, do the same from anywhere.");
+    pause_button = tip(control(L"BUTTON", L"Pause", WS_TABSTOP | BS_PUSHBUTTON, 136, 262, 116, 28, ID_PAUSE),
+                       L"Freeze the view: games see your head held still until you press it again. Handy for "
+                       L"stretching, or looking away from the screen.");
+    trim_button = tip(control(L"BUTTON", L"Trim", WS_TABSTOP | BS_PUSHBUTTON, 262, 262, 116, 28, ID_TRIM),
+                      L"Make where you're looking the new forward, handy for staring at an MFD; you can still glance "
+                      L"around from there. Recenter clears it.");
+    tip(control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 388, 262, 116, 28, ID_CALIBRATE),
+        L"Learn which way is up now: click, then turn your head left and right for five seconds. trackkat learns "
+        L"it as you play anyway, so this is for after moving the camera.");
     HWND hint = control(L"STATIC", L"Closing this window keeps trackkat running in the tray.", SS_LEFT, 514, 264,
                         196, 30, 0);
     SendMessageW(hint, WM_SETFONT, (WPARAM)small_font, FALSE);
 
-    calibration_text = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 52, 0);
+    calibration_text = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 676, 52, 0),
+                           L"What trackkat has learnt from how you turn your head: how the camera is tipped, and "
+                           L"where your neck pivots. It keeps learning as you play, and keeps it in "
+                           L"trackkat.calibration; delete that to start afresh.");
 
     static const wchar_t *const list_labels[LISTS] = {L"Recenter", L"Pause", L"Trim"};
     static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM};
     for (int i = 0; i < LISTS; i++) {
         int y = 402 + i * 26;
-        label(list_labels[i], 22, y, 80);
-        field_ctl[F_RECENTER + i] = edit(F_RECENTER + i, 104, y, 470);
-        add_button[i] = control(L"BUTTON", L"Add key or button…", WS_TABSTOP | BS_PUSHBUTTON, 580, y - 1, 120,
-                                25, add_ids[i]);
+        tip(label(list_labels[i], 22, y, 80), list_tips[i]);
+        field_ctl[F_RECENTER + i] = tip(edit(F_RECENTER + i, 104, y, 470), list_tips[i]);
+        add_button[i] = tip(control(L"BUTTON", L"Add key or button…", WS_TABSTOP | BS_PUSHBUTTON, 580, y - 1, 120,
+                                    25, add_ids[i]),
+                            add_button_tip);
         button_proc = (WNDPROC)SetWindowLongPtrW(add_button[i], GWLP_WNDPROC, (LONG_PTR)add_button_proc);
     }
 
+    static const wchar_t steadiness_tip[] = L"How still the view stays while your head is still. Raise it if the "
+                                            L"view jitters; lower it if it feels floaty or drifts into place.";
+    static const wchar_t responsiveness_tip[] = L"How closely the view keeps up when you move. Raise it if the view "
+                                                L"lags behind your head; lower it if it jitters as you move slowly.";
     field_ctl[F_SMOOTHING] =
-        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 481, 92, 22, ID_FIELD + F_SMOOTHING);
-    label(L"Steadiness", 120, 481, 70);
-    field_ctl[F_STEADINESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 477, 140, 26,
-                                      ID_FIELD + F_STEADINESS);
-    slider_value[0] = label(L"", 330, 481, 40);
-    label(L"Responsiveness", 380, 481, 96);
-    field_ctl[F_RESPONSIVENESS] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 477, 140,
-                                          26, ID_FIELD + F_RESPONSIVENESS);
-    slider_value[1] = label(L"", 618, 481, 40);
+        tip(control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 481, 92, 22, ID_FIELD + F_SMOOTHING),
+            L"Calm the view while your head is still, at the cost of a little lag when you move. Off, games get "
+            L"every tremor.");
+    tip(label(L"Steadiness", 120, 481, 70), steadiness_tip);
+    field_ctl[F_STEADINESS] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 477, 140,
+                                          26, ID_FIELD + F_STEADINESS),
+                                  steadiness_tip);
+    slider_value[0] = tip(label(L"", 330, 481, 40), steadiness_tip);
+    tip(label(L"Responsiveness", 380, 481, 96), responsiveness_tip);
+    field_ctl[F_RESPONSIVENESS] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 477,
+                                              140, 26, ID_FIELD + F_RESPONSIVENESS),
+                                      responsiveness_tip);
+    slider_value[1] = tip(label(L"", 618, 481, 40), responsiveness_tip);
     for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++) {
         SendMessageW(field_ctl[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
         SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
     }
 
+    static const wchar_t plot_tip[] =
+        L"The curve: across, your head; up, the game's view. The dot is your head now; with a precision, the "
+        L"dotted line is the multiplier alone.";
+    static const wchar_t multiplier_tip[] =
+        L"How many times further the view turns or moves than your head; the line below says what that comes to. "
+        L"The arrows step it by halves.";
+    static const wchar_t precision_tip[] =
+        L"Above 0, small movements are gentler, for aiming and reading gauges, and large ones steeper, so the "
+        L"same head movement still reaches the end of the view.";
+    static const wchar_t note_tip[] =
+        L"How far your head moves for the view to reach the end of its range. A custom curve, of points, is left "
+        L"as it is unless you change its multiplier or precision.";
+    static const wchar_t text_tip[] =
+        L"The curve as trackkat.conf writes it: a multiplier such as 1:6, perhaps with a precision as in 1:6, "
+        L"precision 40, or input:output points such as 10:10 45:120, joined by straight lines from 0:0.";
     for (int i = 0; i < 6; i++) {
         int x = 22 + (i % 3) * 226, y = CURVES_TOP + (i / 3) * 70, right = x + 72;
-        curve_plot[i] = CreateWindowExW(0, L"trackkat_curve", L"", WS_CHILD | WS_VISIBLE, S(x), S(y), S(64), S(64),
-                                        main_hwnd, NULL, inst, NULL);
+        curve_plot[i] = tip(CreateWindowExW(0, L"trackkat_curve", L"", WS_CHILD | WS_VISIBLE, S(x), S(y), S(64),
+                                            S(64), main_hwnd, NULL, inst, NULL),
+                            plot_tip);
         SetWindowLongPtrW(curve_plot[i], GWLP_USERDATA, i);
-        HWND name = label(axis_names[i], right, y, 40);
+        HWND name = tip(label(axis_names[i], right, y, 40), multiplier_tip);
         SendMessageW(name, WM_SETFONT, (WPARAM)bold_font, FALSE);
-        curve_extra[i][0] = label(L"×", right + 52, y, 12);
-        multiplier_edit[i] = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, right + 66, y, 74, 23, ID_MULTIPLIER + i);
-        multiplier_step[i] = control(UPDOWN_CLASSW, L"", UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_HOTTRACK, 0, 0, 0, 0,
-                                     ID_STEP + i);
+        curve_extra[i][0] = tip(label(L"×", right + 52, y, 12), multiplier_tip);
+        multiplier_edit[i] = tip(
+            control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, right + 66, y, 74, 23, ID_MULTIPLIER + i), multiplier_tip);
+        multiplier_step[i] = tip(control(UPDOWN_CLASSW, L"", UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_HOTTRACK, 0, 0, 0,
+                                         0, ID_STEP + i),
+                                 multiplier_tip);
         SendMessageW(multiplier_step[i], UDM_SETBUDDY, (WPARAM)multiplier_edit[i], 0);
         SendMessageW(multiplier_step[i], UDM_SETRANGE32, 0, 1000);
         SendMessageW(multiplier_step[i], UDM_SETPOS32, 0, 500);
-        curve_extra[i][1] = control(L"STATIC", L"Precision", SS_LEFT, right, y + 29, 52, 18, 0);
+        curve_extra[i][1] = tip(control(L"STATIC", L"Precision", SS_LEFT, right, y + 29, 52, 18, 0), precision_tip);
         SendMessageW(curve_extra[i][1], WM_SETFONT, (WPARAM)small_font, FALSE);
-        precision_slider[i] = control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, right + 48, y + 26, 72,
-                                      22, ID_PRECISION + i);
+        precision_slider[i] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, right + 48,
+                                          y + 26, 72, 22, ID_PRECISION + i),
+                                  precision_tip);
         SendMessageW(precision_slider[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
         SendMessageW(precision_slider[i], TBM_SETPAGESIZE, 0, 10);
-        precision_value[i] = control(L"STATIC", L"0", SS_LEFT, right + 120, y + 29, 22, 18, 0);
+        precision_value[i] = tip(control(L"STATIC", L"0", SS_LEFT, right + 120, y + 29, 22, 18, 0), precision_tip);
         SendMessageW(precision_value[i], WM_SETFONT, (WPARAM)small_font, FALSE);
-        field_ctl[F_YAW + i] = edit(F_YAW + i, right, y + 25, 140);
+        field_ctl[F_YAW + i] = tip(edit(F_YAW + i, right, y + 25, 140), text_tip);
         ShowWindow(field_ctl[F_YAW + i], SW_HIDE);
-        curve_note[i] = control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, right, y + 49, 142, 16, 0);
+        curve_note[i] = tip(
+            control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, right, y + 49, 142, 16, 0), note_tip);
         SendMessageW(curve_note[i], WM_SETFONT, (WPARAM)small_font, FALSE);
     }
 
-    field_ctl[F_LEAN] = control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
-                                WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 500, 22, ID_FIELD + F_LEAN);
+    field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
+                                    WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 500, 22, ID_FIELD + F_LEAN),
+                            L"On, leaning follows the view: looking behind you, leaning left leans out of the "
+                            L"cockpit's right side. Off, leaning moves you the same way whichever way you look.");
 
-    control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, CURVES_TOP + 172, 90, 26, IDOK);
-    settings_text =
-        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, CURVES_TOP + 176, 440, 20, 0);
-    curves_as_text = control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 580, CURVES_TOP + 174, 120,
-                             22, ID_CURVES_AS_TEXT);
+    tip(control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 22, CURVES_TOP + 172, 90, 26, IDOK),
+        L"Write these settings to trackkat.conf, beside trackkat.exe; they apply at once. Only what you changed is "
+        L"rewritten, so your own edits and comments there stay.");
+    settings_text = tip(
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 124, CURVES_TOP + 176, 440, 20, 0),
+        L"Whether the last Save worked, and if not, why.");
+    curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 580, CURVES_TOP + 174,
+                                 120, 22, ID_CURVES_AS_TEXT),
+                         L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "
+                         L"trackkat.conf explains how.");
 
     log_hint = control(L"STATIC", L"What trackkat reports, but not the status shown above. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
                        460, 20, 0);
     SendMessageW(log_hint, WM_SETFONT, (WPARAM)small_font, FALSE);
-    copy_button = control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 600, LOG_TOP + 18, 100, 24, ID_COPY_LOG);
-    log_box = control(L"EDIT", L"", WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 20, LOG_TOP + 48, 680,
-                      CLIENT_H - LOG_TOP - 68, 0);
+    copy_button = tip(
+        control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 600, LOG_TOP + 18, 100, 24, ID_COPY_LOG),
+        L"Copy the whole log, to paste into a bug report.");
+    log_box = tip(control(L"EDIT", L"", WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 20, LOG_TOP + 48,
+                          680, CLIENT_H - LOG_TOP - 68, 0),
+                  L"What trackkat reports: recentering, trim, calibration, joysticks and the buttons pressed on them, "
+                  L"settings reloads, and errors.");
     SendMessageW(log_box, WM_SETFONT, (WPARAM)mono_font, FALSE);
     SendMessageW(log_box, EM_SETLIMITTEXT, LOG_MAX * 2, 0);
 
