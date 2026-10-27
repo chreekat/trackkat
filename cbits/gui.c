@@ -1159,18 +1159,44 @@ static void add_binding(int field, const wchar_t *binding)
     SetWindowTextW(field_ctl[field], joined);
 }
 
-/* A button label naming a binding list's first binding. */
-static void binding_label(wchar_t *label, size_t size, const wchar_t *action, const wchar_t *bindings)
+/* Whether a label fits on a button, in the button's font. */
+static int label_fits(HWND button, const wchar_t *label)
 {
-    wchar_t first[FIELD_MAX];
-    copy_text(first, FIELD_MAX, bindings);
-    wchar_t *comma = wcschr(first, L',');
-    if (comma)
-        *comma = 0;
-    if (first[0])
-        _snwprintf(label, size, comma ? L"%ls (%ls, …)" : L"%ls (%ls)", action, first);
-    else
-        _snwprintf(label, size, L"%ls", action);
+    RECT r;
+    GetClientRect(button, &r);
+    HDC dc = GetDC(button);
+    HGDIOBJ old = SelectObject(dc, (HFONT)SendMessageW(button, WM_GETFONT, 0, 0));
+    SIZE extent;
+    GetTextExtentPoint32W(dc, label, (int)wcslen(label), &extent);
+    SelectObject(dc, old);
+    ReleaseDC(button, dc);
+    return extent.cx <= r.right - r.left - S(12);
+}
+
+/* A label for a button, naming the first of its bindings that fits on it,
+ * or only that it has some if none fits. */
+static void binding_label(HWND button, wchar_t *label, size_t size, const wchar_t *action, const wchar_t *bindings)
+{
+    wchar_t list[FIELD_MAX];
+    copy_text(list, FIELD_MAX, bindings);
+    int several = wcschr(list, L',') != NULL;
+    for (wchar_t *b = list; *b;) {
+        wchar_t *end = wcschr(b, L',');
+        if (end)
+            *end = 0;
+        while (*b == L' ')
+            b++;
+        if (*b) {
+            _snwprintf(label, size, several ? L"%ls (%ls, …)" : L"%ls (%ls)", action, b);
+            label[size - 1] = 0;
+            if (label_fits(button, label))
+                return;
+        }
+        if (!end)
+            break;
+        b = end + 1;
+    }
+    _snwprintf(label, size, list[0] ? L"%ls (…)" : L"%ls", action);
     label[size - 1] = 0;
 }
 
@@ -1198,10 +1224,11 @@ static void show_field(int i, const wchar_t *value)
     } else
         SetWindowTextW(field_ctl[i], value);
     if (i == F_RECENTER || i == F_PAUSE || i == F_TRIM) {
+        HWND button = i == F_RECENTER ? recenter_button : i == F_TRIM ? trim_button : pause_button;
         wchar_t label[FIELD_MAX + 32];
-        binding_label(label, FIELD_MAX + 32,
+        binding_label(button, label, FIELD_MAX + 32,
                       i == F_RECENTER ? L"Recenter" : i == F_TRIM ? L"Trim" : seen.paused ? L"Resume" : L"Pause", value);
-        SetWindowTextW(i == F_RECENTER ? recenter_button : i == F_TRIM ? trim_button : pause_button, label);
+        SetWindowTextW(button, label);
     }
 }
 
@@ -1342,7 +1369,7 @@ static void refresh(void)
         SetWindowTextW(settings_text, st.settings_message);
     if (st.paused != seen.paused || fields & (1u << F_PAUSE)) {
         wchar_t label[FIELD_MAX + 32];
-        binding_label(label, FIELD_MAX + 32, st.paused ? L"Resume" : L"Pause", field_text[F_PAUSE]);
+        binding_label(pause_button, label, FIELD_MAX + 32, st.paused ? L"Resume" : L"Pause", field_text[F_PAUSE]);
         SetWindowTextW(pause_button, label);
     }
     seen = st;
