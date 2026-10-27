@@ -75,30 +75,29 @@ setNPClientPath dir =
         (\rc -> if rc == 0 then Right () else Left (fromIntegral rc)) <$> c_set_npclient_path p
 
 -- | An action bound to keys and joystick buttons.
-data Hotkey = RecenterKey | PauseKey
-    deriving (Eq, Show)
+data Hotkey = RecenterKey | PauseKey | TrimKey
+    deriving (Eq, Show, Enum, Bounded)
 
 -- | What is watched for hotkeys.
 data Watched = Keyboard | Joysticks
     deriving (Eq, Show)
 
--- | Bind the recenter and pause hotkeys, and watch for them anywhere in
--- Windows without hiding them from other programs. Returns what can't be
--- watched, with Windows error codes.
-startHotkeys :: [Binding] -> [Binding] -> IO [(Watched, Int)]
-startHotkeys recenter pause = do
-    rebindHotkeys recenter pause
+-- | Bind the hotkeys, each to its keys and buttons, and watch for them
+-- anywhere in Windows without hiding them from other programs. Returns what
+-- can't be watched, with Windows error codes.
+startHotkeys :: (Hotkey -> [Binding]) -> IO [(Watched, Int)]
+startHotkeys bindings = do
+    rebindHotkeys bindings
     alloca $ \joystickError -> do
         keyboardError <- c_hotkeys_start joystickError
         jerr <- peek joystickError
         pure [(w, fromIntegral e) | (w, e) <- [(Keyboard, keyboardError), (Joysticks, jerr)], e /= 0]
 
--- | Change the recenter and pause hotkeys.
-rebindHotkeys :: [Binding] -> [Binding] -> IO ()
-rebindHotkeys recenter pause = do
+-- | Change the hotkeys' keys and buttons.
+rebindHotkeys :: (Hotkey -> [Binding]) -> IO ()
+rebindHotkeys bindings = do
     c_bindings_clear
-    mapM_ (bind RecenterKey) recenter
-    mapM_ (bind PauseKey) pause
+    mapM_ (\k -> mapM_ (bind k) (bindings k)) [minBound .. maxBound]
     c_bindings_apply
   where
     bind k (Key mods key) = c_bind_key (hotkeyBit k) (fromIntegral (modifierMask mods)) (fromIntegral (virtualKey key))
@@ -109,12 +108,14 @@ rebindHotkeys recenter pause = do
 takeHotkeys :: IO [Hotkey]
 takeHotkeys = do
     pressed <- c_hotkeys_take
-    pure [k | k <- [RecenterKey, PauseKey], pressed .&. hotkeyBit k /= 0]
+    pure [k | k <- [minBound .. maxBound], pressed .&. hotkeyBit k /= 0]
 
--- | How cbits/joystick.h numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE.
+-- | How cbits/joystick.h numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE,
+-- HOTKEY_TRIM.
 hotkeyBit :: Hotkey -> CInt
 hotkeyBit RecenterKey = 1
 hotkeyBit PauseKey = 2
+hotkeyBit TrimKey = 4
 
 -- | Something that happened to a joystick: it was attached (or found at
 -- start), detached, or one of its buttons was pressed.

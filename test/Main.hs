@@ -267,7 +267,7 @@ main = do
         run r frames = go newShaper (zip [0, 1 / 120 ..] frames)
           where
             go _ [] = []
-            go sh ((t, p) : rest) = let (out, sh') = shape r t p sh in yaw out : go sh' rest
+            go sh ((t, p) : rest) = let (out, sh') = shape r NoTrim t p sh in yaw out : go sh' rest
     check ("one-frame spike ignored: " ++ show (run plain (map at [0, 1, 60, 2, 3]))) $
         run plain (map at [0, 1, 60, 2, 3]) == [0, 1, 1, 2, 3]
     check ("persistent jump accepted: " ++ show (run plain (map at [0, 60, 61, 62, 63]))) $
@@ -428,12 +428,37 @@ main = do
     check "looking ahead, leaning is unchanged" $ abs (tx ahead - 4) < 1e-12 && abs (tz ahead + 7) < 1e-12
     -- The lean turns by the yaw the game shows, after the curves.
     let viewing = plain{yawCurve = Points [(1, 6)], lean = LeanWithView}
-        (shapedBack, _) = shape viewing 0 HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+        (shapedBack, _) = shape viewing NoTrim 0 HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     check ("lean follows the curved yaw " ++ show shapedBack) $
         abs (yaw shapedBack - 160) < 1e-9 && abs (tx shapedBack - 10 * cos (deg 160)) < 1e-9 && abs (tz shapedBack + 10 * sin (deg 160)) < 1e-9
     check "lean setting" $ fmap (lean . response) (parseConfig "lean = screen\n") == Right LeanWithScreen
     check "lean default" $ lean (response defaultConfig) == LeanWithView
     check "bad lean" $ parseConfig "lean = sideways" == Left "line 1: lean is view or screen"
+
+    -- Trimming: where the view looks becomes forward, until recentering.
+    let trimmed t y p = fst (shape plain t 0 HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
+        axes hp = [yaw hp, pitch hp, roll hp, tx hp, ty hp, tz hp]
+        lookingAt = trimmed NoTrim (-40) 20
+        once = trimTo lookingAt
+    check ("trim takes the view " ++ show once) $ once == Trim (-40) 20
+    check "trim adds to the view" $ axes (trimmed once 5 (-5)) == [-35, 15, 3, 4, 5, 6]
+    let twice = trimTo (trimmed once (-10) 10)
+    check ("trims add up " ++ show twice) $ twice == Trim (-50) 30
+    check "untrimmed after recentering" $ axes (trimmed NoTrim 5 (-5)) == [5, -5, 3, 4, 5, 6]
+    check "trimmed yaw wraps" $ yaw (trimmed (Trim 170 0) 30 0) == -160 && yaw (trimmed (Trim (-170) 0) (-30) 0) == 160
+    check "trimmed pitch stops straight up or down" $ pitch (trimmed (Trim 0 70) 0 40) == 90 && pitch (trimmed (Trim 0 (-70)) 0 (-40)) == -90
+    check "trim of a view turned past behind" $ trimTo HeadPose{yaw = 200, pitch = 100, roll = 0, tx = 0, ty = 0, tz = 0} == Trim (-160) 90
+    let (trimmedLean, _) = shape viewing (Trim 150 0) 0 HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+    check ("lean follows the trimmed yaw " ++ show trimmedLean) $
+        abs (yaw trimmedLean - 160) < 1e-9 && abs (tx trimmedLean - 10 * cos (deg 160)) < 1e-9 && abs (tz trimmedLean + 10 * sin (deg 160)) < 1e-9
+    check "trim unbound by default" $ trimBindings defaultConfig == []
+    check "trim bindings" $
+        fmap trimBindings (parseConfig "trim = Ctrl+F12, Stick button 3\n") == Right [Key [Ctrl] "F12", JoystickButton (Joystick "Stick" 1) 3]
+    check "empty trim" $ parseConfig "trim =\n" == Right defaultConfig && parseConfig "trim =   # none\n" == Right defaultConfig
+    check "empty trim rendered" $ "trim =" `elem` lines (renderConfig defaultConfig)
+    let withTrim = defaultConfig{trimBindings = [Key [] "F11"]}
+    check "trim round-trips" $ parseConfig (renderConfig withTrim) == Right withTrim
+    check "trim change described" $ describeChanges defaultConfig withTrim == "Settings reloaded: trim = F11"
 
     -- Drift: the centre following where the head rests. Poses at 120 a
     -- second along a path, with a little noise.
@@ -461,7 +486,7 @@ main = do
         abs (meanOf (out tx) (during 29 30 shifted) - 30) < 1
     check ("the centre moves smoothly " ++ show (biggestStep (offsets shifted))) $ biggestStep (offsets shifted) < 0.01
     -- Shaped for a game, the drift is the only difference, and it is smooth.
-    let shapedAll rows = snd (mapAccumL (\sh (t, hp) -> let (p, sh') = shape (response defaultConfig) t hp sh in (sh', [yaw p, pitch p, roll p, tx p, ty p, tz p])) newShaper rows)
+    let shapedAll rows = snd (mapAccumL (\sh (t, hp) -> let (p, sh') = shape (response defaultConfig) NoTrim t hp sh in (sh', [yaw p, pitch p, roll p, tx p, ty p, tz p])) newShaper rows)
         gameDifference = zipWith (zipWith (-)) (shapedAll [(t, hp) | (t, hp, _) <- shifted]) (shapedAll [(t, o) | (t, _, o) <- shifted])
     check ("the game sees no jump " ++ show (biggestStep gameDifference)) $ biggestStep gameDifference < 0.05
 
@@ -523,8 +548,8 @@ main = do
     -- Editing the settings file from trackkat's window.
     let userFile = "# mine\npause=Pause # TrackIR style\nsmoothing = off\nsteadiness = 70\npause = F9\n"
     check ("values as written: " ++ show (settingValues userFile)) $
-        take 5 (settingValues userFile)
-            == [("recenter", "F12"), ("pause", "F9"), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
+        take 6 (settingValues userFile)
+            == [("recenter", "F12"), ("pause", "F9"), ("trim", ""), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
     check "names in file order" $ settingNames == map fst (settingValues "")
     check "unchanged values leave the file alone" $ editSettings (settingValues userFile) userFile == Right userFile
     check ("edit keeps comments: " ++ show (editSettings [("pause", "Ctrl+F9"), ("yaw", "1:5")] userFile)) $
@@ -536,6 +561,8 @@ main = do
         editSettings [("steadiness", "101")] userFile == Left "steadiness: steadiness is a number from 0 to 100"
     check "edit reports the rest of the file" $
         editSettings [("pause", "F8")] "bogus\n" == Left "line 1: expected name = value"
+    check "trim edited" $ editSettings [("trim", "Ctrl+F12")] userFile == Right (userFile ++ "trim = Ctrl+F12\n")
+    check "trim unbound again" $ editSettings [("trim", "")] "trim = F1 # mine\n" == Right "trim = # mine\n"
     check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
     check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
 

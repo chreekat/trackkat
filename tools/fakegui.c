@@ -16,6 +16,7 @@ void hts_gui_frame(int blobs, float yaw, float pitch, float roll, float x, float
                    float vpitch, float vroll, float vx, float vy, float vz);
 void hts_gui_camera(int camera, const wchar_t *text);
 void hts_gui_paused(int paused);
+void hts_gui_trim(int trimmed, float yaw, float pitch);
 void hts_gui_games(int games);
 void hts_gui_stats(const wchar_t *text);
 void hts_gui_calibration(const wchar_t *text);
@@ -28,9 +29,9 @@ int hts_gui_window_open(void);
 int hts_gui_capturing(void);
 void hts_gui_add_binding(int which, const wchar_t *binding);
 
-static const wchar_t *const names[] = {L"recenter", L"pause", L"smoothing", L"steadiness", L"responsiveness",
+static const wchar_t *const names[] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness", L"responsiveness",
                                        L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"drift"};
-static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"on", L"90", L"45", L"1:6, precision 40",
+static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"", L"on", L"90", L"45", L"1:6, precision 40",
                                         L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"on"};
 
 int main(int argc, char **argv)
@@ -40,10 +41,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "could not start the GUI\n");
         return 1;
     }
-    for (int i = 0; i < 13; i++)
+    for (int i = 0; i < 14; i++)
         hts_gui_set_setting(names[i], values[i]);
     hts_gui_log(L"Games will load NPClient from C:\\Games\\trackkat");
-    hts_gui_log(L"Recenter: F12   Pause: Ctrl+F9   (Enter also recenters, c Enter calibrates level)");
+    hts_gui_log(L"Recenter: F12   Pause: Ctrl+F9   Trim: none   (Enter also recenters, c Enter calibrates level)");
     hts_gui_log(L"Tracking.");
     hts_gui_calibration(L"Level learnt: camera tipped 12.4 degrees down and 0.8 to its right, from 1460 degrees of head "
                         L"turning.\nNeck pivot learnt: 92 mm below the clip, 71 behind it and 3 to its left, from 214 head "
@@ -71,8 +72,13 @@ int main(int argc, char **argv)
             paused = !paused;
             hts_gui_paused(paused);
         }
+        /* Trimming looks at the left MFD. */
+        if (acts & 0x80) {
+            hts_gui_trim(1, -42, 18);
+            hts_gui_log(L"Trimmed: forward is now yaw -42 pitch +18.");
+        }
         if (acts & 0x10) {
-            for (int f = 0; f < 13; f++) {
+            for (int f = 0; f < 14; f++) {
                 wchar_t v[256];
                 hts_gui_saved_setting(names[f], v, 256);
                 printf("  %ls = %ls\n", names[f], v);
@@ -80,10 +86,11 @@ int main(int argc, char **argv)
             hts_gui_settings_message(L"Saved.");
         }
         /* Any key chosen stands for Ctrl+F7, as Haskell would name it. */
-        if (acts & 0x60) {
-            printf("  key %x\n", hts_gui_chosen_key(acts & 0x40 ? 1 : 0));
-            hts_gui_add_binding(acts & 0x40 ? 1 : 0, L"Ctrl+F7");
-        }
+        for (int list = 0; list < 3; list++)
+            if (acts & (list == 2 ? 0x100 : 0x20 << list)) {
+                printf("  key %x\n", hts_gui_chosen_key(list));
+                hts_gui_add_binding(list, L"Ctrl+F7");
+            }
         if (acts & 0x8)
             break;
         Sleep(16);

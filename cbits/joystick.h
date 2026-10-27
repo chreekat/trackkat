@@ -11,6 +11,7 @@
 /* Actions, as bits of what hts_hotkeys_take returns. */
 #define HOTKEY_RECENTER 1
 #define HOTKEY_PAUSE 2
+#define HOTKEY_TRIM 4
 
 /* joystick.c: ask for every joystick's input, and to hear of joysticks
  * coming and going, through the calling thread's messages. Returns 0 or a
