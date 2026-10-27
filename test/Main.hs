@@ -522,6 +522,14 @@ main = do
 
     check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
+    -- The clip's sides are the wearer's; the model's are the camera's.
+    case clipShape 70 100 120 of
+        Just cl ->
+            let m = clipModel cl
+             in check "clip sides are the wearer's" $
+                    abs (norm (mTop m ^-^ mLeft m) - 120) < 1e-9 && abs (norm (mTop m ^-^ mRight m) - 100) < 1e-9
+        Nothing -> check "asymmetric clip" False
+
     -- The example settings file in the repository is the one trackkat
     -- writes when there is none. TRACKKAT_ACCEPT=1 rewrites it.
     let example = "trackkat.conf.example"

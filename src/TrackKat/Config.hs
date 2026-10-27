@@ -47,9 +47,9 @@ data Config = Config
     }
     deriving (Eq, Show)
 
--- | The headset clip's triangle of reflectors, as distances in mm: left to
--- right, left to top, right to top. Only 'clipShape' makes one, so its
--- model always exists.
+-- | The headset clip's triangle of reflectors, as distances in mm, left and
+-- right being the wearer's: left to right, left to top, right to top. Only
+-- 'clipShape' makes one, so its model always exists.
 data ClipShape = ClipShape (Double, Double, Double) Model
     deriving (Show)
 
@@ -57,10 +57,12 @@ instance Eq ClipShape where
     a == b = clipDistances a == clipDistances b
 
 -- | A clip from its three distances, if they are positive and form a
--- triangle. The top reflector's post is taken to lean back 45 degrees.
+-- triangle. The top reflector's post is taken to lean back 45 degrees. The
+-- camera faces the wearer, so the model, which goes by the camera's left
+-- and right, has the wearer's sides swapped.
 clipShape :: Double -> Double -> Double -> Maybe ClipShape
 clipShape lr lt rt
-    | all (> 0) [lr, lt, rt] = ClipShape (lr, lt, rt) <$> triangle 45 lr lt rt
+    | all (> 0) [lr, lt, rt] = ClipShape (lr, lt, rt) <$> triangle 45 lr rt lt
     | otherwise = Nothing
 
 clipDistances :: ClipShape -> (Double, Double, Double)
@@ -263,10 +265,11 @@ renderConfig c =
         , "# whichever way you look."
         , "lean = " ++ renderLean (lean r)
         , ""
-        , "# clip: the headset clip's triangle of reflectors, as the camera sees"
-        , "# it, in mm, measured centre to centre: left to right along the"
-        , "# headband, left to top, then right to top. If the clip's post gets"
-        , "# bent, measure it again and change this, or the view will be off."
+        , "# clip: the headset clip's triangle of reflectors, in mm, measured"
+        , "# centre to centre, with left and right as you wear it: your left to"
+        , "# your right along the headband, your left to the top, then your"
+        , "# right to the top. If the clip's post gets bent, measure it again"
+        , "# and change this, or the view will be off."
         , "clip = " ++ renderClip (clip c)
         ]
   where
@@ -307,7 +310,7 @@ renderLean LeanWithScreen = "screen"
 parseClip :: String -> Either String ClipShape
 parseClip value = case traverse parseNumber (words (map (\ch -> if ch == ',' then ' ' else ch) value)) of
     Just [lr, lt, rt] -> maybe (Left "the clip's three distances don't make a triangle") Right (clipShape lr lt rt)
-    _ -> Left "clip is three distances in mm, left to right, left to top and right to top, like 70 110 110"
+    _ -> Left "clip is three distances in mm, as you wear it: left to right, left to top and right to top, like 70 110 110"
 
 renderClip :: ClipShape -> String
 renderClip cl = let (lr, lt, rt) = clipDistances cl in unwords (map renderNumber [lr, lt, rt])

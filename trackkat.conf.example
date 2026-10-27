@@ -84,8 +84,9 @@ z = 1:2.5
 # whichever way you look.
 lean = view
 
-# clip: the headset clip's triangle of reflectors, as the camera sees
-# it, in mm, measured centre to centre: left to right along the
-# headband, left to top, then right to top. If the clip's post gets
-# bent, measure it again and change this, or the view will be off.
+# clip: the headset clip's triangle of reflectors, in mm, measured
+# centre to centre, with left and right as you wear it: your left to
+# your right along the headband, your left to the top, then your
+# right to the top. If the clip's post gets bent, measure it again
+# and change this, or the view will be off.
 clip = 70 110 110
