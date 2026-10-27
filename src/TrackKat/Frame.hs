@@ -9,6 +9,8 @@ module TrackKat.Frame (
     Stripe (..),
     Packet (..),
     Blob (..),
+    blobAxes,
+    blobElongation,
     parseStream,
     decodeStripe,
     encodeStripe,
@@ -197,10 +199,28 @@ decodeShortStripe p =
 data Blob = Blob
     { blobX :: !Double
     , blobY :: !Double
+    -- ^ brightness-weighted centroid
     , blobPoints :: !Int
     , blobWeight :: !Int
+    , blobVarX :: !Double
+    -- ^ variance of the lit pixels' x, in pixels squared
+    , blobVarY :: !Double
+    , blobCovXY :: !Double
     }
     deriving (Eq, Show)
+
+-- | A blob's spread along its longest and shortest axes (variances, in
+-- pixels squared), and the direction of the longest axis in radians from
+-- the image's x axis toward its y axis.
+blobAxes :: Blob -> (Double, Double, Double)
+blobAxes b = (mid + half, max 0 (mid - half), 0.5 * atan2 (2 * blobCovXY b) (blobVarX b - blobVarY b))
+  where
+    mid = (blobVarX b + blobVarY b) / 2
+    half = sqrt (((blobVarX b - blobVarY b) / 2) ^ (2 :: Int) + blobCovXY b ^ (2 :: Int))
+
+-- | How much longer a blob is than it is wide: 1 for a round one.
+blobElongation :: Blob -> Double
+blobElongation b = let (major, minor, _) = blobAxes b in sqrt (major / max minor (1 / 12))
 
 -- | Join stripes that touch (adjacent lines, overlapping columns) into blobs,
 -- keep those with between @minPts@ and @maxPts@ pixels, heaviest first.
@@ -224,19 +244,30 @@ toBlob :: [Stripe] -> Blob
 toBlob ss
     | w > 0 =
         Blob
-            (sumOf (\s -> stSum s * stStart s + stSumX s) / w')
-            (sumOf (\s -> stSum s * stLine s) / w')
+            (sumOf (\s -> fromIntegral (stSum s * stStart s + stSumX s)) / w')
+            (sumOf (\s -> fromIntegral (stSum s * stLine s)) / w')
             pts
             w
+            varX
+            varY
+            covXY
     | otherwise =
-        Blob
-            (sumOf (\s -> stPoints s * (2 * stStart s + stPoints s - 1)) / (2 * p'))
-            (sumOf (\s -> stPoints s * stLine s) / p')
-            pts
-            0
+        Blob meanX meanY pts 0 varX varY covXY
   where
-    sumOf f = fromIntegral (sum (map f ss)) :: Double
+    sumOf f = sum (map f ss) :: Double
     w = sum (map stSum ss)
     w' = fromIntegral w
     pts = sum (map stPoints ss)
     p' = fromIntegral pts
+    -- Moments of the lit pixels, each counted once: a stripe's pixels are
+    -- at x = start .. start + n - 1 on its line.
+    count s = fromIntegral (stPoints s)
+    first s = fromIntegral (stStart s)
+    line s = fromIntegral (stLine s)
+    xs s = let n = count s in n * first s + n * (n - 1) / 2
+    xxs s = let n = count s; a = first s in n * a * a + a * n * (n - 1) + (n - 1) * n * (2 * n - 1) / 6
+    meanX = sumOf xs / p'
+    meanY = sumOf (\s -> count s * line s) / p'
+    varX = sumOf xxs / p' - meanX * meanX
+    varY = sumOf (\s -> count s * line s * line s) / p' - meanY * meanY
+    covXY = sumOf (\s -> line s * xs s) / p' - meanX * meanY
