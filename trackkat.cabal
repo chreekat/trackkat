@@ -42,13 +42,13 @@ library
 
   if os(windows)
     exposed-modules:
-      TrackKat.Gui
+      TrackKat.Tray
       TrackKat.Windows
     c-sources:
-      cbits/gui.c
       cbits/joystick.c
       cbits/npclient_common.c
       cbits/trackir.c
+      cbits/tray.c
       cbits/windows.c
     include-dirs:    cbits
     extra-libraries: advapi32 gdi32 hid shell32 user32
@@ -108,6 +108,7 @@ executable trackkat
     , filepath
     , time
     , trackkat
+    , trackkat:window
 
   if !os(windows)
     buildable: False

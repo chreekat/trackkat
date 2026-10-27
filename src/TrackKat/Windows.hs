@@ -15,16 +15,19 @@ module TrackKat.Windows (
     StandInProblem (..),
     startTrackIRStandIn,
     takeTrackIRGame,
-    Hotkey (..),
     Watched (..),
     startHotkeys,
     rebindHotkeys,
     takeHotkeys,
+    Captured (..),
+    captureKey,
+    stopCapture,
+    takeCaptured,
     JoystickEvent (..),
     takeJoystickEvents,
 ) where
 
-import Data.Bits ((.&.))
+import Data.Bits (shiftR, (.&.))
 import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..))
 import Foreign.Marshal.Alloc (alloca)
@@ -32,7 +35,7 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
 
-import TrackKat.Config (Binding (..), Hotkey (..), Joystick (..), modifierMask, virtualKey)
+import TrackKat.Config (Binding (..), Hotkey (..), Joystick (..), bindingFromCodes, modifierMask, virtualKey)
 import TrackKat.GamePose
 
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
@@ -52,6 +55,9 @@ foreign import ccall unsafe "hts_bind_button" c_bind_button :: CInt -> CWString 
 foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
 foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
 foreign import ccall unsafe "hts_hotkeys_take" c_hotkeys_take :: IO CInt
+foreign import ccall unsafe "hts_capture_start" c_capture_start :: IO ()
+foreign import ccall unsafe "hts_capture_stop" c_capture_stop :: IO ()
+foreign import ccall unsafe "hts_capture_take" c_capture_take :: IO CInt
 foreign import ccall unsafe "hts_joystick_event" c_joystick_event :: CWString -> CInt -> Ptr CInt -> Ptr CInt -> IO CInt
 
 -- | Create the shared memory games read from. Left is a Windows error code.
@@ -153,6 +159,31 @@ takeHotkeys :: IO [Hotkey]
 takeHotkeys = do
     pressed <- c_hotkeys_take
     pure [k | k <- [minBound .. maxBound], pressed .&. hotkeyBit k /= 0]
+
+-- | A key or mouse button pressed to bind.
+data Captured
+    = Captured Binding
+    | -- | a key trackkat has no name for
+      Unbindable
+    deriving (Eq, Show)
+
+-- | Take the next key, or middle or side mouse button, pressed anywhere,
+-- with the modifiers held, for 'takeCaptured'. It does what it is bound to
+-- only once capturing stops.
+captureKey :: IO ()
+captureKey = c_capture_start
+
+stopCapture :: IO ()
+stopCapture = c_capture_stop
+
+-- | The key captured, once one has been pressed, which stops capturing.
+takeCaptured :: IO (Maybe Captured)
+takeCaptured = do
+    code <- fromIntegral <$> c_capture_take
+    pure $
+        if code == 0
+            then Nothing
+            else Just (maybe Unbindable Captured (bindingFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
 
 -- | How cbits/joystick.h numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE,
 -- HOTKEY_TRIM.

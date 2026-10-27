@@ -14,6 +14,7 @@ module TrackKat.Config (
     editSettings,
     parseCurve,
     Hotkey (..),
+    hotkeyBindings,
     hotkeySetting,
     ClipShape,
     clipShape,
@@ -62,6 +63,12 @@ data NPClient = TrackKatNPClient | TrackIRNPClient
 -- | An action bound to keys and joystick buttons.
 data Hotkey = RecenterKey | PauseKey | TrimKey
     deriving (Eq, Show, Enum, Bounded)
+
+-- | The keys and buttons bound to each hotkey.
+hotkeyBindings :: Config -> Hotkey -> [Binding]
+hotkeyBindings c RecenterKey = recenterBindings c
+hotkeyBindings c PauseKey = pauseBindings c
+hotkeyBindings c TrimKey = trimBindings c
 
 -- | The name of the setting listing a hotkey's keys and buttons.
 hotkeySetting :: Hotkey -> String

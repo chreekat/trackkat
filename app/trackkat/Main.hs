@@ -6,7 +6,7 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, withAsync)
+import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, waitCatch, withAsync, withAsyncBound)
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
 import Control.Monad (forM_, forever, unless, when)
@@ -28,12 +28,16 @@ import TrackKat.Camera
 import TrackKat.Config
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
-import TrackKat.Gui
+import TrackKat.Icon (statusIcon, statusTip)
 import TrackKat.Pose
 import TrackKat.Response
-import TrackKat.Stats
+import TrackKat.Stats hiding (Window)
+import qualified TrackKat.Stats as Stats
+import TrackKat.Status
 import TrackKat.Tracker
+import qualified TrackKat.Tray as Tray
 import qualified TrackKat.USB as USB
+import TrackKat.Window
 import TrackKat.Windows
 
 -- | How trackkat was started.
@@ -60,172 +64,220 @@ main = do
     dir <- takeDirectory <$> getExecutablePath
     first <- singleInstance
     unless first $ do
-        shown <- showRunning
+        shown <- Tray.showRunning
         putStrLn (if shown then "trackkat is already running; showing its window." else "trackkat is already running.")
         exitFailure
-    let window = case start of
-            ByHand -> WindowShown
-            ByGame -> WindowHidden
-    bracket_ (startGui window >>= either (\e -> say ("Can't show a window or tray icon (error " ++ show e ++ ").")) pure) stopGui $ do
+    w <- newWindow
+    let note = sayIn w
+    bracket_ (Tray.startTray >>= either (\e -> note ("Can't show a tray icon (error " ++ show e ++ ").")) pure) Tray.stopTray $ do
         let settingsFile = dir </> "trackkat.conf"
-        (config, stamp) <- loadConfig settingsFile
-        openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
+        (config, stamp) <- loadConfig w settingsFile
+        openShared >>= either (\e -> note ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
         startTrackIRStandIn >>= \case
             Right () -> pure ()
             Left TrackIRSoftwareRunning ->
-                say "NaturalPoint's TrackIR software is running: quit it, or games loading its NPClient get their pose from it, not trackkat."
-            Left (StandInFailed e) -> say ("Can't stand in for NaturalPoint's software (error " ++ show e ++ ").")
+                note "NaturalPoint's TrackIR software is running: quit it, or games loading its NPClient get their pose from it, not trackkat."
+            Left (StandInFailed e) -> note ("Can't stand in for NaturalPoint's software (error " ++ show e ++ ").")
         publish still
-        pointGames dir (npclient config)
+        pointGames note dir (npclient config)
         unwatched <- startHotkeys (hotkeyBindings config)
         forM_ unwatched $ \case
-            (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
-            (Mouse, e) -> say ("Can't watch the mouse for buttons (error " ++ show e ++ ").")
-            (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
-        say $
+            (Keyboard, e) -> note ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
+            (Mouse, e) -> note ("Can't watch the mouse for buttons (error " ++ show e ++ ").")
+            (Joysticks, e) -> note ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
+        note $
             printf
                 "Recenter: %s   Pause: %s   Trim: %s   (Enter also recenters, c Enter calibrates level)"
                 (keysAndButtons (recenterBindings config))
                 (keysAndButtons (pauseBindings config))
                 (keysAndButtons (trimBindings config))
         let calibrationFile = dir </> "trackkat.calibration"
-        session <- newSession config =<< loadCalibration calibrationFile
+        session <- newSession w config =<< loadCalibration w calibrationFile
         showButtons session
-        withAsync (console session) $ \_ ->
-            withAsync (watchSettings settingsFile session stamp config) $ \_ ->
-                withAsync (joysticks session) $ \_ ->
-                    withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
-                        withAsync (cameraLoop session) $ \camera -> do
-                            link camera
-                            controls start settingsFile session
-                            -- Let the camera go, turning its lights off, but
-                            -- not for long: after sleep a USB read may never
-                            -- return.
-                            _ <- timeout 3000000 (cancel camera)
-                            -- Reading the console can't be interrupted on
-                            -- Windows, so rather than wait for the console
-                            -- thread, leave at once.
-                            hFlush stdout
-                            quitProcess
+        let visibility = case start of
+                ByHand -> OnScreen
+                ByGame -> InTray
+        -- The window, on an OS thread of its own as GLFW and OpenGL need.
+        -- Tracking carries on without it.
+        withAsyncBound (runWindow w visibility) $ \window ->
+            withAsync (waitCatch window >>= note . windowStopped) $ \_ ->
+                withAsync (console session) $ \_ ->
+                    withAsync (watchSettings settingsFile session stamp config) $ \_ ->
+                        withAsync (joysticks session) $ \_ ->
+                            withAsync (saveCalibrations w calibrationFile (sSaving session)) $ \_ ->
+                                withAsync (cameraLoop session) $ \camera -> do
+                                    link camera
+                                    controls start settingsFile session
+                                    -- Let the camera go, turning its lights
+                                    -- off, but not for long: after sleep a
+                                    -- USB read may never return.
+                                    _ <- timeout 3000000 (cancel camera)
+                                    -- Reading the console can't be
+                                    -- interrupted on Windows, so rather
+                                    -- than wait for the console thread,
+                                    -- leave at once.
+                                    hFlush stdout
+                                    Tray.quitProcess
+  where
+    windowStopped = \case
+        Right (WindowFailure why) -> "Can't show trackkat's window: " ++ why ++ ". Tracking carries on, with the tray icon."
+        Left e -> "trackkat's window stopped: " ++ displayException e ++ ". Tracking carries on, with the tray icon."
 
 -- | Tell games to load the NPClient chosen, trackkat's from its own folder,
 -- falling back to that if NaturalPoint's isn't installed.
-pointGames :: FilePath -> NPClient -> IO ()
-pointGames dir choice = do
+pointGames :: (String -> IO ()) -> FilePath -> NPClient -> IO ()
+pointGames say' dir choice = do
     found <- case choice of
         TrackKatNPClient -> pure dir
         TrackIRNPClient ->
             findTrackIRFolder >>= \case
                 Just folder -> pure folder
                 Nothing -> do
-                    say "npclient = trackir, but NaturalPoint's TrackIR software isn't installed; games will load trackkat's NPClient."
+                    say' "npclient = trackir, but NaturalPoint's TrackIR software isn't installed; games will load trackkat's NPClient."
                     pure dir
     setNPClientPath found >>= \case
         Right ()
-            | found == dir -> say ("Games will load trackkat's NPClient from " ++ dir)
-            | otherwise -> say ("Games will load NaturalPoint's NPClient from " ++ found ++ "; start trackkat before the game.")
-        Left e -> say ("Can't point games at NPClient (registry error " ++ show e ++ ").")
+            | found == dir -> say' ("Games will load trackkat's NPClient from " ++ dir)
+            | otherwise -> say' ("Games will load NaturalPoint's NPClient from " ++ found ++ "; start trackkat before the game.")
+        Left e -> say' ("Can't point games at NPClient (registry error " ++ show e ++ ").")
 
 -- | Report the games that start head tracking through NaturalPoint's
 -- NPClient.
-reportTrackIRGames :: IO ()
-reportTrackIRGames = takeTrackIRGame >>= mapM_ (say . describe)
+reportTrackIRGames :: Session -> IO ()
+reportTrackIRGames s = takeTrackIRGame >>= mapM_ (say s . describe)
   where
     describe (game, Just name) = printf "Game %d (%s) is using NaturalPoint's NPClient; scrambling its data." game name
     describe (game, Nothing) = printf "Game %d is using NaturalPoint's NPClient." game
 
 -- | Print a line, and add it to the log in trackkat's window.
-say :: String -> IO ()
-say line = putStrLn line >> guiLog line
+sayIn :: Window -> String -> IO ()
+sayIn w line = putStrLn line >> logLine w line
+
+say :: Session -> String -> IO ()
+say = sayIn . sWindow
 
 -- | Connect to the camera and track, again and again if it goes away.
 cameraLoop :: Session -> IO ()
 cameraLoop s = forever $ do
-    showCamera Searching
+    showCamera s Searching
     problem <-
-        (USB.withContext (\ctx -> withCamera ctx (say . ("# " ++)) defaultSettings (track s)) $> "The camera stopped.")
+        (USB.withContext (\ctx -> withCamera ctx (say s . ("# " ++)) defaultSettings (track s)) $> "The camera stopped.")
             `catches` [ Handler $ pure . explain
                       , Handler $ \e -> pure ("USB error: " ++ displayException (e :: USB.USBError))
                       , Handler $ \(ExceptionInLinkedThread _ e) -> pure ("Camera stopped: " ++ displayException e)
                       , Handler $ \CameraSilent -> pure "The camera went quiet, perhaps after sleep."
                       ]
-    say problem
-    showCamera (CameraDown problem)
-    say "Trying the camera again in 3 seconds."
+    say s problem
+    showCamera s (CameraDown problem)
+    say s "Trying the camera again in 3 seconds."
     threadDelay 3000000
 
--- | Act on what is asked of trackkat's window and tray icon, and keep the
--- window's count of games current, until the user quits, or, when a game
--- started trackkat, until neither a game nor the window has used it for
--- 'idleSeconds'.
+showCamera :: Session -> CameraState -> IO ()
+showCamera s c = updateStatus (sWindow s) (\st -> st{stCamera = c})
+
+-- | Act on what is asked of trackkat's window and tray icon, keep the tray
+-- icon and the count of games current, and take a key to bind for the
+-- window, until the user quits, or, when a game started trackkat, until
+-- neither a game nor the window has used it for 'idleSeconds'.
 controls :: Start -> FilePath -> Session -> IO ()
-controls start path s = go 0 Nothing
+controls start path s = do
+    shownInTray <- newIORef Nothing
+    keyCapture <- newIORef Nothing
+    let go checked idleSince = do
+            threadDelay 20000
+            mapM_ (act path s) =<< takeActions w
+            reportTrackIRGames s
+            choices <- Tray.takeChoices
+            mapM_ choose choices
+            captureKeys keyCapture
+            st <- currentStatus w
+            -- Drawing the icon takes a moment, so only when it changes.
+            let tray = (statusIcon st, statusTip st)
+            before <- atomicModifyIORef' shownInTray (Just tray,)
+            when (before /= Just tray) $ Tray.showStatus st
+            now <- getMonotonicTime
+            if
+                | Tray.QuitChoice `elem` choices -> say s "Quitting."
+                -- Checking game processes is a few system calls; twice a
+                -- second is plenty.
+                | now - checked < 0.5 -> go checked idleSince
+                | otherwise -> do
+                    games <- gamesTracking
+                    updateStatus w (\st' -> st'{stGames = games})
+                    open <- windowOpen w
+                    case (start, games > 0 || open, idleSince) of
+                        (ByHand, _, _) -> go now Nothing
+                        (ByGame, True, Nothing) -> go now Nothing
+                        (ByGame, True, Just _) -> do
+                            say s "A game or the window is using trackkat again; not quitting."
+                            go now Nothing
+                        (ByGame, False, Nothing) -> do
+                            say s (printf "No game or window is using trackkat; quitting in %d s unless one starts." idleSeconds)
+                            go now (Just now)
+                        (ByGame, False, Just since)
+                            | now - since >= fromIntegral idleSeconds ->
+                                say s (printf "Quitting: no game or window used trackkat for %d s." idleSeconds)
+                            | otherwise -> go now idleSince
+    go 0 Nothing
   where
-    go checked idleSince = do
-        threadDelay 20000
-        actions <- takeActions
-        mapM_ act actions
-        reportTrackIRGames
-        now <- getMonotonicTime
-        if
-            | any quits actions -> pure ()
-            -- Checking game processes is a few system calls; twice a
-            -- second is plenty.
-            | now - checked < 0.5 -> go checked idleSince
-            | otherwise -> do
-                games <- gamesTracking
-                showGames games
-                open <- windowOpen
-                case (start, games > 0 || open, idleSince) of
-                    (ByHand, _, _) -> go now Nothing
-                    (ByGame, True, Nothing) -> go now Nothing
-                    (ByGame, True, Just _) -> do
-                        say "A game or the window is using trackkat again; not quitting."
-                        go now Nothing
-                    (ByGame, False, Nothing) -> do
-                        say (printf "No game or window is using trackkat; quitting in %d s unless one starts." idleSeconds)
-                        go now (Just now)
-                    (ByGame, False, Just since)
-                        | now - since >= fromIntegral idleSeconds ->
-                            say (printf "Quitting: no game or window used trackkat for %d s." idleSeconds)
-                        | otherwise -> go now idleSince
-    quits QuitAction = True
-    quits _ = False
-    act RecenterAction = recenter s
-    act PauseAction = togglePause s
-    act TrimAction = trim s
-    act CalibrateAction = calibrate s
-    act QuitAction = say "Quitting."
-    act SaveAction = saveSettings path
-    act (KeyChosen k (Just b)) = addBinding k b
-    act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
+    w = sWindow s
+    choose Tray.OpenChoice = openWindow w
+    choose Tray.RecenterChoice = recenter s
+    choose Tray.PauseChoice = togglePause s
+    choose Tray.TrimChoice = trim s
+    choose Tray.QuitChoice = pure ()
+    -- The keyboard and mouse hooks take the next key or button pressed for
+    -- the binding list the window waits on.
+    captureKeys capture = do
+        wanted <- capturing w
+        armed <- readIORef capture
+        case (wanted, armed) of
+            (Nothing, Nothing) -> pure ()
+            (Nothing, Just _) -> stopCapture >> writeIORef capture Nothing
+            (Just k, _)
+                | armed /= Just k -> captureKey >> writeIORef capture (Just k)
+                | otherwise ->
+                    takeCaptured >>= \case
+                        Nothing -> pure ()
+                        Just (Captured b) -> addBinding w k b >> writeIORef capture Nothing
+                        Just Unbindable -> do
+                            stopCapturing w
+                            writeIORef capture Nothing
+                            showSettingsMessage w "trackkat can't use that key; choose another."
+
+act :: FilePath -> Session -> Action -> IO ()
+act _ s RecenterAction = recenter s
+act _ s PauseAction = togglePause s
+act _ s TrimAction = trim s
+act _ s CalibrateAction = calibrate s
+act path s (SaveAction edits) = saveSettings (sWindow s) path edits
 
 -- | Read the settings file, creating it with the defaults if there is none,
 -- along with the modification time of what was read, and show it in
 -- trackkat's window.
-loadConfig :: FilePath -> IO (Config, Maybe UTCTime)
-loadConfig path = do
+loadConfig :: Window -> FilePath -> IO (Config, Maybe UTCTime)
+loadConfig w path = do
     exists <- doesFileExist path
     if not exists
         then do
             writeFile path (renderConfig defaultConfig)
-            say ("Wrote default settings to " ++ path)
-            showSettings (renderConfig defaultConfig)
+            sayIn w ("Wrote default settings to " ++ path)
+            showSettings w (settingValues (renderConfig defaultConfig))
             (defaultConfig,) <$> modificationTime path
         else do
             stamp <- modificationTime path
             readSettings path >>= \case
                 Right (text, c) -> do
-                    mapM_ (say . ((path ++ " ") ++)) (retiredSettings text)
-                    showSettings text
+                    mapM_ (sayIn w . ((path ++ " ") ++)) (retiredSettings text)
+                    showSettings w (settingValues text)
                     pure (c, stamp)
                 Left err -> do
-                    say (path ++ ": " ++ err)
+                    sayIn w (path ++ ": " ++ err)
                     exitFailure
 
 -- | Read what was learnt in earlier sessions, or start afresh.
-loadCalibration :: FilePath -> IO Calibration
-loadCalibration path = do
+loadCalibration :: Window -> FilePath -> IO Calibration
+loadCalibration w path = do
     exists <- doesFileExist path
     found <-
         if exists
@@ -233,26 +285,30 @@ loadCalibration path = do
             else pure (Left "not found")
     case found of
         Right c -> do
-            say (describeLevel c)
-            say (describePivot Nothing c)
-            showCalibration (describeCalibration Nothing c)
+            sayIn w (describeLevel c)
+            sayIn w (describePivot Nothing c)
+            showCalibration w (describeCalibration Nothing c)
             pure c
         Left err -> do
-            when exists $ say (path ++ ": " ++ err ++ "; starting afresh.")
-            say noCalibration
-            showCalibration noCalibration
+            when exists $ sayIn w (path ++ ": " ++ err ++ "; starting afresh.")
+            sayIn w noCalibration
+            showCalibration w noCalibration
             pure defaultCalibration
   where
     noCalibration = "No calibration yet: trackkat learns it as you turn your head."
 
+-- | What the calibration box says.
+showCalibration :: Window -> String -> IO ()
+showCalibration w c = updateStatus w (\st -> st{stCalibration = c})
+
 -- | Save each calibration handed over, only the latest when several wait,
 -- so that saving never holds up tracking. The file is replaced whole.
-saveCalibrations :: FilePath -> MVar Calibration -> IO ()
-saveCalibrations path pending = forever $ do
+saveCalibrations :: Window -> FilePath -> MVar Calibration -> IO ()
+saveCalibrations w path pending = forever $ do
     c <- takeMVar pending
     let new = path ++ ".new"
     (writeFile new (renderCalibration c) >> renameFile new path)
-        `catch` \e -> say ("Can't save the calibration: " ++ displayException (e :: IOException))
+        `catch` \e -> sayIn w ("Can't save the calibration: " ++ displayException (e :: IOException))
 
 -- | Read and parse the settings file, whole so editors can replace it.
 readSettings :: FilePath -> IO (Either String (String, Config))
@@ -262,27 +318,22 @@ readSettings path =
         Right text -> pure ((text,) <$> parseConfig text)
     )
 
--- | Show the settings file's values in trackkat's window, as written.
-showSettings :: String -> IO ()
-showSettings text = mapM_ (uncurry showSetting) (settingValues text)
-
--- | Write the settings from trackkat's window to the settings file, keeping
+-- | Write settings from trackkat's window to the settings file, keeping
 -- the rest of the file. 'watchSettings' then applies them.
-saveSettings :: FilePath -> IO ()
-saveSettings path = do
-    edited <- savedSettings settingNames
+saveSettings :: Window -> FilePath -> [(String, String)] -> IO ()
+saveSettings w path edited = do
     result <- try (readFile' path)
     case result of
-        Left e -> showSettingsMessage ("Not saved: " ++ displayException (e :: IOException))
+        Left e -> showSettingsMessage w ("Not saved: " ++ displayException (e :: IOException))
         Right text -> case editSettings edited text of
-            Left err -> showSettingsMessage ("Not saved: " ++ err)
+            Left err -> showSettingsMessage w ("Not saved: " ++ err)
             Right new
-                | new == text -> showSettingsMessage "Nothing has changed."
+                | new == text -> showSettingsMessage w "Nothing has changed."
                 | otherwise -> do
                     -- Put in place whole, so it is never read half written.
                     let temp = path ++ ".new"
                     written <- try (writeFile temp new >> renameFile temp path)
-                    showSettingsMessage $ case written of
+                    showSettingsMessage w $ case written of
                         Left e -> "Not saved: " ++ displayException (e :: IOException)
                         Right () -> "Saved."
 
@@ -304,17 +355,17 @@ watchSettings path s = go
                 | stamp' /= stamp ->
                     readSettings path >>= \case
                         Left err -> do
-                            say (path ++ ": " ++ err ++ "; keeping the previous settings.")
+                            say s (path ++ ": " ++ err ++ "; keeping the previous settings.")
                             go stamp' config
                         Right (text, new) -> do
                             writeIORef (sSettings s) new
                             rebindHotkeys (hotkeyBindings new)
-                            when (npclient new /= npclient config) $ pointGames (takeDirectory path) (npclient new)
-                            say (describeChanges config new)
+                            when (npclient new /= npclient config) $ pointGames (say s) (takeDirectory path) (npclient new)
+                            say s (describeChanges config new)
                             when (clip new /= clip config) $ do
                                 atomicModifyIORef' (sTracker s) (\t -> (setModel (clipModel (clip new)) t, ()))
-                                say "Tracking the clip's new shape; recentering."
-                            showSettings text
+                                say s "Tracking the clip's new shape; recentering."
+                            showSettings (sWindow s) (settingValues text)
                             go stamp' new
             _ -> go stamp config
 
@@ -329,7 +380,8 @@ data Clip = ClipSeen | ClipLost
 
 -- | State that outlives any one connection to the camera.
 data Session = Session
-    { sTracker :: IORef Tracker
+    { sWindow :: Window
+    , sTracker :: IORef Tracker
     , sSettings :: IORef Config
     -- ^ replaced when the settings file is saved
     , sShaper :: IORef Shaper
@@ -346,9 +398,9 @@ data Session = Session
     -- ^ a calibration waiting to be saved
     }
 
-newSession :: Config -> Calibration -> IO Session
-newSession config c =
-    Session
+newSession :: Window -> Config -> Calibration -> IO Session
+newSession w config c =
+    Session w
         <$> newIORef (newTracker defaultIntrinsics (clipModel (clip config)) c)
         <*> newIORef config
         <*> newIORef newShaper
@@ -371,8 +423,8 @@ recenter s = do
     atomicModifyIORef' (sTrim s) (NoTrim,) >>= \case
         NoTrim -> pure ()
         Trim _ _ -> do
-            showTrim NoTrim
-            say "Trim cleared."
+            updateStatus (sWindow s) (\st -> st{stTrim = NoTrim})
+            say s "Trim cleared."
     readIORef (sClip s) >>= \case
         ClipSeen -> pure ()
         ClipLost -> do
@@ -389,8 +441,8 @@ togglePause s = do
     output <- atomicModifyIORef' (sPaused s) $ \case
         Just _ -> (Nothing, Live)
         Nothing -> (Just latest, Paused)
-    showOutput output
-    say $ case output of
+    updateStatus (sWindow s) (\st -> st{stOutput = output})
+    say s $ case output of
         Live -> "Resumed."
         Paused -> "Paused: games see your head held still."
 
@@ -403,8 +455,8 @@ trim s = do
     view <- maybe (readIORef (sLatest s)) pure paused
     let t = trimTo view
     writeIORef (sTrim s) t
-    showTrim t
-    say ("Trimmed: forward is now " ++ describeTrim t ++ ".")
+    updateStatus (sWindow s) (\st -> st{stTrim = t})
+    say s ("Trimmed: forward is now " ++ describeTrim t ++ ".")
 
 -- | A trim as the console and log show it.
 describeTrim :: Trim -> String
@@ -420,7 +472,7 @@ console s = do
             "" -> recenter s
             "c" -> calibrate s
             "j" -> showButtons s
-            _ -> say "Enter recenters; c Enter calibrates level; j Enter shows joystick buttons"
+            _ -> say s "Enter recenters; c Enter calibrates level; j Enter shows joystick buttons"
         console s
 
 -- | Print joystick button presses for the next minute, so they can be
@@ -429,7 +481,7 @@ showButtons :: Session -> IO ()
 showButtons s = do
     now <- getMonotonicTime
     writeIORef (sButtonsShown s) (now + 60)
-    say "For the next minute, joystick buttons you press are named here, ready to bind in trackkat.conf."
+    say s "For the next minute, joystick buttons you press are named here, ready to bind in trackkat.conf."
 
 -- | Report joysticks coming and going, and the buttons pressed while
 -- 'sButtonsShown' says to. A button pressed while trackkat's window waits
@@ -441,18 +493,18 @@ joysticks s = forever $ do
     now <- getMonotonicTime
     shownUntil <- readIORef (sButtonsShown s)
     forM_ events $ \case
-        Connected j -> say ("Joystick connected: " ++ renderJoystick j)
-        Disconnected j -> say ("Joystick disconnected: " ++ renderJoystick j)
+        Connected j -> say s ("Joystick connected: " ++ renderJoystick j)
+        Disconnected j -> say s ("Joystick disconnected: " ++ renderJoystick j)
         Pressed j n -> do
             let b = JoystickButton j n
-            when (now < shownUntil) $ say ("Joystick button pressed: " ++ renderBinding b)
-            capturing >>= mapM_ (`addBinding` b)
+            when (now < shownUntil) $ say s ("Joystick button pressed: " ++ renderBinding b)
+            capturing (sWindow s) >>= mapM_ (\k -> addBinding (sWindow s) k b)
 
 -- | Track until the camera goes away.
 track :: Session -> Camera -> IO ()
 track s cam = do
-    say "Tracking."
-    showCamera Tracking
+    say s "Tracking."
+    showCamera s Tracking
     seenRecenters <- newIORef =<< recenterCount
     games <- newIORef (0, 0)
     lastStatus <- newIORef 0
@@ -469,8 +521,8 @@ track s cam = do
                     let (t', o, evs) = step now stripes t in (t', (o, evs, t'))
                 let centre = trackerCentre tracker
                 forM_ events $ \e -> do
-                    say (describeEvent centre e)
-                    mapM_ showCalibration (calibrationNews centre (trackerCalibration tracker) e)
+                    say s (describeEvent centre e)
+                    mapM_ (showCalibration (sWindow s)) (calibrationNews centre (trackerCalibration tracker) e)
                 forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
                 -- A new centre or level is a jump the shaper must not smooth.
                 when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
@@ -487,7 +539,10 @@ track s cam = do
                 sent <- maybe (readIORef (sLatest s)) pure paused
                 publish (toGamePose sent)
                 published <- getMonotonicTime
-                showFrame (case outcome of Tracked{outPose = hp} -> InSight hp; Lost n -> OutOfSight n) sent
+                let sighting = case outcome of
+                        Tracked{outPose = hp, outSeen = seen} -> InSight hp seen
+                        Lost n -> OutOfSight n
+                updateStatus (sWindow s) (\st -> st{stSighting = sighting, stView = sent})
                 previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
                 modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
                 noteGCs gcsSeen window
@@ -506,9 +561,9 @@ track s cam = do
                     -- The window shows the pose and figures live, so its
                     -- log is left to events.
                     putStrLn (status outcome paused gameConnected ++ "   " ++ summary w)
-                    showStats (summary w)
+                    updateStatus (sWindow s) (\st -> st{stStats = summary w})
             Corrupt why _ -> do
-                say ("# dropped a corrupt packet: " ++ why)
+                say s ("# dropped a corrupt packet: " ++ why)
                 modifyIORef' window sawCorrupt
             _ -> pure ()
 
@@ -521,7 +576,7 @@ gcCount = do
 -- | Count collections since the last call, with the latest one's pause.
 -- Sampled every frame, so a pause hidden behind a later one in the same
 -- frame is missed.
-noteGCs :: IORef Int -> IORef Window -> IO ()
+noteGCs :: IORef Int -> IORef Stats.Window -> IO ()
 noteGCs seen window = do
     enabled <- getRTSStatsEnabled
     when enabled $ do
@@ -540,12 +595,6 @@ handleControls s seenRecenters = do
     when (RecenterKey `elem` keys || fromGames /= before) $ recenter s
     when (PauseKey `elem` keys) $ togglePause s
     when (TrimKey `elem` keys) $ trim s
-
--- | The keys and buttons bound to each hotkey.
-hotkeyBindings :: Config -> Hotkey -> [Binding]
-hotkeyBindings c RecenterKey = recenterBindings c
-hotkeyBindings c PauseKey = pauseBindings c
-hotkeyBindings c TrimKey = trimBindings c
 
 -- | Bindings as the console lists them.
 keysAndButtons :: [Binding] -> String
