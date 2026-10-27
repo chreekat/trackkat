@@ -148,6 +148,7 @@ jobs:
       - name: Try the window
         shell: pwsh
         run: |
+          $env:PATH = "$env:USB_PREFIX\bin;$env:PATH"
           $exe = cabal list-bin trackkat-window-demo `
             --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
           $p = Start-Process $exe -PassThru -RedirectStandardOutput demo.out -RedirectStandardError demo.err
