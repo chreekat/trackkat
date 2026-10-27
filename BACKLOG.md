@@ -2,6 +2,11 @@
 
 Roughly in order.
 
+- Head movements as desktop controls (switching virtual desktops or window
+  manager panes), on Linux too.
+
+## Low priority
+
 - Tune the RTS only if the status line's latency and GC figures show a need.
 - Estimate the clip's shape from movement, for clips other than the
   developer's.
@@ -10,5 +15,4 @@ Roughly in order.
   error during it, and the overshoot sent to the game. If the rebound is real
   head motion, consider negative inertia (IBM TrackPoint) to make stops crisp;
   if the fit worsens, the clip's post is swinging.
-- Head movements as desktop controls (switching virtual desktops or window
-  manager panes), on Linux too.
+- Per-game profiles. Not wanted for now: good defaults instead.
