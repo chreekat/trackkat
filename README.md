@@ -59,6 +59,18 @@ Either can be a joystick or HOTAS button instead, or as well; see
 Recentering while the clip is out of sight centres the view at once; the
 pose you hold when the clip comes back becomes the new centre.
 
+When you shift in your chair, the centre follows where your head comes to
+rest, over a minute or two, too slowly to see (`drift` in
+[Settings](#settings)). Only rest close to the centre counts, and only
+after a while there: watching something off to the side, or holding a
+lean, however long, doesn't move it. Recentering puts the centre where
+you are at once, as ever. trackkat prints when the centre has followed
+you noticeably:
+
+```
+Centre has followed you since recentering: yaw +0.3  pitch -0.1  roll +0.0   x +21  y -2  z +6 mm
+```
+
 ### trackkat's window and tray icon
 
 trackkat shows an icon in the system tray: green while tracking, amber
@@ -69,8 +81,9 @@ quit.
 
 The window shows your head as games see it, with each axis as your head
 moves it and as games get it after the curves; whether the camera, the clip
-and games are connected; the latency figures; and what has been learnt in
-[calibration](#calibration). It has buttons to recenter, pause and
+and games are connected; the latency figures; what has been learnt in
+[calibration](#calibration); and how far the centre has followed you since
+recentering. It has buttons to recenter, pause and
 calibrate, and edits the [settings](#settings). Its log shows everything
 trackkat prints; **Copy log** copies it, for bug reports. Closing the window
 keeps trackkat running in the tray.
@@ -182,6 +195,13 @@ one with the new settings documented.
   if it turned with your gaze. Only turning left and right counts: your body
   stays upright when you look up or down. `lean = screen` moves you the same
   way whichever way you look.
+- `drift = on`: the centre follows where your head rests, as described
+  [above](#using-trackkat-with-games). Moving sideways, forward and back or
+  up and down follows after 20 seconds of rest in a new place, by at most
+  0.75 mm a second; turning, as from a turned chair or a slouch, after a
+  minute, by at most 2 degrees a minute. Only rest with the head still
+  within 4 degrees and 40 mm of the centre counts. `drift = off` keeps the
+  centre where you recentered.
 
 Single-frame jumps no head could make are ignored.
 

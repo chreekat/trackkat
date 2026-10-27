@@ -26,6 +26,7 @@ import Text.Printf (printf)
 import TrackKat.Calibration
 import TrackKat.Camera
 import TrackKat.Config
+import TrackKat.Drift
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
 import TrackKat.Gui
@@ -88,7 +89,7 @@ main = do
                 (renderBindings (recenterBindings config))
                 (renderBindings (pauseBindings config))
         let calibrationFile = dir </> "trackkat.calibration"
-        session <- newSession (response config) =<< loadCalibration calibrationFile
+        session <- newSession config =<< loadCalibration calibrationFile
         showButtons session
         withAsync (console session) $ \_ ->
             withAsync (watchSettings settingsFile session stamp config) $ \_ ->
@@ -205,7 +206,7 @@ loadCalibration path = do
         Right c -> do
             say (describeLevel c)
             say (describePivot Nothing c)
-            showCalibration (describeCalibration Nothing c)
+            showCalibration (describeCalibration Nothing (driftOffset newDrifter) c)
             pure c
         Left err -> do
             when exists $ say (path ++ ": " ++ err ++ "; starting afresh.")
@@ -277,7 +278,7 @@ watchSettings path s = go
                             say (path ++ ": " ++ err ++ "; keeping the previous settings.")
                             go stamp' config
                         Right (text, new) -> do
-                            writeIORef (sResponse s) (response new)
+                            writeIORef (sSettings s) new
                             rebindHotkeys (recenterBindings new) (pauseBindings new)
                             say (describeChanges config new)
                             showSettings text
@@ -296,8 +297,9 @@ data Clip = ClipSeen | ClipLost
 -- | State that outlives any one connection to the camera.
 data Session = Session
     { sTracker :: IORef Tracker
-    , sResponse :: IORef Response
+    , sSettings :: IORef Config
     -- ^ replaced when the settings file is saved
+    , sDrifter :: IORef Drifter
     , sShaper :: IORef Shaper
     , sClip :: IORef Clip
     , sPaused :: IORef (Maybe HeadPose)
@@ -310,11 +312,12 @@ data Session = Session
     -- ^ a calibration waiting to be saved
     }
 
-newSession :: Response -> Calibration -> IO Session
-newSession r c =
+newSession :: Config -> Calibration -> IO Session
+newSession config c =
     Session
         <$> newIORef (newTracker defaultIntrinsics defaultClip c)
-        <*> newIORef r
+        <*> newIORef config
+        <*> newIORef newDrifter
         <*> newIORef newShaper
         <*> newIORef ClipLost
         <*> newIORef Nothing
@@ -406,19 +409,23 @@ track s cam = do
             Frame _ stripes -> do
                 now <- getMonotonicTime
                 handleControls s seenRecenters
-                (outcome, events, tracker) <- atomicModifyIORef' (sTracker s) $ \t ->
+                (seen, events, tracker) <- atomicModifyIORef' (sTracker s) $ \t ->
                     let (t', o, evs) = step now stripes t in (t', (o, evs, t'))
                 let centre = trackerCentre tracker
+                -- Drift starts afresh from a new centre.
+                when (any recentered events) $ writeIORef (sDrifter s) newDrifter
+                offset <- driftOffset <$> readIORef (sDrifter s)
                 forM_ events $ \e -> do
                     say (describeEvent centre e)
-                    mapM_ showCalibration (calibrationNews centre (trackerCalibration tracker) e)
+                    mapM_ showCalibration (calibrationNews centre offset (trackerCalibration tracker) e)
                 forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
                 -- A new centre or level is a jump the shaper must not smooth.
                 when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
+                outcome <- drifted s now tracker seen
                 case outcome of
                     Tracked hp _ _ -> do
                         writeIORef (sClip s) ClipSeen
-                        r <- readIORef (sResponse s)
+                        r <- response <$> readIORef (sSettings s)
                         shaped <- atomicModifyIORef' (sShaper s) $ \sh ->
                             let (p, sh') = shape r now hp sh in (sh', p)
                         writeIORef (sLatest s) shaped
@@ -449,6 +456,24 @@ track s cam = do
                 say ("# dropped a corrupt packet: " ++ why)
                 modifyIORef' window sawCorrupt
             _ -> pure ()
+
+-- | A frame's outcome with the pose relative to the centre as it has
+-- drifted, mentioning the drift now and then. While paused, the head isn't
+-- watched for rest.
+drifted :: Session -> Double -> Tracker -> Outcome -> IO Outcome
+drifted s now tracker = \case
+    Lost n -> do
+        modifyIORef' (sDrifter s) interrupted
+        pure (Lost n)
+    Tracked hp distance fit -> do
+        setting <- drift <$> readIORef (sSettings s)
+        watching <- maybe setting (const NoDrift) <$> readIORef (sPaused s)
+        (relative, news) <- atomicModifyIORef' (sDrifter s) $ \d ->
+            let (p, d', n) = driftCentre watching now hp d in (d', (p, n))
+        forM_ news $ \o -> do
+            say (describeDrift o)
+            showCalibration (describeCalibration (trackerCentre tracker) o (trackerCalibration tracker))
+        pure (Tracked relative distance fit)
 
 -- | Garbage collections so far, if the runtime is counting (+RTS -T).
 gcCount :: IO Int
@@ -485,6 +510,10 @@ resetsShaping Recentered = True
 resetsShaping (Calibrated _) = True
 resetsShaping _ = False
 
+recentered :: Event -> Bool
+recentered Recentered = True
+recentered _ = False
+
 -- | Describe an event, given the clip's pose at the centre.
 describeEvent :: Maybe Pose -> Event -> String
 describeEvent _ Recentered = "Recentered."
@@ -504,16 +533,17 @@ learnt _ = []
 
 -- | What the calibration box in trackkat's window says after an event, if
 -- the event is about calibration or moves the centre, given the clip's pose
--- at the centre and the calibration so far.
-calibrationNews :: Maybe Pose -> Calibration -> Event -> Maybe String
-calibrationNews centre c Recentered = Just (describeCalibration centre c)
-calibrationNews centre _ (Calibrated c) = Just (describeEvent centre (Calibrated c) ++ "\n" ++ describePivot centre c)
-calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
-calibrationNews centre _ e = Just (describeEvent centre e)
+-- at the centre, how far the centre has drifted and the calibration so far.
+calibrationNews :: Maybe Pose -> HeadPose -> Calibration -> Event -> Maybe String
+calibrationNews centre offset c Recentered = Just (describeCalibration centre offset c)
+calibrationNews centre offset _ (Calibrated c) =
+    Just (describeEvent centre (Calibrated c) ++ "\n" ++ describePivot centre c ++ "\n" ++ describeDrift offset)
+calibrationNews centre offset _ (Refined _ c) = Just (describeCalibration centre offset c)
+calibrationNews centre _ _ e = Just (describeEvent centre e)
 
--- | The calibration box's account of a calibration.
-describeCalibration :: Maybe Pose -> Calibration -> String
-describeCalibration centre c = describeLevel c ++ "\n" ++ describePivot centre c
+-- | The calibration box's account of a calibration and of the drift.
+describeCalibration :: Maybe Pose -> HeadPose -> Calibration -> String
+describeCalibration centre offset c = describeLevel c ++ "\n" ++ describePivot centre c ++ "\n" ++ describeDrift offset
 
 status :: Outcome -> Maybe HeadPose -> Bool -> String
 status outcome paused gameConnected =
