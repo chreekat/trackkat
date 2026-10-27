@@ -30,7 +30,7 @@ jobs:
             mingw-w64-i686-gcc
 
       # Games load the DLLs, 64- and 32-bit; npgame and trackdemo stand in
-      # for a game. The programs, trackkat's too, get the cat icon.
+      # for a game. Only trackkat.exe gets the cat icon.
       - name: Build the icon, NPClient DLLs, npgame and trackdemo
         shell: pwsh
         run: |
@@ -43,14 +43,12 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           $env:PATH = "$msys\ucrt64\bin;$path"
-          $icon = Join-Path "$env:RUNNER_TEMP" "trackkat-icon.o"
-          "ICON_OBJECT=$icon" | Out-File -FilePath $env:GITHUB_ENV -Append
-          & windres -I icons icons/trackkat.rc -O coff -o $icon
+          & windres -I icons icons/trackkat.rc -O coff -o icons/trackkat-icon.o
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c $icon -ladvapi32 -luser32
+          & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32 -luser32
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Compiler messages become annotations, which show without the log.
-          $out = & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c $icon `
+          $out = & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c `
             -lopengl32 -lgdi32 -luser32 -ladvapi32 2>&1
           $rc = $LASTEXITCODE
           $out | ForEach-Object { "::error::$_" }
@@ -77,9 +75,8 @@ jobs:
         run: |
           $usb = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "ucrt64"
           "USB_PREFIX=$usb" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # trackkat's programs link the icon.
-          $icon = $env:ICON_OBJECT -replace '\\', '/'
-          "package trackkat`n  ghc-options: -optl$icon" | Out-File -FilePath cabal.project.local -Encoding ascii
+          # trackkat.exe links the icon.
+          "package trackkat`n  flags: +icon" | Out-File -FilePath cabal.project.local -Encoding ascii
           cabal build all --enable-tests `
             --extra-include-dirs="$usb\include" --extra-lib-dirs="$usb\lib"
 
