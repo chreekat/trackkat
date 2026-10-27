@@ -8,6 +8,7 @@ import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
 import Data.Either (isLeft)
 import Data.IORef
+import Data.List (mapAccumL, sortOn)
 import Data.Maybe (isNothing)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
@@ -184,13 +185,13 @@ main = do
         (t2, lostOut, lostEvents) = step 0.1 (take 5 (clipAt facing)) (request Recenter t1)
         (_, laterOut, laterEvents) = step 0.2 (clipAt turned) t2
     check ("first frame recenters: " ++ show (firstOut, firstEvents)) $ case (firstOut, firstEvents) of
-        (Tracked hp _ _, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
+        (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
     check ("one blob is lost: " ++ show (lostOut, lostEvents)) $ case (lostOut, lostEvents) of
         (Lost 1, []) -> True
         _ -> False
     check ("pending recenter waits for tracking: " ++ show (laterOut, laterEvents)) $ case (laterOut, laterEvents) of
-        (Tracked hp _ _, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
+        (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
 
     -- Settings and key bindings.
@@ -520,7 +521,7 @@ main = do
     check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
     check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
 
-    check "identify" $ identify [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
+    check "identify" $ identify id [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
     -- The clip's sides are the wearer's; the model's are the camera's.
     case clipShape 70 100 120 of
@@ -540,7 +541,189 @@ main = do
             check (example ++ " is the default settings file; TRACKKAT_ACCEPT=1 cabal test rewrites it") $
                 either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) written
 
+    -- Following the clip through what the camera shows: reflectors fading
+    -- at a slant, running together, breaking up, and stray reflections.
+    -- Frames come at 120 a second, rendered as discs of lit pixels.
+    let at120 :: Double -> [Double]
+        at120 seconds = [fromIntegral i / 120 | i <- [0 .. round (seconds * 120) :: Int]]
+        -- The clip as first made, worn so its top reflector shows 15 px
+        -- above the lower pair, and with its post bent, 40 px above.
+        straightWorn = -49
+        bentWorn = -23
+        allLit = (1, 1, 1)
+        heights m pose = let ps = map (project defaultIntrinsics pose) [mLeft m, mRight m, mTop m] in (ps, identify id ps == Just (ps !! 0, ps !! 1, ps !! 2))
+        summed rows = (lostCount rows, worstError rows)
+
+    -- The label swap seen at pitch -8: with the camera above, the top
+    -- reflector dips to the lower pair's level and labelling by height in
+    -- the image swaps two reflectors, giving a wrong pose that fits just
+    -- as well. Labelling by prediction keeps following.
+    let nodding = [(t, headSeen straightWorn (-4) (-6 * (1 - cos (2 * pi * t / 1.5))) 0, allLit) | t <- at120 5]
+        nodded = trackPath clipStraight nodding
+        swapped = length [() | (_, pose, _) <- nodding, not (snd (heights clipStraight pose))]
+    check ("height labelling swaps while nodding: " ++ show swapped) $ swapped > 100
+    check ("nodding through the swap " ++ show (summed nodded)) $ lostCount nodded == 0 && fst (worstError nodded) < 1 && snd (worstError nodded) < 10
+
+    -- An impossible jump is not believed: a frame of the head 40 degrees
+    -- away is lost, until enough time has passed for the head to get there.
+    let jumping = [(t, headSeen bentWorn (if t < 0.5 then 0 else 40) 0 0, allLit) | t <- at120 1.2]
+        jumped = trackPath clipBent jumping
+    check "a jump is lost at first" $ all isLost [o | (t, _, o, _) <- jumped, t >= 0.5, t < 0.6]
+    check ("then believed " ++ show (summed (after 1 jumped))) $ lostCount (after 1 jumped) == 0 && fst (worstError jumped) < 1
+
+    -- The top reflector fading from view for a moment while the head
+    -- turns: the two lower ones are tracked, the turn followed.
+    let fading = [(t, headSeen bentWorn (10 * sin (2 * pi * t / 3)) 0 0, (1, 1, max 0 (min 1 (abs (t - 1.7) / 0.5 - 0.4)))) | t <- at120 3]
+        faded = trackPath clipBent fading
+    check ("tracked through fading " ++ show (summed faded)) $ lostCount faded == 0 && fst (worstError faded) < 1
+    check "two of three reflectors reported" $ any ((== 1) . seenMissing) (seens faded)
+
+    -- Out of sight for longer, it is lost, and found again on its return.
+    let hiding = [(t, headSeen bentWorn (5 * sin (2 * pi * t / 3)) 0 0, (1, 1, if t > 1 && t < 3 then 0 else 1)) | t <- at120 4]
+        hidden = trackPath clipBent hiding
+    check "with one reflector gone for a second, lost" $ all isLost [o | (t, _, o, _) <- hidden, t > 2.05, t < 3]
+    check ("back after hiding " ++ show (summed (after 3 hidden))) $ lostCount (after 3 hidden) == 0 && fst (worstError hidden) < 1
+
+    -- A reflection that's no reflector, while one reflector fades out.
+    let reflecting = [(t, headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0, (1, if t > 1 && t < 1.6 then 0 else 1, 1)) | t <- at120 2.5]
+        stray = ((340, 288), 3)
+        reflected = trackFrames clipBent [(t, pose, renderDiscs (stray : reflectorDiscs clipBent lit pose)) | (t, pose, lit) <- reflecting]
+    check ("a stray reflection ignored " ++ show (summed reflected)) $ lostCount reflected == 0 && fst (worstError reflected) < 1.5
+    check "the stray reported" $ all ((== 1) . seenStrays) (seens reflected)
+    let alone = headSeen bentWorn 0 0 0
+    check "two reflectors and a stray aren't three reflectors" $ case trackFrames clipBent [(0, alone, renderDiscs (stray : reflectorDiscs clipBent (1, 0, 1) alone))] of
+        [(_, _, Lost 3, _)] -> True
+        _ -> False
+
+    -- A reflector broken in two by a line too dim, and a fleck beside
+    -- another, as at a low threshold.
+    let broken = [(t, pose, (if t > 0.5 then breakAt (project defaultIntrinsics pose (mLeft clipBent)) else id) (renderDiscs (fleck pose : reflectorDiscs clipBent allLit pose))) | t <- at120 2.5, let pose = headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0]
+        fleck pose = let (u, v) = project defaultIntrinsics pose (mTop clipBent) in ((u + 4, v + 9), 2.5)
+        pieces = trackFrames clipBent broken
+    check ("a reflector in pieces " ++ show (summed pieces)) $ lostCount pieces == 0 && fst (worstError pieces) < 1
+
+    -- Rolling over far enough that the top reflector is no longer highest.
+    -- (The straight clip's top reflector, being lower, needs less roll.)
+    let rolling = [(t, headSeen straightWorn 0 0 (60 * sin (pi * t / 4)), allLit) | t <- at120 4]
+        rolled = trackPath clipStraight rolling
+    check "height labelling swaps when rolled over" $ any (\(_, pose, _) -> not (snd (heights clipStraight pose))) rolling
+    check ("rolling over " ++ show (summed rolled)) $
+        lostCount rolled == 0 && fst (worstError (unmerged rolled)) < 1 && fst (worstError rolled) < 4
+
+    -- Turned far, the top reflector runs into a lower one: split by shape.
+    let turning = [(t, headSeen bentWorn (90 * t / 8) 0 0, allLit) | t <- at120 8]
+        turnedFar = trackPath clipBent turning
+    check "merged blobs reported" $ any ((> 0) . seenMerged) (seens turnedFar)
+    check ("turned far, through merging " ++ show (summed turnedFar)) $ lostCount turnedFar == 0 && fst (worstError turnedFar) < 4 && snd (worstError turnedFar) < 10
+
+    -- Lost for a second and a half while turned, and back with the top
+    -- reflector faint.
+    let returning = [(t, headSeen bentWorn (min 45 (30 * t)) 0 0, if t > 2 && t < 3.5 then (0, 0, 0) else (1, 1, if t < 3.5 then 1 else 0.5)) | t <- at120 4]
+        returned = trackPath clipBent returning
+    check ("found again when back " ++ show (summed (after 3.5 returned))) $ lostCount (after 3.5 returned) == 0 && fst (worstError returned) < 1
+
+    -- A slow sweep through everything a head does, for both clips: the
+    -- straight one worn as it was crosses the pitch where the labels swapped.
+    forM_ [("bent", clipBent, bentWorn), ("straight", clipStraight, straightWorn)] $ \(name, m, wornAt) -> do
+        let sweeping = [(t, headSeen wornAt (40 * sin (2 * pi * t / 7)) (25 * sin (2 * pi * t / 5.3)) (20 * sin (2 * pi * t / 4.1)), allLit) | t <- at120 20]
+            swept = trackPath m sweeping
+            stepSizes = zipWith (\(_, _, _, a) (_, _, _, b) -> maybe 0 fst (poseError <$> a <*> b)) swept (drop 1 swept)
+        check ("sweep with the " ++ name ++ " clip " ++ show (summed swept, maximum stepSizes)) $
+            lostCount swept == 0 && fst (worstError (unmerged swept)) < 1 && fst (worstError swept) < 4 && snd (worstError swept) < 20 && maximum stepSizes < 3
+
     n <- readIORef failures
     if n == 0 then putStrLn "all tests passed" else exitFailure
   where
     near a b = abs (a - b) < 1e-9
+
+-- | Discs of lit pixels, as (centre, radius), as the camera's stripes. Runs
+-- that touch on a line are one stripe, so discs that touch make one blob.
+renderDiscs :: [((Double, Double), Double)] -> [Stripe]
+renderDiscs discs = concatMap line [0 .. frameHeight - 1]
+  where
+    line y = map (stripe y) (joinRuns (sortOn fst (concatMap (run y) discs)))
+    run y ((u, v), r) =
+        let dy = fromIntegral y - v
+            halfWidth = sqrt (r * r - dy * dy)
+            a = max 0 (ceiling (u - halfWidth))
+            b = min (frameWidth - 1) (floor (u + halfWidth))
+         in [(a, b) | r * r >= dy * dy, a <= b]
+    joinRuns ((a, b) : (c, d) : rest) | c <= b + 1 = joinRuns ((a, max b d) : rest)
+    joinRuns (x : rest) = x : joinRuns rest
+    joinRuns [] = []
+    stripe y (a, b) = let n = b - a + 1 in Stripe y a n (100 * n * (n - 1) `div` 2) (100 * n)
+
+-- | The pixels of one image line near a point dropped, breaking a reflector
+-- there in two.
+breakAt :: (Double, Double) -> [Stripe] -> [Stripe]
+breakAt (u, v) = filter (\s -> not (stLine s == round v && abs (fromIntegral (stStart s) - u) < 15))
+
+-- | The headset clip as first made, and with its post bent.
+clipStraight, clipBent :: Model
+clipStraight = maybe (error "clipStraight") id (triangle 45 70 116 116)
+clipBent = maybe (error "clipBent") id (triangle 45 70 110 110)
+
+-- | The clip seen by a camera tipped 12 degrees down, on a head about 860 mm
+-- away turned by the given yaw, pitch and roll in degrees about a neck
+-- 130 mm below and 90 mm behind the clip. The clip is worn pitched by the
+-- given angle in degrees: how high the top reflector shows depends on it.
+headSeen :: Double -> Double -> Double -> Double -> Pose
+headSeen worn y p r =
+    Pose (tilt `mulMM` turned `mulMM` rotYXZ 0 worn 0) (mulMV tilt (clipAt ^+^ neck ^-^ mulMV turned neck))
+  where
+    deg = (* (pi / 180))
+    rotYXZ a b c = rodrigues (V3 0 (deg a) 0) `mulMM` rodrigues (V3 (deg b) 0 0) `mulMM` rodrigues (V3 0 0 (deg c))
+    tilt = rodrigues (V3 (deg 12) 0 0)
+    turned = rotYXZ y p r
+    neck = V3 0 130 90
+    clipAt = V3 0 180 845
+
+-- | The reflectors' discs in the image for a pose, each with its radius
+-- scaled by how lit it is (0 for unseen). At 830 mm the lower ones light
+-- about 350 pixels and the top one 265, as on the user's camera.
+reflectorDiscs :: Model -> (Double, Double, Double) -> Pose -> [((Double, Double), Double)]
+reflectorDiscs m (litL, litR, litT) pose =
+    [ (project defaultIntrinsics pose p, lit * radiusAt1m * 1000 / z)
+    | (p, radiusAt1m, lit) <- [(mLeft m, 8.8, litL), (mRight m, 8.8, litR), (mTop m, 7.6, litT)]
+    , let V3 _ _ z = mulMV (poseR pose) p ^+^ poseT pose
+    , lit > 0
+    ]
+
+-- | Track frames of (time, true pose, stripes) from a fresh tracker: each
+-- frame's time, true pose, outcome, and the pose tracked.
+trackFrames :: Model -> [(Double, Pose, [Stripe])] -> [(Double, Pose, Outcome, Maybe Pose)]
+trackFrames m = snd . mapAccumL frame (newTracker defaultIntrinsics m defaultCalibration)
+  where
+    frame t (time, truth, stripes) = let (t', o, _) = step time stripes t in (t', (time, truth, o, trackerPose t'))
+
+-- | Track a head along a path of (time, true pose, how lit each reflector is).
+trackPath :: Model -> [(Double, Pose, (Double, Double, Double))] -> [(Double, Pose, Outcome, Maybe Pose)]
+trackPath m path = trackFrames m [(t, pose, renderDiscs (reflectorDiscs m lit pose)) | (t, pose, lit) <- path]
+
+-- | Degrees of turning and mm of movement between two poses.
+poseError :: Pose -> Pose -> (Double, Double)
+poseError a b = (norm (rotationVector (poseR a `mulMM` transpose (poseR b))) * 180 / pi, norm (poseT a ^-^ poseT b))
+
+lostCount :: [(Double, Pose, Outcome, Maybe Pose)] -> Int
+lostCount rows = length [() | (_, _, Lost _, _) <- rows]
+
+isLost :: Outcome -> Bool
+isLost Lost{} = True
+isLost Tracked{} = False
+
+-- | The worst error of the poses tracked: degrees, mm.
+worstError :: [(Double, Pose, Outcome, Maybe Pose)] -> (Double, Double)
+worstError rows = (maximum (0 : map fst errors), maximum (0 : map snd errors))
+  where
+    errors = [poseError truth p | (_, truth, Tracked{}, Just p) <- rows]
+
+seens :: [(Double, Pose, Outcome, Maybe Pose)] -> [Seen]
+seens rows = [s | (_, _, Tracked{outSeen = s}, _) <- rows]
+
+-- | The frames where no reflectors shared a blob.
+unmerged :: [(Double, Pose, Outcome, Maybe Pose)] -> [(Double, Pose, Outcome, Maybe Pose)]
+unmerged rows = [r | r@(_, _, Tracked{outSeen = Seen{seenMerged = 0}}, _) <- rows]
+
+-- | The frames from the given time on.
+after :: Double -> [(Double, Pose, Outcome, Maybe Pose)] -> [(Double, Pose, Outcome, Maybe Pose)]
+after t0 = filter (\(t, _, _, _) -> t >= t0)

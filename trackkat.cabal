@@ -22,6 +22,7 @@ library
     TrackKat.Frame
     TrackKat.GamePose
     TrackKat.Linear
+    TrackKat.Match
     TrackKat.Number
     TrackKat.Pose
     TrackKat.Protocol

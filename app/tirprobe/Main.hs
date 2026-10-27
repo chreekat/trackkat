@@ -160,7 +160,7 @@ run opts cam = do
                             writeIORef frames 0
                             writeIORef lastPrint now
                             let fps = fromIntegral count / (now - t0) :: Double
-                                blobs = stripesToBlobs 15 2500 stripes
+                                blobs = findBlobs stripes
                             putStrLn $
                                 if optBlobs opts
                                     then summary n fps blobs
@@ -187,7 +187,7 @@ describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
 
 showOutcome :: Outcome -> String
 showOutcome (Lost n) = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
-showOutcome (Tracked hp dist err) =
+showOutcome (Tracked hp dist err seen) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
         (yaw hp)
@@ -198,6 +198,7 @@ showOutcome (Tracked hp dist err) =
         (tz hp)
         dist
         err
+        ++ describeSeen seen
 
 summary :: (Integral a) => a -> Double -> [Blob] -> String
 summary n fps blobs =
@@ -209,7 +210,9 @@ summary n fps blobs =
         (if length blobs == 1 then "" else "s")
         ++ concatMap showBlob blobs
   where
-    showBlob b = printf " (%6.1f, %6.1f) %4dpx" (blobX b) (blobY b) (blobPoints b)
+    -- Elongation, length to width: about 1 for one reflector, more for two
+    -- run together.
+    showBlob b = printf " (%6.1f, %6.1f) %4dpx %3.1f:1" (blobX b) (blobY b) (blobPoints b) (blobElongation b)
 
 describeRaw :: Packet -> String
 describeRaw (Frame n ss) = "frame " ++ show n ++ " " ++ show ss

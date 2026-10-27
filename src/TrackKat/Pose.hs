@@ -14,6 +14,9 @@ module TrackKat.Pose (
     project,
     identify,
     solvePose,
+    Observation (..),
+    solveNear,
+    poseChange,
     Level,
     cameraLevel,
     levelFromUp,
@@ -96,12 +99,16 @@ project k (Pose r t) p =
     let V3 x y z = mulMV r p ^+^ t
      in (cx k + focal k * x / z, cy k + focal k * y / z)
 
--- | Match three blob centroids to (left, right, top): the highest in the
--- image is the top reflector, the other two go by x.
-identify :: [(Double, Double)] -> Maybe ((Double, Double), (Double, Double), (Double, Double))
-identify pts = case sortOn snd pts of
+-- | Match three blobs, given their centroids, to (left, right, top): the
+-- highest in the image is the top reflector, the other two go by x.
+--
+-- This is only a guess for when there is no recent pose to predict from:
+-- with the camera above the head, the top reflector can appear level with
+-- or below a lower one.
+identify :: (a -> (Double, Double)) -> [a] -> Maybe (a, a, a)
+identify at blobs = case sortOn (snd . at) blobs of
     [top, a, b]
-        | fst a <= fst b -> Just (a, b, top)
+        | fst (at a) <= fst (at b) -> Just (a, b, top)
         | otherwise -> Just (b, a, top)
     _ -> Nothing
 
@@ -131,6 +138,66 @@ solvePose k m guess obs@(l, r, _) =
         p <- levenbergMarquardt residuals p0
         let V3 _ _ z = poseT p
         if z > 0 then Just (p, rms p) else Nothing
+
+-- | A reflector seen in the image: its place on the model, how much its
+-- position counts (1 for a clearly seen reflector, less for a dim or
+-- uncertain one), and where it was seen.
+data Observation = Observation
+    { obPoint :: V3
+    , obWeight :: Double
+    , obSeen :: (Double, Double)
+    }
+    deriving (Show)
+
+-- | Refine a pose to fit what was seen, starting from a recent pose and held
+-- gently toward it, so that what the observations leave free (with one
+-- reflector unseen, turning about the line through the other two) stays
+-- where it was. The hold is on rotation and on the movement of the given
+-- pivot, a point in the model's axes that the head turns about, so that
+-- turning the head is preferred to sliding it.
+--
+-- Returns the pose and the weighted RMS reprojection error in pixels.
+solveNear :: Intrinsics -> V3 -> Pose -> [Observation] -> Maybe (Pose, Double)
+solveNear k pivot recent@(Pose r0 _) obs
+    | totalWeight <= 0 = Nothing
+    | otherwise = do
+        p <- levenbergMarquardt residuals recent
+        let V3 _ _ z = poseT p
+        if z > 0 then Just (p, fit p) else Nothing
+  where
+    totalWeight = sum [w * w | Observation _ w _ <- obs]
+    reprojection pose =
+        concat [let (pu, pv) = project k pose p in [w * (pu - u), w * (pv - v)] | Observation p w (u, v) <- obs]
+    residuals pose = reprojection pose ++ hold pose
+    hold pose@(Pose r _) =
+        let V3 a b c = turnBetween r0 r
+            V3 x y z = pivotAt pose ^-^ pivotAt recent
+         in map (holdTurn *) [a, b, c] ++ map (holdMove *) [x, y, z]
+    pivotAt (Pose r t) = mulMV r pivot ^+^ t
+    fit pose = sqrt (sum (map (^ (2 :: Int)) (reprojection pose)) / totalWeight)
+
+-- | How strongly 'solveNear' holds a pose where it was: pixels of
+-- reprojection error worth one radian of turning, and one mm of movement.
+-- About a twentieth of a pixel per degree or mm, far weaker than what a
+-- reflector in view says about any direction it can see.
+holdTurn, holdMove :: Double
+holdTurn = 3
+holdMove = 0.05
+
+-- | The turn from one rotation to another, as sin(angle) times the axis:
+-- smooth near no turn at all.
+turnBetween :: M33 -> M33 -> V3
+turnBetween from to =
+    let M33 (V3 _ a01 a02) (V3 a10 _ a12) (V3 a20 a21 _) = to `mulMM` transpose from
+     in 0.5 *^ V3 (a21 - a12) (a02 - a20) (a10 - a01)
+
+-- | How far apart two poses are: degrees of turning, and mm the given pivot
+-- (a point in the model's axes) moved.
+poseChange :: V3 -> Pose -> Pose -> (Double, Double)
+poseChange pivot (Pose r0 t0) (Pose r t) =
+    ( norm (rotationVector (r `mulMM` transpose r0)) * 180 / pi
+    , norm ((mulMV r pivot ^+^ t) ^-^ (mulMV r0 pivot ^+^ t0))
+    )
 
 -- | A head squarely facing the camera, at the distance that makes the two
 -- lower reflectors as far apart as observed.
@@ -169,7 +236,7 @@ levenbergMarquardt residuals = go (50 :: Int) 1e-3
                         let p' = step p d
                             c1 = cost p'
                          in if c1 < c0
-                                then if c0 - c1 < 1e-10 * c0 then Just p' else go (n - 1) (lambda / 10) p'
+                                then if c0 - c1 < 1e-10 * c0 || c0 - c1 < 1e-4 then Just p' else go (n - 1) (lambda / 10) p'
                                 else if lambda > 1e8 then Just p else go (n - 1) (lambda * 10) p
       where
         c0 = cost p
