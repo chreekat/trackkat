@@ -67,7 +67,6 @@ library window
   build-depends:
     , base
     , bindings-GLFW  ^>=3.3.9.3
-    , bytestring     ^>=0.12.2
     , containers     ^>=0.8
     , dear-imgui     ^>=2.5.0
     , directory      ^>=1.3.10

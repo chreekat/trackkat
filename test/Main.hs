@@ -8,7 +8,7 @@ import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
 import Data.Either (isLeft)
 import Data.IORef
-import Data.List (mapAccumL, sortOn)
+import Data.List (isInfixOf, mapAccumL, sortOn)
 import Data.Maybe (isNothing)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
@@ -17,8 +17,8 @@ import System.IO (readFile')
 import TrackKat.Calibration
 import TrackKat.Config
 import TrackKat.Frame
-import TrackKat.Icon
 import TrackKat.GamePose
+import TrackKat.Icon
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
@@ -652,6 +652,9 @@ main = do
     check "icon paused" (statusIcon tracking{stOutput = Paused} == Icon LookTracking PausedMark)
     check "icon searching" (statusIcon initialStatus == Icon LookSearching NoMark)
     check "tip" (statusTip tracking == "trackkat\nTracking\nGame connected")
+    forM_ ["icons/tray.svg", "icons/trackkat.svg"] $ \svg -> do
+        drawing <- readFile' svg
+        check ("the cat as " ++ svg ++ " draws it") (("d=\"" ++ catPathData ++ "\"") `isInfixOf` drawing)
     let pixels = iconPixels 16 (statusIcon tracking)
     check "icon size" (B.length pixels == 16 * 16 * 4)
     check "icon corner clear, centre opaque" (B.index pixels 3 == 0 && B.index pixels ((8 * 16 + 8) * 4 + 3) == 255)
