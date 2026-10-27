@@ -6,6 +6,7 @@ module TrackKat.Tracker (
     trackerCentre,
     Request (..),
     request,
+    setModel,
     Event (..),
     Outcome (..),
     step,
@@ -81,6 +82,11 @@ trackerCentre = trReference
 
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
+
+-- | Track a differently shaped clip from the next frame, recentering then,
+-- since the clip's axes move with its shape.
+setModel :: Model -> Tracker -> Tracker
+setModel m t = request Recenter t{trModel = m}
 
 -- | Seconds of head turning to calibrate level from.
 calibrationSeconds :: Double
