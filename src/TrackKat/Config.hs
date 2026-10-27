@@ -1,5 +1,5 @@
 -- | trackkat's settings file, as @name = value@ lines: hotkey and joystick
--- button bindings, smoothing and response curves.
+-- button bindings, smoothing, response curves and the clip's shape.
 module TrackKat.Config (
     Config (..),
     defaultConfig,
@@ -10,6 +10,10 @@ module TrackKat.Config (
     settingNames,
     settingValues,
     editSettings,
+    ClipShape,
+    clipShape,
+    clipDistances,
+    clipModel,
     Binding (..),
     Modifier (..),
     Joystick (..),
@@ -31,6 +35,7 @@ import Data.List (dropWhileEnd, findIndices, intercalate, nub)
 import Data.Maybe (fromMaybe)
 
 import TrackKat.Number
+import TrackKat.Pose (Model, triangle)
 import TrackKat.Response
 
 data Config = Config
@@ -38,11 +43,35 @@ data Config = Config
     , pauseBindings :: [Binding]
     , trimBindings :: [Binding]
     , response :: Response
+    , clip :: ClipShape
     }
     deriving (Eq, Show)
 
+-- | The headset clip's triangle of reflectors, as distances in mm: left to
+-- right, left to top, right to top. Only 'clipShape' makes one, so its
+-- model always exists.
+data ClipShape = ClipShape (Double, Double, Double) Model
+    deriving (Show)
+
+instance Eq ClipShape where
+    a == b = clipDistances a == clipDistances b
+
+-- | A clip from its three distances, if they are positive and form a
+-- triangle. The top reflector's post is taken to lean back 45 degrees.
+clipShape :: Double -> Double -> Double -> Maybe ClipShape
+clipShape lr lt rt
+    | all (> 0) [lr, lt, rt] = ClipShape (lr, lt, rt) <$> triangle 45 lr lt rt
+    | otherwise = Nothing
+
+clipDistances :: ClipShape -> (Double, Double, Double)
+clipDistances (ClipShape d _) = d
+
+clipModel :: ClipShape -> Model
+clipModel (ClipShape _ m) = m
+
 -- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
--- DCS; strong smoothing.
+-- DCS; strong smoothing; the headset clip trackkat was developed with, its
+-- post as it is now bent.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -60,9 +89,13 @@ defaultConfig =
                 , zCurve = gain 2.5
                 , lean = LeanWithView
                 }
+        , clip = defaultClip
         }
   where
     gain g = Points [(1, g)]
+    defaultClip = case clipShape 70 110 110 of
+        Just c -> c
+        Nothing -> error "defaultClip"
 
 -- | A key, or a mouse button named as one, with modifiers held; or a
 -- joystick button numbered from 1.
@@ -138,6 +171,7 @@ setting (c, k@(Knobs on s r)) name value =
             "y" -> curve leanRange (\cv x -> x{yCurve = cv})
             "z" -> curve leanRange (\cv x -> x{zCurve = cv})
             "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
+            "clip" -> (\cl -> (c{clip = cl}, k)) <$> parseClip value
             _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
@@ -228,6 +262,12 @@ renderConfig c =
         , "# looking up or down. lean = screen: leaning moves you the same way"
         , "# whichever way you look."
         , "lean = " ++ renderLean (lean r)
+        , ""
+        , "# clip: the headset clip's triangle of reflectors, as the camera sees"
+        , "# it, in mm, measured centre to centre: left to right along the"
+        , "# headband, left to top, then right to top. If the clip's post gets"
+        , "# bent, measure it again and change this, or the view will be off."
+        , "clip = " ++ renderClip (clip c)
         ]
   where
     r = response c
@@ -252,7 +292,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
-                ++ [("lean", renderLean (lean r))]
+                ++ [("lean", renderLean (lean r)), ("clip", renderClip (clip c))]
 
 parseLean :: String -> Either String Lean
 parseLean "view" = Right LeanWithView
@@ -262,6 +302,15 @@ parseLean _ = Left "lean is view or screen"
 renderLean :: Lean -> String
 renderLean LeanWithView = "view"
 renderLean LeanWithScreen = "screen"
+
+-- | Read three distances in mm, separated by spaces or commas or both.
+parseClip :: String -> Either String ClipShape
+parseClip value = case traverse parseNumber (words (map (\ch -> if ch == ',' then ' ' else ch) value)) of
+    Just [lr, lt, rt] -> maybe (Left "the clip's three distances don't make a triangle") Right (clipShape lr lt rt)
+    _ -> Left "clip is three distances in mm, left to right, left to top and right to top, like 70 110 110"
+
+renderClip :: ClipShape -> String
+renderClip cl = let (lr, lt, rt) = clipDistances cl in unwords (map renderNumber [lr, lt, rt])
 
 -- | Notes on the lines of a settings file that set something trackkat no
 -- longer has, which 'parseConfig' ignores.
