@@ -21,6 +21,7 @@ library
     TrackKat.Config
     TrackKat.Frame
     TrackKat.GamePose
+    TrackKat.Icon
     TrackKat.Linear
     TrackKat.Match
     TrackKat.Number
@@ -28,6 +29,7 @@ library
     TrackKat.Protocol
     TrackKat.Response
     TrackKat.Stats
+    TrackKat.Status
     TrackKat.Tracker
     TrackKat.USB
   build-depends:
@@ -48,6 +50,39 @@ library
       cbits/windows.c
     include-dirs:    cbits
     extra-libraries: advapi32 gdi32 hid shell32 user32
+
+-- trackkat's window, drawn with Dear ImGui in a GLFW window, on any
+-- platform; a library of its own so that only the programs showing it link
+-- ImGui and GLFW.
+library window
+  import:           shared
+  hs-source-dirs:   window
+  exposed-modules:
+    TrackKat.Window
+    TrackKat.Window.Curves
+  other-modules:
+    TrackKat.Window.Draw
+    TrackKat.Window.GL
+    TrackKat.Window.Style
+  build-depends:
+    , base
+    , bindings-GLFW  ^>=3.3.9.3
+    , bytestring     ^>=0.12.2
+    , containers     ^>=0.8
+    , dear-imgui     ^>=2.5.0
+    , directory      ^>=1.3.10
+    , filepath       ^>=1.5.4
+    , GLFW-b         ^>=3.3.9.1
+    , StateVar       ^>=1.2.2
+    , stm            ^>=2.5.3
+    , text           ^>=2.1.3
+    , trackkat
+
+  if os(windows)
+    extra-libraries: opengl32
+
+  else
+    extra-libraries: GL
 
 executable tirprobe
   import:           shared
@@ -75,6 +110,19 @@ executable trackkat
   if !os(windows)
     buildable: False
 
+-- The window driven by a scripted pose and status, for working on it and
+-- taking screenshots without a camera, on any platform.
+executable trackkat-window-demo
+  import:           shared
+  hs-source-dirs:   app/window-demo
+  main-is:          Main.hs
+  ghc-options:      -threaded
+  build-depends:
+    , async
+    , base
+    , trackkat
+    , trackkat:window
+
 test-suite tests
   import:           shared
   type:             exitcode-stdio-1.0
@@ -84,3 +132,4 @@ test-suite tests
     , base
     , bytestring
     , trackkat
+    , trackkat:window

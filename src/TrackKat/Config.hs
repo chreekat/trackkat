@@ -10,6 +10,9 @@ module TrackKat.Config (
     settingNames,
     settingValues,
     editSettings,
+    parseCurve,
+    Hotkey (..),
+    hotkeySetting,
     ClipShape,
     clipShape,
     clipDistances,
@@ -46,6 +49,16 @@ data Config = Config
     , clip :: ClipShape
     }
     deriving (Eq, Show)
+
+-- | An action bound to keys and joystick buttons.
+data Hotkey = RecenterKey | PauseKey | TrimKey
+    deriving (Eq, Show, Enum, Bounded)
+
+-- | The name of the setting listing a hotkey's keys and buttons.
+hotkeySetting :: Hotkey -> String
+hotkeySetting RecenterKey = "recenter"
+hotkeySetting PauseKey = "pause"
+hotkeySetting TrimKey = "trim"
 
 -- | The headset clip's triangle of reflectors, as distances in mm, left and
 -- right being the wearer's: left to right, left to top, right to top. Only

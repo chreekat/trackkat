@@ -1,1 +1,10 @@
 packages: .
+
+-- trackkat's window is Dear ImGui in a GLFW window, drawn with OpenGL 3.
+-- GLFW rather than dear-imgui's default, SDL2, because bindings-GLFW builds
+-- GLFW into the program, so the release needs no SDL2.dll.
+package dear-imgui
+  flags: +glfw -sdl
+
+-- dear-imgui 2.5.0's bounds predate GHC 9.14, which builds it.
+allow-newer: dear-imgui:base, dear-imgui:template-haskell

@@ -25,7 +25,7 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
 
-import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
+import TrackKat.Config (Binding (..), Hotkey (..), Joystick (..), modifierMask, virtualKey)
 import TrackKat.GamePose
 
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
@@ -73,10 +73,6 @@ setNPClientPath :: FilePath -> IO (Either Int ())
 setNPClientPath dir =
     withCWString (if last dir == '\\' then dir else dir ++ "\\") $ \p ->
         (\rc -> if rc == 0 then Right () else Left (fromIntegral rc)) <$> c_set_npclient_path p
-
--- | An action bound to keys and joystick buttons.
-data Hotkey = RecenterKey | PauseKey | TrimKey
-    deriving (Eq, Show, Enum, Bounded)
 
 -- | What is watched for hotkeys.
 data Watched = Keyboard | Mouse | Joysticks
