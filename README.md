@@ -78,8 +78,9 @@ side mouse buttons.
 ## Settings
 
 Change settings in the window and click **Save**, or edit `trackkat.conf`,
-beside `trackkat.exe`, in any text editor; it explains every setting. Either
-way they apply at once, while you play.
+beside `trackkat.exe`, in any text editor; it explains every setting, as
+[`trackkat.conf.example`](trackkat.conf.example) shows. Either way they apply
+at once, while you play.
 
 ## When something doesn't work
 
