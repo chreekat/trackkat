@@ -498,6 +498,20 @@ main = do
         editSettings [("pause", "F8")] "bogus\n" == Left "line 1: expected name = value"
     check "trim edited" $ editSettings [("trim", "Ctrl+F12")] userFile == Right (userFile ++ "trim = Ctrl+F12\n")
     check "trim unbound again" $ editSettings [("trim", "")] "trim = F1 # mine\n" == Right "trim = # mine\n"
+    -- The clip's shape.
+    check "clip default" $ clipDistances (clip defaultConfig) == (70, 110, 110)
+    check "clip default rendered" $ "clip = 70 110 110" `elem` lines (renderConfig defaultConfig)
+    let bent = clipShape 70 112 108
+    check "clip parsed, with commas or spaces" $
+        all (\t -> fmap clip (parseConfig t) == maybe (Left "") Right bent) ["clip = 70 112 108\n", "clip = 70,112,108\n", "clip = 70, 112 ,108\n"]
+    check "clip round-trips" $ case bent of
+        Just b -> parseConfig (renderConfig defaultConfig{clip = b}) == Right defaultConfig{clip = b}
+        Nothing -> False
+    check "clip not a triangle" $ parseConfig "clip = 70 10 10\n" == Left "line 1: the clip's three distances don't make a triangle"
+    check "clip needs three distances" $ isLeft (parseConfig "clip = 70 110\n") && isLeft (parseConfig "clip = 70 -110 -110\n")
+    check "clip change described" $ (describeChanges defaultConfig <$> parseConfig "clip = 70 112 108\n") == Right "Settings reloaded: clip = 70 112 108"
+    check "clip edited" $ editSettings [("clip", "70 112 108")] userFile == Right (userFile ++ "clip = 70 112 108\n")
+    check "clip edit checked" $ isLeft (editSettings [("clip", "1 2 30")] userFile)
     check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
     check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
 

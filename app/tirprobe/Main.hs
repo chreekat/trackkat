@@ -44,7 +44,7 @@ usage =
         , "  --blobs           show the raw blob positions instead of the pose"
         , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, left-right,"
         , "                    left-top, right-top, with the top reflector's post"
-        , "                    leaning back (default: 70,116,116)"
+        , "                    leaning back (default: 70,110,110)"
         , "  --focal F         camera focal length in pixels (default 660)"
         , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
         , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
@@ -114,9 +114,9 @@ listAll ctx = do
             status
             (if USB.devVendor d == vendorId then "   <-- NaturalPoint" else "" :: String)
 
--- | The headset clip this was developed with.
+-- | The headset clip this was developed with, its post as it is now bent.
 defaultClip :: Model
-defaultClip = maybe (error "defaultClip") id (triangle 45 70 116 116)
+defaultClip = maybe (error "defaultClip") id (triangle 45 70 110 110)
 
 splitOn :: Char -> String -> [String]
 splitOn c str = case break (== c) str of
