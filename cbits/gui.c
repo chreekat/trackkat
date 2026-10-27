@@ -297,60 +297,20 @@ static int S(int x) { return MulDiv(x, dpi, 96); }
 
 /* ---- Icons ---------------------------------------------------------------- */
 
-/* Icons are a disc coloured by state: green tracking, amber with the clip out
- * of sight, grey looking for the camera, red without one. A white dot means a
- * game is connected (like the camera's second light); white bars mean paused. */
+/* The tray icon is the cat of icons/tray.svg, its eyes glowing in a colour
+ * by state: green tracking, amber with the clip out of sight, grey looking
+ * for the camera, red without one. Each is a resource (icons/trackkat.rc),
+ * numbered from 2 in this order; 1 is the program's own icon. */
 enum { LOOK_TRACKING, LOOK_CLIP_LOST, LOOK_SEARCHING, LOOK_DOWN };
-static const COLORREF look_colour[4] = {RGB(60, 180, 100), RGB(235, 160, 40), RGB(140, 145, 155), RGB(215, 70, 60)};
+#define PROGRAM_ICON 1
+#define FIRST_TRAY_ICON 2
 
-static double coverage(double inside) { return inside < 0 ? 0 : inside > 1 ? 1 : inside; }
-
-static HICON make_icon(int size, int look, int mark)
+/* An icon from the program's resources at a size in pixels, or Windows' own
+ * if the build left it out. Shared: never destroyed. */
+static HICON resource_icon(int id, int size)
 {
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-    bi.bmiHeader.biWidth = size;
-    bi.bmiHeader.biHeight = -size;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void *bits;
-    HBITMAP colour = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
-    HBITMAP mask = CreateBitmap(size, size, 1, 1, NULL);
-    if (!colour || !mask)
-        return NULL;
-    DWORD *px = bits;
-    double c = size / 2.0, r = size / 2.0 - 0.5, edge = size / 16.0;
-    COLORREF fill = look_colour[look];
-    for (int j = 0; j < size; j++)
-        for (int i = 0; i < size; i++) {
-            double dx = i + 0.5 - c, dy = j + 0.5 - c, d = sqrt(dx * dx + dy * dy);
-            double a = coverage(r - d + 0.5);
-            /* A darker rim, so the disc shows on light and dark taskbars. */
-            double rim = coverage(d - (r - edge) + 0.5) * 0.45;
-            double cr = GetRValue(fill) * (1 - rim), cg = GetGValue(fill) * (1 - rim), cb = GetBValue(fill) * (1 - rim);
-            double w = 0;
-            if (mark == 1)
-                w = coverage(size * 0.2 - d + 0.5);
-            else if (mark == 2) {
-                double bx = fabs(fabs(dx) - size * 0.14), by = fabs(dy);
-                w = coverage(size * 0.07 - bx + 0.5) * coverage(size * 0.24 - by + 0.5);
-            }
-            cr += (255 - cr) * w;
-            cg += (255 - cg) * w;
-            cb += (255 - cb) * w;
-            px[j * size + i] = (DWORD)(a * 255) << 24 | (DWORD)cr << 16 | (DWORD)cg << 8 | (DWORD)cb;
-        }
-    ICONINFO ii;
-    memset(&ii, 0, sizeof ii);
-    ii.fIcon = TRUE;
-    ii.hbmColor = colour;
-    ii.hbmMask = mask;
-    HICON icon = CreateIconIndirect(&ii);
-    DeleteObject(colour);
-    DeleteObject(mask);
-    return icon;
+    HICON icon = LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(id), IMAGE_ICON, size, size, LR_SHARED);
+    return icon ? icon : LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
 }
 
 static int current_look(const State *st)
@@ -359,8 +319,6 @@ static int current_look(const State *st)
         return st->blobs < 0 ? LOOK_TRACKING : LOOK_CLIP_LOST;
     return st->camera == CAMERA_SEARCHING ? LOOK_SEARCHING : LOOK_DOWN;
 }
-
-static int current_mark(const State *st) { return st->paused ? 2 : st->games > 0 ? 1 : 0; }
 
 /* ---- Tray ----------------------------------------------------------------- */
 
@@ -379,32 +337,18 @@ static void update_tray(int force)
 {
     if (InterlockedCompareExchange(&stopping, 0, 0))
         return;
-    int look = current_look(&seen), mark = current_mark(&seen);
+    int look = current_look(&seen);
     wchar_t tip[128];
     describe(&seen, tip, 128);
-    int key = look * 3 + mark;
-    if (!force && tray_added && key == icon_shown && wcscmp(tip, tip_shown) == 0)
+    if (!force && tray_added && look == icon_shown && wcscmp(tip, tip_shown) == 0)
         return;
-    HICON old = nid.hIcon;
-    nid.hIcon = make_icon(GetSystemMetrics(SM_CXSMICON), look, mark);
+    nid.hIcon = resource_icon(FIRST_TRAY_ICON + look, GetSystemMetrics(SM_CXSMICON));
     copy_text(nid.szTip, 128, tip);
     if (tray_added)
         tray_added = Shell_NotifyIconW(NIM_MODIFY, &nid);
     if (!tray_added)
         tray_added = Shell_NotifyIconW(NIM_ADD, &nid);
-    if (old)
-        DestroyIcon(old);
-    if (key != icon_shown && main_hwnd) {
-        HICON big = make_icon(GetSystemMetrics(SM_CXICON), look, mark);
-        HICON small = make_icon(GetSystemMetrics(SM_CXSMICON), look, mark);
-        HICON old_big = (HICON)SendMessageW(main_hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
-        HICON old_small = (HICON)SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
-        if (old_big)
-            DestroyIcon(old_big);
-        if (old_small)
-            DestroyIcon(old_small);
-    }
-    icon_shown = key;
+    icon_shown = look;
     copy_text(tip_shown, 128, tip);
 }
 
@@ -1894,6 +1838,7 @@ static int create_windows(void)
         return 0;
     wc.lpfnWndProc = main_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hIcon = resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXICON));
     wc.lpszClassName = L"trackkat_window";
     if (!RegisterClassW(&wc))
         return 0;
@@ -1923,6 +1868,9 @@ static int create_windows(void)
                                 CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, height, NULL, NULL, inst, NULL);
     if (!main_hwnd)
         return 0;
+    /* The title bar's and taskbar's small icon, drawn at its own size
+     * rather than shrunk from the big one. */
+    SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXSMICON)));
     build_window();
 
     taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
