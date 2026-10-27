@@ -235,15 +235,32 @@ main = do
     check "empty stats" $ summary emptyWindow == "latency 0.00 ms (max 0.00)  gap max 0 ms  stripes max 0  GC 0 (max 0.00 ms)"
 
     -- Response curves.
-    let deadzone = Curve [(0.5, 0), (1.5, 1)]
-        lookBehind = Curve [(10, 10), (45, 120)]
+    let deadzone = Points [(0.5, 0), (1.5, 1)]
+        lookBehind = Points [(10, 10), (45, 120)]
         close a b = abs (a - b) < 1e-9
     check "curve deadzone" $ all (uncurry close) [(applyCurve deadzone 0.3, 0), (applyCurve deadzone 1, 0.5), (applyCurve deadzone (-1), -0.5), (applyCurve deadzone 10, 9.5)]
     check "curve gain" $ all (uncurry close) [(applyCurve lookBehind 5, 5), (applyCurve lookBehind 45, 120), (applyCurve lookBehind (-45), -120), (applyCurve lookBehind 52, 142)]
 
+    -- Multipliers with a centre precision.
+    let expos = [Multiplier m p r | m <- [0.5, 2.5, 6, 7], p <- [0, 1, 25, 40, 75, 100], r <- [yawRange, pitchRange, leanRange]]
+        across e = [reach e * t / 50 | t <- [-150 .. 150]]
+    forM_ expos $ \e -> do
+        let f = applyCurve (Expo e)
+            xs = across e
+        check ("expo never turns back " ++ show e) $ and (zipWith (<=) (map f xs) (drop 1 (map f xs)))
+        check ("expo the same both sides " ++ show e) $ all (\x -> close (f (-x)) (negate (f x))) xs
+        check ("expo reaches the end of the view " ++ show e) $ close (f (reach e)) (viewRange e) && close (f (-reach e)) (negate (viewRange e))
+        check ("expo continues past the reach " ++ show e) $ abs (f (reach e * 1.000001) - viewRange e) < 1e-3
+        check ("expo gentler near centre " ++ show e) $
+            if precision e == 0
+                then all (\x -> close (f x) (factor e * x)) xs
+                else all (\x -> abs (f x) < factor e * abs x) [x | x <- xs, x /= 0, abs x < reach e]
+    check "expo at the centre" $ applyCurve (Expo (Multiplier 6 40 yawRange)) 0 == 0
+    check "expo reach" $ close (reach (Multiplier 6 40 yawRange)) 30
+
     -- Shaping: jumps a head can't make are held off unless they persist;
     -- smoothing settles still jitter and follows steps.
-    let linear = Curve [(1, 1)]
+    let linear = Points [(1, 1)]
         plain = Response NoSmoothing linear linear linear linear linear linear LeanWithScreen
         smooth = plain{smoothing = Smoothing 1 0.05}
         at y = HeadPose{yaw = y, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0}
@@ -281,6 +298,39 @@ main = do
     check "old smoothing form rejected" $ parseConfig "smoothing = 1 0.05" == Left "line 1: smoothing is on or off"
     check "curve inputs must increase" $ parseConfig "pitch = 5:5 3:9" == Left "line 1: curve inputs must be positive and increasing"
     check "curve points must be numbers" $ parseConfig "z = 1:x" == Left "line 1: expected input:output, not \"1:x\""
+    let curvesOf = fmap ((\r -> [yawCurve r, pitchCurve r, rollCurve r, xCurve r, yCurve r, zCurve r]) . response) . parseConfig
+    check "curves with precision" $
+        curvesOf "yaw = 1:6, precision 40\npitch = 2:14 , precision 0\nroll = 1:4\nx = 1:3, precision 100\ny = 1:4,precision 5\n"
+            == Right
+                [ Expo (Multiplier 6 40 yawRange)
+                , Expo (Multiplier 7 0 pitchRange)
+                , Points [(1, 4)]
+                , Expo (Multiplier 3 100 leanRange)
+                , Expo (Multiplier 4 5 leanRange)
+                , Points [(1, 2.5)]
+                ]
+    check "precision with several points" $
+        parseConfig "yaw = 1:6 2:9, precision 40" == Left "line 1: a centre precision goes with one input:output point, both above 0, like 1:6, precision 40"
+    check "precision with no multiplier" $
+        parseConfig "yaw = 1:0, precision 40" == Left "line 1: a centre precision goes with one input:output point, both above 0, like 1:6, precision 40"
+    check "precision out of range" $ parseConfig "yaw = 1:6, precision 101" == Left "line 1: precision is a number from 0 to 100"
+    check "not a precision" $ parseConfig "yaw = 1:6, expo 40" == Left "line 1: expected precision and a number, not \"expo 40\""
+    check "precision with no points" $ parseConfig "yaw = , precision 40" == Left "line 1: a curve needs at least one input:output point"
+    check "two commas" $ parseConfig "yaw = 1:6, precision 4, 5" == Left "line 1: a curve has at most one comma, before its precision"
+    let withExpos =
+            defaultConfig
+                { response =
+                    (response defaultConfig)
+                        { yawCurve = Expo (Multiplier 6 40 yawRange)
+                        , zCurve = Expo (Multiplier 2.5 12.5 leanRange)
+                        , rollCurve = deadzone
+                        }
+                }
+    check "curves round-trip" $ parseConfig (renderConfig withExpos) == Right withExpos
+    check "precision written" $
+        editSettings [("yaw", "1:6, precision 40")] "yaw = 1:6 # mine\n" == Right "yaw = 1:6, precision 40 # mine\n"
+    check "precision described" $
+        (describeChanges defaultConfig <$> parseConfig "yaw = 1:6, precision 40\n") == Right "Settings reloaded: yaw = 1:6, precision 40"
 
     let reloaded text = describeChanges defaultConfig <$> parseConfig text
     check "nothing changed" $ reloaded "# just a comment\n" == Right "Settings reloaded."
@@ -377,7 +427,7 @@ main = do
     let ahead = leanWithView HeadPose{yaw = 0, pitch = 30, roll = 0, tx = 4, ty = 0, tz = -7}
     check "looking ahead, leaning is unchanged" $ abs (tx ahead - 4) < 1e-12 && abs (tz ahead + 7) < 1e-12
     -- The lean turns by the yaw the game shows, after the curves.
-    let viewing = plain{yawCurve = Curve [(1, 6)], lean = LeanWithView}
+    let viewing = plain{yawCurve = Points [(1, 6)], lean = LeanWithView}
         (shapedBack, _) = shape viewing 0 HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     check ("lean follows the curved yaw " ++ show shapedBack) $
         abs (yaw shapedBack - 160) < 1e-9 && abs (tx shapedBack - 10 * cos (deg 160)) < 1e-9 && abs (tz shapedBack + 10 * sin (deg 160)) < 1e-9
