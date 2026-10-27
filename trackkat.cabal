@@ -64,6 +64,8 @@ library window
     TrackKat.Window.Draw
     TrackKat.Window.GL
     TrackKat.Window.Style
+  cxx-sources:      cbits/imgui_opengl3.cpp
+  cxx-options:      -std=c++11
   build-depends:
     , base
     , bindings-GLFW  ^>=3.3.9.3

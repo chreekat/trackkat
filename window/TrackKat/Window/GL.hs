@@ -1,6 +1,10 @@
 -- | The few C calls the window makes itself, around ImGui and GLFW:
--- clearing the frame, and the clipboard.
+-- ImGui's OpenGL 3 renderer (see cbits/imgui_opengl3.cpp), clearing the
+-- frame, and the clipboard.
 module TrackKat.Window.GL (
+    rendererInit,
+    rendererNewFrame,
+    renderDrawData,
     clearFrame,
     setClipboard,
 ) where
@@ -13,6 +17,19 @@ import qualified Graphics.UI.GLFW as GLFW
 import Graphics.UI.GLFW.C (toC)
 
 import DearImGui.Internal.Text (withCString)
+import DearImGui.Raw (DrawData (..))
+
+foreign import ccall unsafe "trackkat_opengl3_init" c_init :: IO CInt
+foreign import ccall unsafe "trackkat_opengl3_new_frame" rendererNewFrame :: IO ()
+foreign import ccall unsafe "trackkat_opengl3_render" c_render :: Ptr () -> IO ()
+
+-- | Start ImGui's OpenGL 3 renderer, in the current OpenGL context; False
+-- if it can't.
+rendererInit :: IO Bool
+rendererInit = (/= 0) <$> c_init
+
+renderDrawData :: DrawData -> IO ()
+renderDrawData (DrawData p) = c_render p
 
 -- OpenGL 1.1, which every OpenGL library exports by name; on 64-bit
 -- Windows its calling convention is C's.
