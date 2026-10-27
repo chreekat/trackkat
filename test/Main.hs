@@ -17,13 +17,16 @@ import System.IO (readFile')
 import TrackKat.Calibration
 import TrackKat.Config
 import TrackKat.Frame
+import TrackKat.Icon
 import TrackKat.GamePose
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
 import TrackKat.Response
 import TrackKat.Stats
+import TrackKat.Status
 import TrackKat.Tracker
+import TrackKat.Window.Curves
 
 main :: IO ()
 main = do
@@ -641,6 +644,28 @@ main = do
             stepSizes = zipWith (\(_, _, _, a) (_, _, _, b) -> maybe 0 fst (poseError <$> a <*> b)) swept (drop 1 swept)
         check ("sweep with the " ++ name ++ " clip " ++ show (summed swept, maximum stepSizes)) $
             lostCount swept == 0 && fst (worstError (unmerged swept)) < 1 && fst (worstError swept) < 4 && snd (worstError swept) < 20 && maximum stepSizes < 3
+
+    -- The window's curve editing: reading a curve, writing it back, what a
+    -- multiplier comes to, and stepping it by halves.
+    check "multiplier read" (readCurveForm Yaw "1:6" == MultiplierForm 6 0)
+    check "multiplier with precision read" (readCurveForm Yaw "1:6, precision 40" == MultiplierForm 6 40)
+    check "points read" (formFactor (readCurveForm Yaw "10:10 45:120") == Just (120 / 45))
+    check "unreadable curve" (case readCurveForm Yaw "6" of Unreadable _ -> True; _ -> False)
+    check "multiplier written" (multiplierText 6 0 == "1:6" && multiplierText 2.5 40 == "1:2.5, precision 40")
+    check "multiplier round trip" (readCurveForm Pitch (multiplierText 7.25 15) == MultiplierForm 7.25 15)
+    check "reach described" (describeReach Yaw 6 == "30° turn looks behind" && describeReach X 3 == "100 mm lean moves 300 mm")
+    check "stepped by halves" (map (stepMultiplier GT) [6, 6.2, 0.5] == [6.5, 6.5, 1] && map (stepMultiplier LT) [6, 6.2, 1, 0.5] == [5.5, 6, 0.5, 0.5])
+
+    -- The icon: its colour and mark by status, and its pixels.
+    let tracking = initialStatus{stCamera = Tracking, stSighting = InSight centred (Seen 0 0 0), stGames = 1}
+        centred = HeadPose 0 0 0 0 0 0
+    check "icon tracking with a game" (statusIcon tracking == Icon LookTracking GameMark)
+    check "icon paused" (statusIcon tracking{stOutput = Paused} == Icon LookTracking PausedMark)
+    check "icon searching" (statusIcon initialStatus == Icon LookSearching NoMark)
+    check "tip" (statusTip tracking == "trackkat\nTracking\nGame connected")
+    let pixels = iconPixels 16 (statusIcon tracking)
+    check "icon size" (B.length pixels == 16 * 16 * 4)
+    check "icon corner clear, centre opaque" (B.index pixels 3 == 0 && B.index pixels ((8 * 16 + 8) * 4 + 3) == 255)
 
     n <- readIORef failures
     if n == 0 then putStrLn "all tests passed" else exitFailure

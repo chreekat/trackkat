@@ -12,6 +12,7 @@ module TrackKat.Tracker (
     Outcome (..),
     Seen (..),
     describeSeen,
+    seenNotes,
     findBlobs,
     step,
 ) where
@@ -72,14 +73,17 @@ data Seen = Seen
 -- the reflectors appeared, like "   2 of 3 reflectors, +1 stray"; empty if
 -- they were three blobs and nothing else.
 describeSeen :: Seen -> String
-describeSeen (Seen missing merged strays) = case notes of
+describeSeen seen = case seenNotes seen of
     [] -> ""
-    _ -> "   " ++ intercalate ", " notes
-  where
-    notes =
-        [show (3 - missing) ++ " of 3 reflectors" | missing > 0]
-            ++ ["merged" | merged > 0]
-            ++ ["+" ++ show strays ++ (if strays == 1 then " stray" else " strays") | strays > 0]
+    notes -> "   " ++ intercalate ", " notes
+
+-- | What was unusual about how the reflectors appeared, like
+-- @["2 of 3 reflectors", "+1 stray"]@.
+seenNotes :: Seen -> [String]
+seenNotes (Seen missing merged strays) =
+    [show (3 - missing) ++ " of 3 reflectors" | missing > 0]
+        ++ ["merged" | merged > 0]
+        ++ ["+" ++ show strays ++ (if strays == 1 then " stray" else " strays") | strays > 0]
 
 -- | A requested calibration of level in progress.
 data Sweep

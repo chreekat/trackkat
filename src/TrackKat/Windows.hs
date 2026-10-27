@@ -32,7 +32,7 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
 
-import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
+import TrackKat.Config (Binding (..), Hotkey (..), Joystick (..), modifierMask, virtualKey)
 import TrackKat.GamePose
 
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
@@ -120,10 +120,6 @@ takeTrackIRGame = do
         else do
             name <- c_scrambled_game game
             Just . (fromIntegral game,) <$> (if name == nullPtr then pure Nothing else Just <$> peekCString name)
-
--- | An action bound to keys and joystick buttons.
-data Hotkey = RecenterKey | PauseKey | TrimKey
-    deriving (Eq, Show, Enum, Bounded)
 
 -- | What is watched for hotkeys.
 data Watched = Keyboard | Mouse | Joysticks
