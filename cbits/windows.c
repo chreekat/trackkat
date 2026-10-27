@@ -136,8 +136,10 @@ int hts_set_npclient_path(const wchar_t *dir)
 
 /* Keys are watched with a low-level keyboard hook rather than RegisterHotKey,
  * which refuses F12 (reserved for debuggers) and swallows the key, hiding it
- * from games bound to the same key. Joysticks (joystick.c) are watched on
- * the same thread. */
+ * from games bound to the same key. The middle and side mouse buttons are
+ * watched with a low-level mouse hook, as keys with their virtual-key codes,
+ * and likewise never swallowed. Joysticks (joystick.c) are watched on the
+ * same thread. */
 
 /* Modifier flags, as RegisterHotKey numbers them. */
 #define HK_ALT 0x1
@@ -165,7 +167,7 @@ static int staged_count;
 
 static volatile LONG hotkey_presses;
 static volatile LONG hotkey_status; /* 0 starting, 1 started */
-static DWORD keyboard_error, joystick_error;
+static DWORD keyboard_error, mouse_error, joystick_error;
 static DWORD held_vk; /* a bound key now held down, so repeats are ignored */
 
 /* Start gathering a new set of bindings; the old ones stay in force until
@@ -225,27 +227,45 @@ unsigned hts_modifiers_held(void)
     return m;
 }
 
+/* Note the actions bound to a key, or mouse button, pressed with the
+ * modifiers held now; returns them. */
+static LONG press_key(DWORD vk)
+{
+    LONG pressed = (LONG)(hts_modifiers_held() << 16 | vk);
+    LONG hit = 0;
+    AcquireSRWLockShared(&bindings_lock);
+    for (int i = 0; i < binding_count; i++)
+        if (bindings[i].key == pressed)
+            hit |= bindings[i].action;
+    ReleaseSRWLockShared(&bindings_lock);
+    if (hit)
+        InterlockedOr(&hotkey_presses, hit);
+    return hit;
+}
+
 static LRESULT CALLBACK keyboard_hook(int code, WPARAM wparam, LPARAM lparam)
 {
     if (code == HC_ACTION) {
         const KBDLLHOOKSTRUCT *k = (const KBDLLHOOKSTRUCT *)lparam;
         if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
-            if (k->vkCode != held_vk) {
-                LONG pressed = (LONG)(hts_modifiers_held() << 16 | k->vkCode);
-                LONG hit = 0;
-                AcquireSRWLockShared(&bindings_lock);
-                for (int i = 0; i < binding_count; i++)
-                    if (bindings[i].key == pressed)
-                        hit |= bindings[i].action;
-                ReleaseSRWLockShared(&bindings_lock);
-                if (hit) {
-                    held_vk = k->vkCode;
-                    InterlockedOr(&hotkey_presses, hit);
-                }
-            }
+            if (k->vkCode != held_vk && press_key(k->vkCode))
+                held_vk = k->vkCode;
         } else if ((wparam == WM_KEYUP || wparam == WM_SYSKEYUP) && k->vkCode == held_vk) {
             held_vk = 0;
         }
+    }
+    return CallNextHookEx(NULL, code, wparam, lparam);
+}
+
+/* Mouse buttons don't repeat, so each press counts. */
+static LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam)
+{
+    if (code == HC_ACTION) {
+        const MSLLHOOKSTRUCT *m = (const MSLLHOOKSTRUCT *)lparam;
+        if (wparam == WM_MBUTTONDOWN)
+            press_key(VK_MBUTTON);
+        else if (wparam == WM_XBUTTONDOWN)
+            press_key(HIWORD(m->mouseData) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2);
     }
     return CallNextHookEx(NULL, code, wparam, lparam);
 }
@@ -274,9 +294,11 @@ static DWORD WINAPI hotkey_thread(LPVOID unused)
     (void)unused;
     HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboard_hook, GetModuleHandleW(NULL), 0);
     keyboard_error = hook ? 0 : GetLastError();
+    HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, GetModuleHandleW(NULL), 0);
+    mouse_error = mouse ? 0 : GetLastError();
     joystick_error = joysticks_watch();
     InterlockedExchange(&hotkey_status, 1);
-    if (keyboard_error && joystick_error)
+    if (keyboard_error && mouse_error && joystick_error)
         return 0;
 
     /* The hook and the joystick window run only while this thread pumps
@@ -286,23 +308,27 @@ static DWORD WINAPI hotkey_thread(LPVOID unused)
         DispatchMessageW(&msg);
     if (hook)
         UnhookWindowsHookEx(hook);
+    if (mouse)
+        UnhookWindowsHookEx(mouse);
     return 0;
 }
 
-/* Start watching the keyboard and joysticks for bound keys and buttons on a
- * thread of their own. Returns 0, or a Windows error code if the keyboard
- * can't be watched; sets *joysticks_error likewise. */
-int hts_hotkeys_start(int *joysticks_error)
+/* Start watching the keyboard, mouse and joysticks for bound keys and
+ * buttons on a thread of their own. Returns 0, or a Windows error code if
+ * the keyboard can't be watched; sets *mouse_err and *joysticks_err
+ * likewise. */
+int hts_hotkeys_start(int *mouse_err, int *joysticks_err)
 {
     HANDLE t = CreateThread(NULL, 0, hotkey_thread, NULL, 0, NULL);
     if (!t) {
-        *joysticks_error = (int)GetLastError();
-        return *joysticks_error;
+        *joysticks_err = *mouse_err = (int)GetLastError();
+        return *joysticks_err;
     }
     CloseHandle(t);
     while (InterlockedCompareExchange(&hotkey_status, 0, 0) == 0)
         Sleep(1);
-    *joysticks_error = (int)joystick_error;
+    *mouse_err = (int)mouse_error;
+    *joysticks_err = (int)joystick_error;
     return (int)keyboard_error;
 }
 

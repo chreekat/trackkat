@@ -237,6 +237,7 @@ void hts_gui_add_binding(int which, const wchar_t *binding)
 
 #define WM_APP_TRAY (WM_APP + 1)
 #define WM_APP_SHOW (WM_APP + 2)
+#define WM_APP_CAPTURE_MOUSE (WM_APP + 3) /* to an Add button, once its click is done */
 #define TIMER_ID 1
 #define TIMER_MS 33
 
@@ -1034,8 +1035,11 @@ static int is_modifier(WPARAM vk)
 static void end_capture(void)
 {
     LONG which = InterlockedExchange(&capturing, -1);
-    if (which >= 0)
+    if (which >= 0) {
         SetWindowTextW(add_button[which], L"Add key or button…");
+        if (GetCapture() == add_button[which])
+            ReleaseCapture();
+    }
 }
 
 static void start_capture(int which)
@@ -1044,14 +1048,24 @@ static void start_capture(int which)
     InterlockedExchange(&capturing, which);
     SetWindowTextW(add_button[which], L"Press it now…");
     SetFocus(add_button[which]);
+    /* The button lets the mouse go after reporting its click. */
+    PostMessageW(add_button[which], WM_APP_CAPTURE_MOUSE, 0, 0);
 }
 
-/* An Add button, once clicked, takes the next key pressed (and Haskell the
- * next joystick button) and adds it to its list. Clicking elsewhere stops
- * it waiting. */
-static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+/* Take a key or mouse button, as a virtual-key code, for the list waiting. */
+static void choose_key(int which, unsigned vk)
 {
     static const LONG chosen_action[LISTS] = {ACT_KEY_RECENTER, ACT_KEY_PAUSE, ACT_KEY_TRIM};
+    InterlockedExchange(&chosen_keys[which], (LONG)(hts_modifiers_held() << 16 | vk));
+    InterlockedOr(&actions, chosen_action[which]);
+    end_capture();
+}
+
+/* An Add button, once clicked, takes the next key, or middle or side mouse
+ * button over trackkat's window, pressed (and Haskell the next joystick
+ * button) and adds it to its list. Clicking stops it waiting. */
+static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+{
     int id = GetDlgCtrlID(w);
     int which = id == ID_ADD_PAUSE ? 1 : id == ID_ADD_TRIM ? 2 : 0;
     int waiting = InterlockedCompareExchange(&capturing, 0, 0) == which;
@@ -1065,12 +1079,31 @@ static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         if (!waiting)
             break;
         if (!is_modifier(wp)) {
-            InterlockedExchange(&chosen_keys[which], (LONG)(hts_modifiers_held() << 16 | (unsigned)wp));
-            InterlockedOr(&actions, chosen_action[which]);
             swallow_key_up = 1;
-            end_capture();
+            choose_key(which, (unsigned)wp);
         }
         return 0;
+    case WM_APP_CAPTURE_MOUSE:
+        if (waiting)
+            SetCapture(w);
+        return 0;
+    case WM_MBUTTONDOWN:
+        if (!waiting)
+            break;
+        choose_key(which, VK_MBUTTON);
+        return 0;
+    case WM_XBUTTONDOWN:
+        if (!waiting)
+            break;
+        choose_key(which, GET_XBUTTON_WPARAM(wp) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2);
+        return TRUE;
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+        if (waiting && GetCapture() == w) {
+            end_capture();
+            return 0;
+        }
+        break;
     case WM_CHAR:
     case WM_SYSCHAR:
         if (waiting || swallow_key_up)

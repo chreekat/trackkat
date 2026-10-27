@@ -53,8 +53,8 @@ Keys work from anywhere, including inside games:
 - **F12** recenters. A game's own "recenter TrackIR" binding does too.
 - **F9** pauses: games see your head held still until you press it again.
 
-Either can be a joystick or HOTAS button instead, or as well; see
-[Settings](#settings).
+Either can be a joystick or HOTAS button, or the middle or a side mouse
+button, instead or as well; see [Settings](#settings).
 
 **Trim** makes where you look in the game the new forward. In DCS, to work
 the left MFD and the keyboard unit while entering waypoints, look at them
@@ -182,14 +182,14 @@ line and carries on with the settings it had. If you had trackkat before
 smoothing and curves existed, delete the file and trackkat writes a fresh
 one with the new settings documented.
 
-- `recenter = F12`, `pause = Ctrl+F9`, `trim = Ctrl+F12`: keys, or
-  joystick buttons such as
+- `recenter = F12`, `pause = Ctrl+F9`, `trim = Ctrl+F12`: keys, mouse
+  buttons, or joystick buttons such as
   `recenter = Throttle - HOTAS Warthog button 23`. Separate several with
   commas: `pause = F9, Joystick - HOTAS Warthog button 5`. In trackkat's
-  window, **Add key or button…** adds the next key or joystick button you
-  press. For a minute after it starts, and for a minute after you type `j`
-  and Enter in its console, trackkat prints each joystick button you press,
-  ready to copy:
+  window, **Add key or button…** adds the next key, mouse button (over the
+  window) or joystick button you press. For a minute after it starts, and
+  for a minute after you type `j` and Enter in its console, trackkat prints
+  each joystick button you press, ready to copy:
 
   ```
   Joystick button pressed: Throttle - HOTAS Warthog button 23
@@ -200,6 +200,13 @@ one with the new settings documented.
   connected or disconnected. Joysticks plugged in while it runs, or that
   come back after sleep, work straight away. A setting left empty, as in
   `trim =`, has no keys or buttons; that is how trim starts.
+
+  The mouse buttons are `MouseMiddle`, `Mouse4` and `Mouse5` (the side
+  buttons, back and forward), with keys held or not: `recenter = Ctrl+Mouse4`.
+  Other programs still see them. The left and right buttons can't be bound.
+  Extra buttons on mice such as Logitech's are invisible to Windows until
+  the mouse's own software (G HUB) gives them a keystroke; give them F13 to
+  F24, which no keyboard has and DCS doesn't use, and bind those here.
 - `steadiness = 90`, from 0 to 100: how still the view stays while your
   head is still. Raise it if the view jitters; lower it if the view feels
   floaty or drifts into place.

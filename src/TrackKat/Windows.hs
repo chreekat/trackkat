@@ -39,7 +39,7 @@ foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
 foreign import ccall unsafe "hts_bind_key" c_bind_key :: CInt -> CUInt -> CUInt -> IO ()
 foreign import ccall unsafe "hts_bind_button" c_bind_button :: CInt -> CWString -> CInt -> CInt -> IO ()
 foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
-foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> IO CInt
+foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
 foreign import ccall unsafe "hts_hotkeys_take" c_hotkeys_take :: IO CInt
 foreign import ccall unsafe "hts_joystick_event" c_joystick_event :: CWString -> CInt -> Ptr CInt -> Ptr CInt -> IO CInt
 
@@ -79,7 +79,7 @@ data Hotkey = RecenterKey | PauseKey | TrimKey
     deriving (Eq, Show, Enum, Bounded)
 
 -- | What is watched for hotkeys.
-data Watched = Keyboard | Joysticks
+data Watched = Keyboard | Mouse | Joysticks
     deriving (Eq, Show)
 
 -- | Bind the hotkeys, each to its keys and buttons, and watch for them
@@ -88,10 +88,11 @@ data Watched = Keyboard | Joysticks
 startHotkeys :: (Hotkey -> [Binding]) -> IO [(Watched, Int)]
 startHotkeys bindings = do
     rebindHotkeys bindings
-    alloca $ \joystickError -> do
-        keyboardError <- c_hotkeys_start joystickError
+    alloca $ \mouseError -> alloca $ \joystickError -> do
+        keyboardError <- c_hotkeys_start mouseError joystickError
+        merr <- peek mouseError
         jerr <- peek joystickError
-        pure [(w, fromIntegral e) | (w, e) <- [(Keyboard, keyboardError), (Joysticks, jerr)], e /= 0]
+        pure [(w, fromIntegral e) | (w, e) <- [(Keyboard, keyboardError), (Mouse, merr), (Joysticks, jerr)], e /= 0]
 
 -- | Change the hotkeys' keys and buttons.
 rebindHotkeys :: (Hotkey -> [Binding]) -> IO ()

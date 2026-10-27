@@ -219,6 +219,17 @@ main = do
     check "button without number" $ parseBinding "Stick button" == Left "joystick buttons are numbered from 1 to 256"
     check "button without joystick" $
         parseBinding "button 3" == Left "a joystick button needs the joystick's name, like Throttle - HOTAS Warthog button 23"
+    check "mouse buttons" $
+        parseBindings "MouseMiddle, ctrl+mouse4, Alt+Shift+Mouse5" == Right [Key [] "MouseMiddle", Key [Ctrl] "Mouse4", Key [Alt, Shift] "Mouse5"]
+    check "mouse buttons round-trip" $
+        let bs = [Key [Ctrl] "Mouse4", Key [] "MouseMiddle", Key [Win] "Mouse5"] in parseBindings (renderBindings bs) == Right bs
+    check "mouse button codes" $ map virtualKey ["MouseMiddle", "Mouse4", "Mouse5"] == [4, 5, 6]
+    check "mouse button chosen in the window" $ bindingFromCodes 0x2 0x05 == Just (Key [Ctrl] "Mouse4")
+    forM_ ["MouseLeft", "Ctrl+MouseRight", "mouse1", "Mouse2"] $ \b ->
+        check ("left and right mouse buttons refused: " ++ b) $
+            parseBinding b == Left "the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
+    check "mouse button refused in a config" $
+        parseConfig "recenter = MouseLeft\n" == Left "line 1: the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
     check "empty binding in a list" $ parseBindings "F12, " == Left "empty key binding"
     check "unknown key reported" $ parseConfig "recenter = F99\n" == Left "line 1: unknown key \"F99\""
     check "unknown setting reported" $ parseConfig "\nfoo = F1\n" == Left "line 2: unknown setting \"foo\""

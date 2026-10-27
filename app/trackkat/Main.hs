@@ -82,6 +82,7 @@ main = do
         unwatched <- startHotkeys (hotkeyBindings config)
         forM_ unwatched $ \case
             (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
+            (Mouse, e) -> say ("Can't watch the mouse for buttons (error " ++ show e ++ ").")
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say $
             printf
