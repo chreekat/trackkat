@@ -444,7 +444,7 @@ track s cam = do
                 -- A new centre or level is a jump the shaper must not smooth.
                 when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
                 case outcome of
-                    Tracked hp _ _ -> do
+                    Tracked{outPose = hp} -> do
                         writeIORef (sClip s) ClipSeen
                         r <- response <$> readIORef (sSettings s)
                         t <- readIORef (sTrim s)
@@ -456,7 +456,7 @@ track s cam = do
                 sent <- maybe (readIORef (sLatest s)) pure paused
                 publish (toGamePose sent)
                 published <- getMonotonicTime
-                showFrame (case outcome of Tracked hp _ _ -> InSight hp; Lost n -> OutOfSight n) sent
+                showFrame (case outcome of Tracked{outPose = hp} -> InSight hp; Lost n -> OutOfSight n) sent
                 previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
                 modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
                 noteGCs gcsSeen window
@@ -562,8 +562,10 @@ status :: Outcome -> Maybe HeadPose -> Bool -> String
 status outcome paused gameConnected =
     concat
         [ case outcome of
-            Tracked hp _ _ -> printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
-            Lost n -> "lost the clip (" ++ show n ++ " of 3 reflectors)"
+            Tracked{outPose = hp, outSeen = seen} ->
+                printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
+                    ++ describeSeen seen
+            Lost n -> "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then ")" else "s)")
         , maybe "" (const "   PAUSED") paused
         , if gameConnected then "   game connected" else ""
         ]
