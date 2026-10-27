@@ -330,6 +330,13 @@ main = do
             moved < 3 && abs (yaw hp - y) < 0.5 && abs (pitch hp - p) < 0.5 && abs (roll hp) < 0.5
     let unlearnt = relativePose cameraLevel (appliedPivot (newLearner defaultCalibration)) straight (headAt neckAt 30 0 0)
     check ("without learning, turning moves " ++ show unlearnt) $ norm (V3 (tx unlearnt) (ty unlearnt) (tz unlearnt)) > 20
+    -- A clip worn rolled 15 degrees sees a pivot square below and behind the
+    -- head off to one side in its own axes; described at the centre, it is
+    -- square again.
+    let worn = rotYXZ 0 0 15
+        inClip = mulMV (transpose worn) (V3 0 150 60)
+    check ("pivot in clip axes is off to one side " ++ show inClip) $ let V3 x _ _ = inClip in abs x > 30
+    check "pivot described square to the head" $ norm (inLevelAxes cameraLevel (Pose worn (V3 0 0 700)) inClip ^-^ V3 0 150 60) < 1e-9
 
     -- Swaying the body while glancing mustn't drag the pivot far.
     let (swaying, _) = runLearner (glancing (\time -> V3 (30 * sin (2 * pi * time / 3.7)) 0 (20 * sin (2 * pi * time / 5.3))))

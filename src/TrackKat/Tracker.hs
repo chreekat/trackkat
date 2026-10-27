@@ -3,6 +3,7 @@ module TrackKat.Tracker (
     Tracker,
     newTracker,
     trackerCalibration,
+    trackerCentre,
     Request (..),
     request,
     Event (..),
@@ -73,6 +74,10 @@ newTracker k m c = Tracker k m Nothing Nothing (newLearner c) Nothing [Recenter]
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
 trackerCalibration = learnerCalibration . trLearner
+
+-- | The clip's pose at the last recenter.
+trackerCentre :: Tracker -> Maybe Pose
+trackerCentre = trReference
 
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}

@@ -140,9 +140,9 @@ run opts cam = do
                 console
     let track stripes = do
             now <- getMonotonicTime
-            (outcome, events) <- atomicModifyIORef' tracker $ \t ->
-                let (t', o, evs) = step now stripes t in (t', (o, evs))
-            mapM_ (putStrLn . describeEvent) events
+            (outcome, events, centre) <- atomicModifyIORef' tracker $ \t ->
+                let (t', o, evs) = step now stripes t in (t', (o, evs, trackerCentre t'))
+            mapM_ (putStrLn . describeEvent centre) events
             pure outcome
     let loop lights next = do
             (_, pkts) <- next
@@ -174,15 +174,16 @@ isTracked :: Outcome -> Bool
 isTracked Tracked{} = True
 isTracked Lost{} = False
 
-describeEvent :: Event -> String
-describeEvent Recentered = "# recentered"
-describeEvent CalibrationStarted = "# calibrating: turn your head left and right"
-describeEvent CalibrationFailed = "# calibration failed: not enough turning, try again"
-describeEvent (Calibrated c) =
+-- | Describe an event, given the clip's pose at the centre.
+describeEvent :: Maybe Pose -> Event -> String
+describeEvent _ Recentered = "# recentered"
+describeEvent _ CalibrationStarted = "# calibrating: turn your head left and right"
+describeEvent _ CalibrationFailed = "# calibration failed: not enough turning, try again"
+describeEvent _ (Calibrated c) =
     let (down, right) = cameraTilt (estimatedLevel c)
      in printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right" down right
-describeEvent (Refined LevelRefined c) = "# " ++ describeLevel c
-describeEvent (Refined PivotRefined c) = "# " ++ describePivot c
+describeEvent _ (Refined LevelRefined c) = "# " ++ describeLevel c
+describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
 
 showOutcome :: Outcome -> String
 showOutcome (Lost n) = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
