@@ -50,6 +50,13 @@ import TrackKat.Pose
 -- that either has of being such a window, which also keeps any one window
 -- from deciding.
 --
+-- Windows that end in about the same pose count together for no more than
+-- one. However a head turns there, and however its reflectors show there
+-- (each is tape on a curved tab, its centre where the tape faces the
+-- camera), may fit one pose better throughout; so many windows of
+-- fidgeting while looking one way are no more evidence than one, and
+-- what adds up comes from turning through different poses.
+--
 -- Only clearly seen reflectors say how the head moved. One that runs into
 -- another, or that breaks into pieces, or that has something else beside
 -- it, as reflectors seen at a slant do, has its centre out by a few
@@ -80,9 +87,11 @@ import TrackKat.Pose
 -- where the head is now, so it isn't kept in the belief.
 --
 -- When the tracked pose is very likely the mirror image, it is switched
--- for its mirror, and the reference too if that is more likely than not
--- the mirror image, so that both change at the same moment; the reference
--- alone is switched only when that is very likely.
+-- for its mirror, and the reference too if, the tracked pose being the
+-- mirror image, the evidence has the reference more likely than not the
+-- mirror image too, so that both change at the same moment; where the
+-- head would be says little about that, with the head turned alike either
+-- way. The reference alone is switched only when that is very likely.
 
 -- | Probabilities of the four combinations of the tracked pose and the
 -- reference being the head's or the mirror image.
@@ -122,11 +131,18 @@ data Branch = Branch
     -- ^ the tracked poses and their mirror images in the window so far
     , brTurned :: !(Maybe Turned)
     -- ^ in the last frame, if there was a reference and a mirror image
+    , brPlaces :: ![Place]
+    -- ^ where the windows that counted lately ended, the latest first, all
+    -- evaluated
     }
+
+-- | About where windows of turning ended, and how much, together, they
+-- changed the log-odds.
+data Place = Place !Pose !Double
 
 -- | Nothing known yet about a clip of the given shape.
 newBranch :: Model -> Branch
-newBranch m = Branch m (Belief 0.25 0.25 0.25 0.25) Apart Nothing Nothing Nothing
+newBranch m = Branch m (Belief 0.25 0.25 0.25 0.25) Apart Nothing Nothing Nothing []
 
 -- | The tracked pose's mirror image, when all three reflectors were seen
 -- in the last frame and the two hadn't met.
@@ -178,6 +194,15 @@ windowDegrees = 4
 -- window that fits turning about the pivot is than one that fits nothing.
 windowWeight :: Double
 windowWeight = 3
+
+-- | Degrees within which windows of turning end in about the same place,
+-- where they have their errors alike; and how many of the places windows
+-- lately ended in are remembered.
+placeDegrees :: Double
+placeDegrees = 15
+
+placesRemembered :: Int
+placesRemembered = 4
 
 -- | Spread, in degrees, of how far a head turns from where it was
 -- centred: most turns are within this, and few beyond twice it.
@@ -232,11 +257,22 @@ watch now pivot reference clarity pose seen br = case seen of
             (Just other, windows, Clear) -> case maybe (startWindow now pose, startWindow now other) (\(a, b) -> (addPose pose a, addPose other b)) windows of
                 (a, b)
                     | now - windowStart a >= windowSeconds ->
-                        br{brBelief = maybe id evidence (logOdds a b) (brBelief br), brCloseness = Apart, brMirror = mirror, brWindows = Nothing, brTurned = turned}
+                        let (belief, places) = maybe (brBelief br, brPlaces br) counted (logOdds a b)
+                         in br{brBelief = belief, brCloseness = Apart, brMirror = mirror, brWindows = Nothing, brTurned = turned, brPlaces = places}
                     | otherwise -> br{brCloseness = Apart, brMirror = mirror, brWindows = Just (a, b), brTurned = turned}
       where
         mirror = nearestPose (fromMaybe (reflectedPose (brModel br) pose) (brMirror br)) others
         turned = (\ref other -> Turned (turnBetweenPoses ref pose) (turnBetweenPoses ref other)) <$> reference <*> mirror
+        -- A window's log-odds, counted only as far as those of the windows
+        -- that ended near the same pose come to at most one window's worth.
+        counted logOdds =
+            let (near, others) = break (\(Place there _) -> turnBetweenPoses there pose < placeDegrees) (brPlaces br)
+                (Place at before, rest) = case others of
+                    p : later -> (p, near ++ later)
+                    [] -> (Place pose 0, near)
+                after = max (negate windowWeight) (min windowWeight (before + logOdds))
+                places = Place at after : take (placesRemembered - 1) rest
+             in (evidence (after - before) (brBelief br), foldr seq places places)
   where
     weight = (swayMM / pivotSpreadMM) ^ (2 :: Int)
     -- The log of a window's likelihood on a pose, given how badly it fits:
@@ -252,7 +288,7 @@ logAddExp a b = max a b + log (1 + exp (negate (abs (a - b))))
 
 -- | The clip was found afresh, on either pose as likely.
 foundAfresh :: Branch -> Branch
-foundAfresh br = br{brBelief = crossed 0.5 (brBelief br), brCloseness = Apart, brMirror = Nothing, brWindows = Nothing, brTurned = Nothing}
+foundAfresh br = br{brBelief = crossed 0.5 (brBelief br), brCloseness = Apart, brMirror = Nothing, brWindows = Nothing, brTurned = Nothing, brPlaces = []}
 
 -- | The tracked pose became the reference.
 recentered :: Branch -> Branch
@@ -280,7 +316,7 @@ data Correction = MirrorNeither | MirrorTracked | MirrorReference | MirrorBoth
 
 correction :: Branch -> Correction
 correction br
-    | trackedMirrorChance b >= sure = if referenceMirrorChance b > 0.5 then MirrorBoth else MirrorTracked
+    | trackedMirrorChance b >= sure = if bothMirrored (brBelief br) > trackedMirrored (brBelief br) then MirrorBoth else MirrorTracked
     | referenceMirrorChance b >= sure = MirrorReference
     | otherwise = MirrorNeither
   where
@@ -300,7 +336,7 @@ corrected c was br = case c of
     -- Switching either pose for its mirror image swaps which combinations
     -- have the head turned alike.
     swapTurned (Turned alike unalike) = Turned unalike alike
-    trackedSwitched b turned = br{brBelief = b, brMirror = Just was, brWindows = Nothing, brTurned = turned}
+    trackedSwitched b turned = br{brBelief = b, brMirror = Just was, brWindows = Nothing, brTurned = turned, brPlaces = []}
 
 -- | Whether the tracked pose is surely the head's, so that what it shows
 -- can be learnt from.
