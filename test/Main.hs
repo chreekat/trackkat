@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, evaluate, try)
 import Control.Monad (forM_, unless)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
@@ -12,11 +12,13 @@ import Data.Either (isLeft)
 import Data.IORef
 import Data.List (mapAccumL, sortOn)
 import Data.Maybe (isNothing)
+import GHC.Stats (gc, gcdetails_live_bytes, getRTSStats, getRTSStatsEnabled)
 import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removePathForcibly)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 import System.FilePath (pathSeparator, (</>))
 import System.IO (readFile')
+import System.Mem (performMajorGC)
 
 import Codec.Archive.Zip (addEntryToArchive, emptyArchive, fromArchive, toEntry)
 
@@ -907,6 +909,34 @@ main = do
     check ("a still head isn't masked " ++ show (summed stilled, ignored stillRows)) $
         lostCount stilled <= 93 && lostCount (after 3.5 stilled) == 0 && map nearFire (ignored stillRows) == [True]
 
+    -- Tracking for hours holds on to no more than tracking for a minute:
+    -- the memory in use stays flat from 2000 frames to 20000, with the
+    -- head nearly still facing the camera (where its pose and the mirror
+    -- image meet), turning left and right, and gone.
+    statsOn <- getRTSStatsEnabled
+    check "memory statistics are on, for the tests below (+RTS -T)" statsOn
+    let fireLit i t pose = (t, renderDiscs (heads ++ occluded heads (fireDiscs fireAt i)))
+          where
+            heads = reflectorDiscs clipBent allLit pose
+        stillFrame i = let t = fromIntegral i / 120 in fireLit i t (fidgeting t)
+        turningFrame i = let t = fromIntegral i / 120 in fireLit i t (raised (headSeen bentWorn (25 * sin (2 * pi * t / 3)) (8 * sin (2 * pi * t / 5)) 0))
+        goneFrame i =
+            let t = fromIntegral i / 120
+             in if t < 10 then fireLit i t (fidgeting t) else (t, renderDiscs (fireDiscs fireAt i))
+    forM_ [("held nearly still", stillFrame), ("turning", turningFrame), ("gone", goneFrame)] $ \(name, frameAt) -> do
+        lives <- if statsOn then liveWhileTracking frameAt [2000, 20000] else pure []
+        check ("memory in use after 2000 and 20000 frames with the head " ++ name ++ ": " ++ show lives) $ case lives of
+            [short, long] -> statsOn && long - short < 100000
+            _ -> False
+    -- Shaping while paused, its output unused, holds on to no more for
+    -- 20000 frames than for 2000.
+    let swaying i = let t = fromIntegral i / 120 in HeadPose{yaw = 30 * sin t, pitch = 10 * sin (t / 2), roll = 0, tx = 20 * sin (t / 3), ty = 0, tz = 0}
+        shapeUnused i sh = pure (snd (shape (response defaultConfig) NoTrim (fromIntegral i / 120) (swaying i) sh))
+    shapedLives <- if statsOn then liveWhileStepping shapeUnused newShaper [2000, 20000] else pure []
+    check ("memory in use after shaping 2000 and 20000 frames while paused: " ++ show shapedLives) $ case shapedLives of
+        [short, long] -> statsOn && long - short < 100000
+        _ -> False
+
     -- Learning from mirror-image poses can't put the pivot in front of the
     -- clip, where it seems to be on them.
     let mirroredPoses = [(t, mp) | (t, truth, _) <- slipping, Just mp <- [mirrorPose defaultIntrinsics clipBent truth]]
@@ -996,6 +1026,35 @@ trackFramesEventsWith :: Masking -> Model -> [(Double, Pose, [Stripe])] -> (Trac
 trackFramesEventsWith masking m = mapAccumL frame (newTracker defaultIntrinsics m masking defaultCalibration)
   where
     frame t (time, truth, stripes) = let (t', o, evs) = step time stripes t in (t', ((time, truth, o, trackerPose t'), evs))
+
+-- | Track the i-th frame of (time, stripes) for i from 0, as the app does,
+-- keeping only the tracker: the bytes of memory in use, after a major
+-- collection, once each given number of frames has been tracked.
+liveWhileTracking :: (Int -> (Double, [Stripe])) -> [Int] -> IO [Integer]
+liveWhileTracking frameAt = liveWhileStepping track (newTracker defaultIntrinsics clipBent MaskLights defaultCalibration)
+  where
+    track i t = do
+        let (time, stripes) = frameAt i
+            (t', o, evs) = step time stripes t
+        _ <- evaluate (length (show o) + length evs)
+        pure t'
+
+-- | Take steps 0, 1, ... from a state, keeping only the latest state,
+-- evaluated as far as a strict IORef update would: the bytes of memory in
+-- use, after a major collection, once each given number of steps has been
+-- taken.
+liveWhileStepping :: (Int -> a -> IO a) -> a -> [Int] -> IO [Integer]
+liveWhileStepping next = go 0
+  where
+    go _ _ [] = pure []
+    go i a (mark : rest)
+        | i == mark = do
+            performMajorGC
+            live <- fromIntegral . gcdetails_live_bytes . gc <$> getRTSStats
+            (live :) <$> go i a rest
+        | otherwise = do
+            a' <- next i a
+            a' `seq` go (i + 1) a' (mark : rest)
 
 -- | A lit fire's discs in the i-th frame, around its core's place: the
 -- core, lighting 600 to 870 pixels, its centroid jittering by a pixel or
