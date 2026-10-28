@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What SignPath signs in the artifact CI uploads (dist, zipped by GitHub):
+     trackkat's own programs and DLLs, not libusb's. Upload this as the
+     project's artifact configuration: see docs/signing.md. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file-set>
+      <include path="trackkat.exe" />
+      <include path="trackkat-tray.exe" />
+      <include path="tirprobe.exe" />
+      <include path="npgame.exe" />
+      <include path="trackdemo.exe" />
+      <include path="NPClient.dll" />
+      <include path="NPClient64.dll" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>
