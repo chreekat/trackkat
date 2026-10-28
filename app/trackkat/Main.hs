@@ -692,6 +692,7 @@ track s cam = do
                 publish (toGamePose sent)
                 published <- getMonotonicTime
                 showFrame (case outcome of Tracked{outPose = hp} -> InSight hp; Lost{outBlobs = n} -> OutOfSight n) sent
+                showBlobs (trackerBlobs tracker)
                 previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
                 modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
                 noteGCs gcsSeen window

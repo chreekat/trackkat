@@ -6,7 +6,8 @@ module TrackKat.Tracker (
     trackerCalibration,
     trackerCentre,
     trackerPose,
-    trackerMasks,
+    BlobRole (..),
+    trackerBlobs,
     Request (..),
     request,
     setModel,
@@ -154,12 +155,14 @@ data Tracker = Tracker
     -- ^ oldest first
     , trMasking :: Masking
     , trLights :: Lights
+    , trBlobs :: [(Blob, BlobRole)]
+    -- ^ the last frame's
     }
 
 -- | A tracker that starts from the given calibration and recenters on the
 -- first frame it tracks.
 newTracker :: Intrinsics -> Model -> Masking -> Calibration -> Tracker
-newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newBranch m) Nothing [Recenter] masking noLights
+newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newBranch m) Nothing [Recenter] masking noLights []
 
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
@@ -173,10 +176,19 @@ trackerCentre = trReference
 trackerPose :: Tracker -> Maybe Pose
 trackerPose = fmap recentPose . trRecent
 
--- | Whether a blob is in the area of a still light learnt, wherever the
--- clip is.
-trackerMasks :: Tracker -> Blob -> Bool
-trackerMasks t = inMask (activeMask [] (trLights t))
+-- | The last frame's blobs, heaviest first, and what each was taken for.
+trackerBlobs :: Tracker -> [(Blob, BlobRole)]
+trackerBlobs = trBlobs
+
+-- | What a blob was taken for.
+data BlobRole
+    = -- | one of the clip's reflectors, or part of one
+      ReflectorBlob
+    | -- | something else, ignored
+      StrayBlob
+    | -- | part of a still light, masked
+      MaskedBlob
+    deriving (Eq, Show)
 
 -- | Learn and mask still lights, or not, from the next frame; turned off,
 -- what was learnt is forgotten.
@@ -298,7 +310,10 @@ step now stripes t =
                         | not (holding [p | LightIgnored p <- news] (toList (project k (recentPose r) <$> modelPoints m)) lights) ->
                             Just r{recentSince = now}
                     _ -> Nothing
-             in (t{trLearner = lostSight (trLearner t), trLights = lights, trRecent = untracked}, Lost (length visible) (length masked), news)
+             in ( t{trLearner = lostSight (trLearner t), trLights = lights, trRecent = untracked, trBlobs = roles []}
+                , Lost (length visible) (length masked)
+                , news
+                )
         Just (Sighting finding seenPose fit sights unused hidden) ->
             let allSeen = all isJust sights
                 since = case finding of
@@ -339,6 +354,7 @@ step now stripes t =
                         , trLearner = if correcting then lostSight (trLearner t) else trLearner t
                         , trSweep = if correcting then fmap (\(Sweep deadline _) -> Sweep deadline []) (trSweep t) else trSweep t
                         , trLights = lights
+                        , trBlobs = roles [s | Just s <- toList sights]
                         }
                 (t1, requested) = foldl (handle pose) (restarted, []) (trPending t)
                 ref = maybe pose id (trReference t1)
@@ -380,6 +396,16 @@ step now stripes t =
     learnt discs = case trMasking t of
         NoMasking -> (trLights t, [])
         MaskLights -> map toEvent <$> learnLights now discs blobs (trLights t)
+    -- Each blob's role, given where the reflectors were seen: a blob near
+    -- one, for its size, is one, or a piece of one.
+    roles seen = [(b, role b) | b <- blobs]
+      where
+        role b
+            | any (\s -> distance2 (sightAt s) (at b) <= reflectorReach b ^ (2 :: Int)) seen = ReflectorBlob
+            | inMask mask b = MaskedBlob
+            | otherwise = StrayBlob
+        reflectorReach b = 3 + 2 * sqrt (fromIntegral (blobPoints b) / pi)
+        distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
     toEvent (Learnt p) = LightIgnored p
     toEvent (Forgotten p) = LightForgotten p
     -- Where each reflector is, or would be, in the image at a pose, out to

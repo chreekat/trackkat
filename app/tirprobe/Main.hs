@@ -144,10 +144,10 @@ run opts cam = do
                 console
     let track stripes = do
             now <- getMonotonicTime
-            (outcome, events, centre, masks) <- atomicModifyIORef' tracker $ \t ->
-                let (t', o, evs) = step now stripes t in (t', (o, evs, trackerCentre t', trackerMasks t'))
+            (outcome, events, centre, blobs) <- atomicModifyIORef' tracker $ \t ->
+                let (t', o, evs) = step now stripes t in (t', (o, evs, trackerCentre t', trackerBlobs t'))
             mapM_ (putStrLn . describeEvent centre) events
-            pure (outcome, masks)
+            pure (outcome, blobs)
     let loop lights next = do
             (_, pkts) <- next
             forM_ pkts $ \p -> do
@@ -155,7 +155,7 @@ run opts cam = do
                 case p of
                     Frame n stripes -> do
                         -- Tracking in blobs mode too, to learn still lights.
-                        (tracked, masks) <- track stripes
+                        (tracked, blobs) <- track stripes
                         when (not (optBlobs opts)) $ lights (if isTracked tracked then On else Off) Off
                         modifyIORef' frames (+ 1)
                         now <- getMonotonicTime
@@ -165,10 +165,9 @@ run opts cam = do
                             writeIORef frames 0
                             writeIORef lastPrint now
                             let fps = fromIntegral count / (now - t0) :: Double
-                                blobs = findBlobs stripes
                             putStrLn $
                                 if optBlobs opts
-                                    then summary n fps masks blobs
+                                    then summary n fps blobs
                                     else showOutcome tracked
                     Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
                     _ -> pure ()
@@ -209,9 +208,9 @@ showOutcome (Tracked hp dist err seen) =
         err
         ++ describeSeen seen
 
--- | A frame's blobs, those in a still light's area marked.
-summary :: (Integral a) => a -> Double -> (Blob -> Bool) -> [Blob] -> String
-summary n fps masks blobs =
+-- | A frame's blobs, those masked as part of a still light marked.
+summary :: (Integral a) => a -> Double -> [(Blob, BlobRole)] -> String
+summary n fps blobs =
     printf
         "frame %3d  %5.1f fps  %d blob%s "
         (fromIntegral n :: Int)
@@ -222,7 +221,7 @@ summary n fps masks blobs =
   where
     -- Elongation, length to width: about 1 for one reflector, more for two
     -- run together.
-    showBlob b = printf " (%6.1f, %6.1f) %4dpx %3.1f:1%s" (blobX b) (blobY b) (blobPoints b) (blobElongation b) (if masks b then " masked" else "")
+    showBlob (b, role) = printf " (%6.1f, %6.1f) %4dpx %3.1f:1%s" (blobX b) (blobY b) (blobPoints b) (blobElongation b) (if role == MaskedBlob then " masked" else "")
 
 describeRaw :: Packet -> String
 describeRaw (Frame n ss) = "frame " ++ show n ++ " " ++ show ss
