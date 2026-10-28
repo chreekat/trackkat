@@ -71,9 +71,10 @@ tooltip saying what it does.
 19. Anti-cheat mode, for games such as Arma Reforger that refuse trackkat's NPClient.
 20. **Start with Windows**, in the tray: the way to use anti-cheat mode without starting trackkat by hand.
 21. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
-22. **Keep up to date**: an installed trackkat fetches new versions in the background.
-23. **Curves as text**, for curves of any shape.
-24. The log, and trackkat's version; **Copy log** for bug reports.
+22. **Ignore still lights**: a lamp or a fire behind you doesn't stop trackkat finding the clip; see [still lights](docs/details.md#still-lights).
+23. **Keep up to date**: an installed trackkat fetches new versions in the background.
+24. **Curves as text**, for curves of any shape.
+25. The log, and trackkat's version; **Copy log** for bug reports.
 
 ## Keys
 

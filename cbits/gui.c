@@ -38,10 +38,10 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
-enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness",
                                                     L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
-                                                    L"npclient", L"updates", L"startup"};
+                                                    L"npclient", L"updates", L"startup", L"ignore lights"};
 #define LISTS 3 /* binding lists: recenter, pause, trim */
 
 typedef struct State {
@@ -1234,7 +1234,7 @@ static void show_field(int i, const wchar_t *value)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"screen") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_NPCLIENT)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"trackir") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
-    else if (i == F_UPDATES || i == F_STARTUP)
+    else if (i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"on") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
@@ -1264,7 +1264,8 @@ static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
     for (int i = 0; i < F_COUNT; i++)
-        if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || slider_field(i))
+        if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS ||
+            slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
         else
             GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
@@ -1710,6 +1711,11 @@ static void build_window(void)
                 ID_FIELD + F_STARTUP),
         L"Start trackkat in the tray when you log in (startup = on). Games start trackkat themselves anyway, but "
         L"in anti-cheat mode they can't: this is the way to use it without starting trackkat by hand.");
+    field_ctl[F_LIGHTS] = tip(
+        control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 292, CURVES_TOP + 174, 140, 22,
+                ID_FIELD + F_LIGHTS),
+        L"Learn bright lights that stay put, such as a lamp or a fire behind you, and ignore them, so they don't "
+        L"stop trackkat finding the clip (ignore lights = on). The log says when one is learnt or forgotten.");
     field_ctl[F_UPDATES] = tip(
         control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 440, CURVES_TOP + 174, 132, 22,
                 ID_FIELD + F_UPDATES),
@@ -1718,7 +1724,7 @@ static void build_window(void)
         L"Your settings and calibration stay.");
 
     settings_text = tip(
-        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 410, 20, 0),
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 262, 20, 0),
         L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
         L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
         L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
@@ -1840,7 +1846,8 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             save_soon(1);
             return 0;
         case ID_FIELD + F_UPDATES:
-        case ID_FIELD + F_STARTUP: {
+        case ID_FIELD + F_STARTUP:
+        case ID_FIELD + F_LIGHTS: {
             int i = id - ID_FIELD;
             copy_text(field_text[i], FIELD_MAX,
                       SendMessageW(field_ctl[i], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
