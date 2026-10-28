@@ -174,8 +174,9 @@ No longer ignoring the light at (156, 297): it has been gone a while.
 ```
 
 The second line comes once the light has been out of sight for 45
-seconds. The status line notes blobs ignored, such as `+2 masked`, and
-`tirprobe --blobs` marks them `masked`.
+seconds. The status line notes blobs ignored, such as `+2 masked`, the
+corner of the window's head view shows them grey among what the camera
+sees, and `tirprobe --blobs` marks them `masked`.
 
 So with a fire lit, trackkat finds the clip about three seconds after it
 starts, and at once after that. If you hold perfectly still while it

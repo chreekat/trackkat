@@ -844,7 +844,7 @@ main = do
         nearFire p = distance p fireAt < 10
         coldFrames = withFire fireAt [(t, fidgeting t, allLit, True) | t <- at120 8]
         coldWith masking = trackFramesEventsWith masking clipBent coldFrames
-        (_, coldRows) = coldWith MaskLights
+        (coldTracker, coldRows) = coldWith MaskLights
         cold = map fst coldRows
         coldStart = firstTracked 0 cold
         coldUnmasked = firstTracked 0 (map fst (snd (coldWith NoMasking)))
@@ -854,6 +854,9 @@ main = do
     check ("then followed " ++ show (summed (after 3.5 cold))) $ lostCount (after 3.5 cold) == 0 && fst (worstError cold) < 1.5
     check ("the masked fire reported " ++ show (take 1 (seens (after 3.5 cold)))) $ all ((> 0) . seenMasked) (seens (after 3.5 cold))
     check ("without the mask, never found " ++ show coldUnmasked) $ isNothing coldUnmasked
+    let roles = [(role, distance (blobX b, blobY b) fireAt < 30) | (b, role) <- trackerBlobs coldTracker]
+    check ("the last frame's blobs: the reflectors, and the fire masked " ++ show roles) $
+        length [() | (ReflectorBlob, _) <- roles] == 3 && and [role == MaskedBlob | (role, True) <- roles] && all (\(role, byFire) -> byFire || role == ReflectorBlob) roles
 
     -- Lost for a second and a half with the fire lit, and found again.
     let refinding = trackFramesEvents clipBent (withFire fireAt [(t, fidgeting t, lit (t < 5 || t > 6.5), True) | t <- at120 8])
