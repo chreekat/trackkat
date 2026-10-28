@@ -140,7 +140,7 @@ data Recent = Recent
     , recentTime :: !Double
     -- ^ in seconds on the clock given to 'step'
     , recentAllSeen :: !Double
-    -- ^ when all three reflectors were last seen
+    -- ^ when all three reflectors last showed (see 'showing')
     , recentSince :: !Double
     -- ^ since when the clip has been tracked in every frame
     }
@@ -215,6 +215,30 @@ setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLearner = c
 calibrationSeconds :: Double
 calibrationSeconds = 5
 
+-- | How a match shows the reflectors: all three; one perhaps behind
+-- another, sharing a blob no bigger than that one alone (see
+-- 'bigEnoughForTwo'), or perhaps out of sight; or one out of sight.
+data Showing = AllShowing | OneBehind | OneOut
+    deriving (Eq)
+
+-- | How the given sights show the reflectors, given their sizes and the
+-- distance in metres.
+showing :: Three Size -> Double -> Three (Maybe Sight) -> Showing
+showing sizes z sights = case sequenceA sights of
+    Nothing -> OneOut
+    Just three -> case [(sightPixels s, sizeLatest size / (z * z)) | (size, s) <- toList ((,) <$> sizes <*> three), sightKind s == Merged] of
+        [(a, ea), (b, eb)] | not (bigEnoughForTwo (a + b) ea eb) -> OneBehind
+        _ -> AllShowing
+
+-- | For how long, in seconds since all three last showed, the clip is
+-- tracked showing less: two reflectors leave the pose free to turn about
+-- the line through them, and one taken to be behind another, as when the
+-- head rolls far, may be out of sight instead.
+showingSeconds :: Showing -> Double
+showingSeconds AllShowing = 1 / 0
+showingSeconds OneBehind = 2.5
+showingSeconds OneOut = 1
+
 -- | Blobs smaller or larger than this many pixels are not reflectors, when
 -- finding the clip afresh.
 minBlobPixels, maxBlobPixels :: Int
@@ -239,11 +263,6 @@ predictionSeconds = 0.5
 -- frame for still lights to be learnt clear of it.
 confirmSeconds :: Double
 confirmSeconds = 0.5
-
--- | For how long, in seconds since all three were last seen, two reflectors
--- are enough to track.
-twoReflectorSeconds :: Double
-twoReflectorSeconds = 1
 
 -- | The most a head turns (degrees) and moves (mm, at its pivot) between
 -- frames the given number of seconds apart: from one frame to the next,
@@ -345,7 +364,7 @@ step now stripes t =
                     | fix `elem` [MirrorReference, MirrorBoth] = (\old -> fromMaybe old (mirrorPose k m old)) <$> trReference t
                     | otherwise = trReference t
                 correcting = fix /= MirrorNeither
-                recent = Recent pose now (if allSeen then now else maybe now recentAllSeen (trRecent t)) since
+                recent = Recent pose now (if showing (trSizes t) (metres seenPose) sights == AllShowing then now else maybe now recentAllSeen (trRecent t)) since
                 sizes = resize (metres pose) <$> trSizes t <*> sights
                 -- Learning in progress from before a correction was of
                 -- the mirror image, and so was a requested calibration's
@@ -457,8 +476,7 @@ step now stripes t =
     -- near the last, so they would hide a real jump.)
     follow r =
         let dt = now - recentTime r
-            twoAllowed = now - recentAllSeen r <= twoReflectorSeconds
-            candidates = [c | c <- matches k m (recentPose r) (trSizes t) visible, twoAllowed || all isJust (matchSights c)]
+            candidates = [c | c <- matches k m (recentPose r) (trSizes t) visible, now - recentAllSeen r <= showingSeconds (showing (trSizes t) (metres (recentPose r)) (matchSights c))]
             attempt c = do
                 (pose, fit) <- solveNear k pivot (recentPose r) (observations (metres (recentPose r)) c)
                 let (turn, move) = poseChange pivot (recentPose r) pose
@@ -489,13 +507,14 @@ step now stripes t =
             dim = if usual > 0 then min 1 (sightPixels s / usual) else 1
             shared = if sightKind s == Merged then 0.5 else 1
          in Observation p (dim * shared) (sightAt s)
-    -- Reflectors' sizes, at 1 m, after a frame at the given distance.
+    -- Reflectors' sizes, at 1 m, after a frame at the given distance. One
+    -- sharing a blob with another has its share guessed, not seen.
     resize z size seen =
         let since = maybe 0 (\r -> now - recentTime r) (trRecent t)
             usual = sizeUsual size * exp (negate since / sizeMemory)
          in case seen of
-                Nothing -> size{sizeUsual = usual}
-                Just s -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
+                Just s | sightKind s /= Merged -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
+                _ -> size{sizeUsual = usual}
     at b = (blobX b, blobY b)
     handle pose (acc, evs) Recenter = (acc{trReference = Just pose, trBranch = recentered (trBranch acc)}, Recentered : evs)
     handle _ (acc, evs) Calibrate =
