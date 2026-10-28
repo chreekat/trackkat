@@ -149,8 +149,10 @@ again after losing it, on the mirror image. It tells them apart by how your
 head turns: about your neck, behind the clip, never about a point in front
 of it. It goes only by turning seen clearly, each reflector a blob of its
 own rather than run together or in pieces, as they are when seen at a
-slant; and it is slower to believe a pose that would have your head turned
-further from your centre than heads usually turn. Within a second or two
+slant; it needs turning through different poses, fidgeting while looking
+one way counting for no more than one glance; and it is slower to believe
+a pose that would have your head turned further from your centre than
+heads usually turn. Within a second or two
 of glancing about it corrects a mirror image, keeping your centre where it
 was, and logs:
 
