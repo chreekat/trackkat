@@ -353,7 +353,16 @@ step now stripes t =
                 wasLight = not confirmed && holding [p | LightIgnored p <- news] (toList (project k seenPose <$> modelPoints m)) lights
                 -- See Note [Which pose is the head's] in TrackKat.Branch.
                 others = if allSeen then Just (alternatives k m seenPose) else Nothing
-                watched = watch now pivot seenPose others $ case finding of
+                -- Each reflector a blob of its own, with no other blob,
+                -- masked or not, within its usual diameter, where a piece
+                -- of it could be.
+                clarity = case sequenceA sights of
+                    Just three | and (alone <$> trSizes t <*> three) -> Clear
+                    _ -> Doubtful
+                alone size s =
+                    let across = 2 * sqrt (max (sizeUsual size / (metres seenPose ^ (2 :: Int))) (sightPixels s) / pi)
+                     in sightKind s == Whole && length [() | b <- blobs, distance2 (sightAt s) (at b) <= across ^ (2 :: Int)] <= 1
+                watched = watch now pivot (trReference t) clarity seenPose others $ case finding of
                     Followed -> trBranch t
                     FoundAfresh -> foundAfresh (trBranch t)
                 (pose, fix) = case (correction watched, followedMirror watched) of
@@ -383,10 +392,11 @@ step now stripes t =
                         }
                 (t1, requested) = foldl (handle pose) (restarted, []) (trPending t)
                 ref = maybe pose id (trReference t1)
-                -- Only a pose surely the head's is learnt from.
-                (learner, refinements)
-                    | settled (trBranch t1) = learn now pose (trLearner t1)
-                    | otherwise = (lostSight (trLearner t1), [])
+                -- Only a pose surely the head's, its reflectors seen
+                -- clearly, is learnt from.
+                (learner, refinements) = case clarity of
+                    Clear | settled (trBranch t1) -> learn now pose (trLearner t1)
+                    _ -> (lostSight (trLearner t1), [])
                 (t2, calibrated) = calibrate pose ref t1{trLearner = learner}
                 applied = trLearner t2
                 seen =
@@ -431,7 +441,7 @@ step now stripes t =
             | inMask mask b = MaskedBlob
             | otherwise = StrayBlob
         reflectorReach b = 3 + 2 * sqrt (fromIntegral (blobPoints b) / pi)
-        distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
+    distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
     toEvent (Learnt p) = LightIgnored p
     toEvent (Forgotten p) = LightForgotten p
     toEvent (Moved p) = LightMoved p
