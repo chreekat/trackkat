@@ -136,7 +136,7 @@ data Recent = Recent
     -- ^ in seconds on the clock given to 'step'
     , recentAllSeen :: Double
     -- ^ when all three reflectors were last seen
-    , recentSince :: Double
+    , recentSince :: !Double
     -- ^ since when the clip has been tracked in every frame
     }
 
@@ -154,9 +154,10 @@ data Tracker = Tracker
     , trPending :: [Request]
     -- ^ oldest first
     , trMasking :: Masking
-    , trLights :: Lights
-    , trBlobs :: [(Blob, BlobRole)]
-    -- ^ the last frame's
+    , trLights :: !Lights
+    , trBlobs :: ![(Blob, BlobRole)]
+    -- ^ the last frame's, all evaluated, so as not to hold on to the frames
+    -- before
     }
 
 -- | A tracker that starts from the given calibration and recenters on the
@@ -398,8 +399,9 @@ step now stripes t =
         MaskLights -> map toEvent <$> learnLights now discs blobs (trLights t)
     -- Each blob's role, given where the reflectors were seen: a blob near
     -- one, for its size, is one, or a piece of one.
-    roles seen = [(b, role b) | b <- blobs]
+    roles seen = foldr (\(_, r) rest -> r `seq` rest) assigned assigned
       where
+        assigned = [(b, role b) | b <- blobs]
         role b
             | any (\s -> distance2 (sightAt s) (at b) <= reflectorReach b ^ (2 :: Int)) seen = ReflectorBlob
             | inMask mask b = MaskedBlob
