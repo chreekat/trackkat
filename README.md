@@ -121,3 +121,5 @@ Windows, see `.github/workflows/build.yml` for pointing cabal at libusb.
 
 The USB protocol is ported from [linuxtrack](https://github.com/uglyDwarf/linuxtrack)
 (MIT licence, © 2009 Tulthix, uglyDwarf), which reverse-engineered it.
+The table of games that need their head tracking data scrambled comes from
+[OpenTrack](https://github.com/opentrack/opentrack)'s game list (ISC licence).
