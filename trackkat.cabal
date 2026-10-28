@@ -68,6 +68,7 @@ executable tirprobe
   build-depends:
     , async
     , base
+    , directory
     , trackkat
 
 flag icon

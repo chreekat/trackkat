@@ -170,7 +170,7 @@ run start window after = do
             (Just v, Installed _) -> "trackkat " ++ describeVersion v ++ ", installed in " ++ exeDir paths
             (Just v, Portable) -> "trackkat " ++ describeVersion v ++ ", running from " ++ exeDir paths
         moveSettings say paths
-        let settingsFile = settingsDir paths </> "trackkat.conf"
+        let settingsFile = configFile paths
         (config, stamp) <- loadConfig settingsFile
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
         startTrackIRStandIn >>= \case
@@ -491,14 +491,6 @@ saveCalibrations path pending = forever $ do
     let new = path ++ ".new"
     (writeFile new (renderCalibration c) >> renameFile new path)
         `catch` \e -> say ("Can't save the calibration: " ++ displayException (e :: IOException))
-
--- | Read and parse the settings file, whole so editors can replace it.
-readSettings :: FilePath -> IO (Either String (String, Config))
-readSettings path =
-    ( try (readFile' path) >>= \case
-        Left e -> pure (Left (displayException (e :: IOException)))
-        Right text -> pure ((text,) <$> parseConfig text)
-    )
 
 -- | Show the settings file's values in trackkat's window, as written.
 showSettings :: String -> IO ()
