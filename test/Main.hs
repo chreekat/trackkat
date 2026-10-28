@@ -829,6 +829,45 @@ main = do
     check ("swaying isn't corrected " ++ show (corrections swayRows, length (filter isMirrored (map fst swayRows)))) $
         null (corrections swayRows) && length (filter isMirrored (map fst swayRows)) < 12
 
+    -- Looking down at a phone in the lap, held there fidgeting and swaying,
+    -- and back: the lower reflectors break into pieces in about half the
+    -- frames, a piece apart and the rest off centre. That says nothing of
+    -- the mirror image: nothing is corrected while looking down, and
+    -- facing the screen again the head's pose is followed.
+    let eased t = let x = max 0 (min 1 (t / 1.5)) in x * x * (3 - 2 * x)
+        phoneDown t = eased (t - 20) - eased (t - 35)
+        fidget phase t = 0.5 * sin (2 * pi * t / 1.3 + phase) + 0.3 * sin (2 * pi * t / 0.7 + 2 * phase) + 0.2 * sin (2 * pi * t / 3.1 + 3 * phase)
+        phoneTurn t
+            | t < 20 = (glance 0 t + 2 * fidget 0 t, 8 * sin (2 * pi * t / 7) + 2 * fidget 1 t, 0)
+            | t < 37 = (4 * fidget 2 t, 70 * phoneDown t + 3 * fidget 3 t, 2 * fidget 4 t * phoneDown t)
+            | otherwise = (glance 37 t, 0, 0)
+        sway t = V3 (6 * sin (2 * pi * t / 9.3)) (3 * sin (2 * pi * t / 7.1)) (8 * sin (2 * pi * t / 11.7))
+        hash :: Int -> Double -> Double
+        hash i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5
+        inPieces i pitched j ((u0, v0), r)
+            | j < (2 :: Int) && pitched > 35 && hash i (7 + fromIntegral j) > 0 =
+                let a = 2 * pi * hash (i `div` 6) (9 + fromIntegral j)
+                    f = 0.75 + 0.3 * hash i (11 + fromIntegral j)
+                    whole = r * sqrt f
+                    piece = r * sqrt (max 0.05 (0.85 - f))
+                    gap = 0.35 * r + whole + piece + 2
+                 in [((u + 0.35 * r * cos a, v + 0.35 * r * sin a), whole), ((u - gap * cos a, v - gap * sin a), piece)]
+            | otherwise = [((u, v), r)]
+          where
+            u = u0 + 0.2 * hash i (fromIntegral j)
+            v = v0 + 0.2 * hash i (fromIntegral j + 0.5)
+        phoneFrames =
+            [ (t, pose, renderDiscs (concat (zipWith (inPieces i p) [0 ..] (reflectorDiscs clipBent allLit pose))))
+            | (i, t) <- zip [0 ..] (at120 42)
+            , let (y, p, r) = phoneTurn t
+                  Pose headTurned placed = headSeen bentWorn y p r
+                  pose = Pose headTurned (placed ^+^ sway t)
+            ]
+        (_, phoneRows) = trackFramesEvents clipBent phoneFrames
+        faced = after 39 (map fst phoneRows)
+    check ("looking down with reflectors in pieces isn't corrected " ++ show (corrections phoneRows)) $ all (>= 35) (corrections phoneRows)
+    check ("and facing the screen again followed " ++ show (summed faced)) $ lostCount faced == 0 && fst (worstError faced) < 3
+
     -- A lit fireplace behind the user, as the camera saw one: a steady core
     -- and flickering flames around it. Finding the clip afresh needs
     -- exactly three big blobs, and the fire's core is always a fourth;
