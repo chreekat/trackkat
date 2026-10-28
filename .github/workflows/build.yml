@@ -102,8 +102,11 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$env:USB_PREFIX\bin;$env:PATH"
+          # Failures become annotations, which show without the log.
           cabal test all --test-show-details=direct `
-            --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
+            --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib" 2>&1 |
+            ForEach-Object { if ($_ -match '^FAIL') { "::error::$_" } else { $_ } }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package
         shell: pwsh

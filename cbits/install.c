@@ -100,7 +100,7 @@ int hts_set_uninstall_entry(const wchar_t *exe, const wchar_t *location, const w
     if (rc != ERROR_SUCCESS)
         return (int)rc;
     wchar_t command[MAX_PATH + 64];
-    _snwprintf(command, MAX_PATH + 64, L"\"%ls\",0", exe);
+    _snwprintf(command, MAX_PATH + 64, L"%ls,0", exe);
     command[MAX_PATH + 63] = 0;
     rc = set_string(key, L"DisplayIcon", command);
     if (rc == ERROR_SUCCESS)
