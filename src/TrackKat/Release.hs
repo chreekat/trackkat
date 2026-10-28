@@ -47,6 +47,7 @@ module TrackKat.Release (
 
 import Control.Exception (IOException, try)
 import Control.Monad (forM_, unless)
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (chr, digitToInt, isAlphaNum, isDigit, isHexDigit, isSpace, toLower)
 import Data.List (intercalate, isPrefixOf, isSuffixOf, sortOn)
@@ -196,7 +197,9 @@ partialSuffix = ".partial"
 -- folders, and must hold trackkat.exe.
 extractRelease :: FilePath -> FilePath -> IO (Either String ())
 extractRelease zipFile dest =
-    try (BL.readFile zipFile) >>= \case
+    -- Read whole, as a file read lazily stays open on Windows until it is
+    -- read to its end.
+    try (BL.fromStrict <$> B.readFile zipFile) >>= \case
         Left e -> pure (Left (show (e :: IOException)))
         Right bytes -> case toArchiveOrFail bytes of
             Left err -> pure (Left ("not a zip: " ++ err))
