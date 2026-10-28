@@ -501,6 +501,8 @@ watchSettings paths path s = go
                             when (npclient new /= npclient config) $ pointGames (exeDir paths) (npclient new)
                             when (startup new /= startup config) $ setStartup say paths (startup new)
                             say (describeChanges config new)
+                            when (lightMasking new /= lightMasking config) $
+                                atomicModifyIORef' (sTracker s) (\t -> (setMasking (lightMasking new) t, ()))
                             when (clip new /= clip config) $ do
                                 atomicModifyIORef' (sTracker s) (\t -> (setModel (clipModel (clip new)) t, ()))
                                 say "Tracking the clip's new shape; recentering."
@@ -539,7 +541,7 @@ data Session = Session
 newSession :: Config -> Calibration -> IO Session
 newSession config c =
     Session
-        <$> newIORef (newTracker defaultIntrinsics (clipModel (clip config)) c)
+        <$> newIORef (newTracker defaultIntrinsics (clipModel (clip config)) (lightMasking config) c)
         <*> newIORef config
         <*> newIORef newShaper
         <*> newIORef ClipLost
@@ -576,8 +578,8 @@ calibrate s = atomicModifyIORef' (sTracker s) (\t -> (request Calibrate t, ()))
 -- next frame from scratch and recentering on it.
 clearCalibration :: Session -> IO ()
 clearCalibration s = do
-    model <- clipModel . clip <$> readIORef (sSettings s)
-    atomicWriteIORef (sTracker s) (newTracker defaultIntrinsics model defaultCalibration)
+    config <- readIORef (sSettings s)
+    atomicWriteIORef (sTracker s) (newTracker defaultIntrinsics (clipModel (clip config)) (lightMasking config) defaultCalibration)
     writeIORef (sShaper s) newShaper
     _ <- tryTakeMVar (sSaving s)
     putMVar (sSaving s) defaultCalibration
@@ -684,12 +686,12 @@ track s cam = do
                         shaped <- atomicModifyIORef' (sShaper s) $ \sh ->
                             let (p, sh') = shape r t now hp sh in (sh', p)
                         writeIORef (sLatest s) shaped
-                    Lost _ -> writeIORef (sClip s) ClipLost
+                    Lost{} -> writeIORef (sClip s) ClipLost
                 paused <- readIORef (sPaused s)
                 sent <- maybe (readIORef (sLatest s)) pure paused
                 publish (toGamePose sent)
                 published <- getMonotonicTime
-                showFrame (case outcome of Tracked{outPose = hp} -> InSight hp; Lost n -> OutOfSight n) sent
+                showFrame (case outcome of Tracked{outPose = hp} -> InSight hp; Lost{outBlobs = n} -> OutOfSight n) sent
                 previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
                 modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
                 noteGCs gcsSeen window
@@ -699,7 +701,7 @@ track s cam = do
                 (checked, _) <- readIORef games
                 when (now - checked >= 0.5) $ writeIORef games . (now,) =<< gamesTracking
                 gameConnected <- (> 0) . snd <$> readIORef games
-                lights (case outcome of Tracked{} -> On; Lost _ -> Off) (if gameConnected then On else Off)
+                lights (case outcome of Tracked{} -> On; Lost{} -> Off) (if gameConnected then On else Off)
 
                 shown <- readIORef lastStatus
                 when (now - shown >= 1) $ do
@@ -772,6 +774,8 @@ describeEvent _ (Calibrated c) =
 describeEvent _ (Refined LevelRefined c) = describeLevel c
 describeEvent centre (Refined PivotRefined c) = describePivot centre c
 describeEvent _ Corrected = "Corrected a mirror-image pose."
+describeEvent _ (LightIgnored p) = describeLightIgnored p
+describeEvent _ (LightForgotten p) = describeLightForgotten p
 
 -- | A calibration to save.
 learnt :: Event -> [Calibration]
@@ -787,6 +791,8 @@ calibrationNews centre c Recentered = Just (describeCalibration centre c)
 calibrationNews centre _ (Calibrated c) = Just (describeEvent centre (Calibrated c) ++ "\n" ++ describePivot centre c)
 calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
 calibrationNews _ _ Corrected = Nothing
+calibrationNews _ _ (LightIgnored _) = Nothing
+calibrationNews _ _ (LightForgotten _) = Nothing
 calibrationNews centre _ e = Just (describeEvent centre e)
 
 -- | The calibration box's account of a calibration.
@@ -800,7 +806,8 @@ status outcome paused gameConnected =
             Tracked{outPose = hp, outSeen = seen} ->
                 printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
                     ++ describeSeen seen
-            Lost n -> "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then ")" else "s)")
+            Lost n masked ->
+                "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ ")"
         , maybe "" (const "   PAUSED") paused
         , if gameConnected then "   game connected" else ""
         ]

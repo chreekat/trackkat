@@ -80,3 +80,8 @@ updates = on
 # startup = on: Windows starts trackkat in the tray when you log in, so
 # it is running before any game, as anti-cheat mode needs.
 startup = off
+
+# ignore lights = on: bright lights that stay put, such as a lamp or a
+# fire behind you, are learnt in a few seconds and ignored, so that
+# they don't stop trackkat finding the clip.
+ignore lights = on

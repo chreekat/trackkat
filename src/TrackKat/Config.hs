@@ -38,6 +38,7 @@ import Data.Foldable (traverse_)
 import Data.List (dropWhileEnd, findIndices, intercalate, nub)
 import Data.Maybe (fromMaybe)
 
+import TrackKat.Lights (Masking (..))
 import TrackKat.Number
 import TrackKat.Pose (Model, triangle)
 import TrackKat.Response
@@ -51,6 +52,7 @@ data Config = Config
     , npclient :: NPClient
     , updates :: Updates
     , startup :: Startup
+    , lightMasking :: Masking
     }
     deriving (Eq, Show)
 
@@ -94,7 +96,7 @@ clipModel (ClipShape _ m) = m
 
 -- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
 -- DCS; strong smoothing; the headset clip trackkat was developed with, its
--- post as it is now bent; trackkat's own NPClient.
+-- post as it is now bent; trackkat's own NPClient; still lights ignored.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -116,6 +118,7 @@ defaultConfig =
         , npclient = TrackKatNPClient
         , updates = UpdatesOn
         , startup = NoStartAtLogin
+        , lightMasking = MaskLights
         }
   where
     gain g = Points [(1, g)]
@@ -201,6 +204,7 @@ setting (c, k@(Knobs on s r)) name value =
             "npclient" -> (\n -> (c{npclient = n}, k)) <$> parseNPClient value
             "updates" -> (\u -> (c{updates = u}, k)) <$> parseUpdates value
             "startup" -> (\st -> (c{startup = st}, k)) <$> parseStartup value
+            "ignore lights" -> (\l -> (c{lightMasking = l}, k)) <$> parseMasking value
             _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
@@ -288,6 +292,11 @@ renderConfig c =
         , "# startup = on: Windows starts trackkat in the tray when you log in, so"
         , "# it is running before any game, as anti-cheat mode needs."
         , "startup = " ++ renderStartup (startup c)
+        , ""
+        , "# ignore lights = on: bright lights that stay put, such as a lamp or a"
+        , "# fire behind you, are learnt in a few seconds and ignored, so that"
+        , "# they don't stop trackkat finding the clip."
+        , "ignore lights = " ++ renderMasking (lightMasking c)
         ]
   where
     r = response c
@@ -317,6 +326,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                    , ("npclient", renderNPClient (npclient c))
                    , ("updates", renderUpdates (updates c))
                    , ("startup", renderStartup (startup c))
+                   , ("ignore lights", renderMasking (lightMasking c))
                    ]
 
 parseLean :: String -> Either String Lean
@@ -354,6 +364,15 @@ parseStartup _ = Left "startup is on or off"
 renderStartup :: Startup -> String
 renderStartup StartAtLogin = "on"
 renderStartup NoStartAtLogin = "off"
+
+parseMasking :: String -> Either String Masking
+parseMasking "on" = Right MaskLights
+parseMasking "off" = Right NoMasking
+parseMasking _ = Left "ignore lights is on or off"
+
+renderMasking :: Masking -> String
+renderMasking MaskLights = "on"
+renderMasking NoMasking = "off"
 
 -- | Read three distances in mm, separated by spaces or commas or both.
 parseClip :: String -> Either String ClipShape
