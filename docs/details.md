@@ -147,14 +147,19 @@ the clip's triangle squarely faces the camera, as a clip whose post is bent
 upright often does, and trackkat can come out of that, or find the clip
 again after losing it, on the mirror image. It tells them apart by how your
 head turns: about your neck, behind the clip, never about a point in front
-of it. Within a second or two of glancing about it corrects a mirror image,
-keeping your centre where it was, and logs:
+of it. It goes only by turning seen clearly, each reflector a blob of its
+own rather than run together or in pieces, as they are when seen at a
+slant; and it is slower to believe a pose that would have your head turned
+further from your centre than heads usually turn. Within a second or two
+of glancing about it corrects a mirror image, keeping your centre where it
+was, and logs:
 
 ```
 Corrected a mirror-image pose.
 ```
 
-trackkat learns nothing while it isn't sure which pose is your head's. A
+trackkat learns nothing while it isn't sure which pose is your head's, or
+while it doesn't see the reflectors clearly. A
 calibration learnt from mirror images, whose neck pivot is in front of the
 clip, is forgotten when trackkat starts, with a line in the log saying so.
 
