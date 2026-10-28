@@ -338,9 +338,9 @@ uninstall how = do
             if not rest
                 then pure False
                 else do
-                    -- This trackkat.exe goes once it has quit.
+                    -- This trackkat.exe, and the DLLs it loaded, go once it has quit.
                     _ <- launchWith comspec ["/d", "/c", "ping -n 4 127.0.0.1 >nul & rd /s /q", quote (installRoot p)] True
-                    others <- filter (/= normalise (exeDir p </> "trackkat.exe")) <$> filesUnder (installRoot p)
+                    others <- filter (not . inside (exeDir p)) <$> filesUnder (installRoot p)
                     unless (null others) $ () <$ withCWString "trackkat uninstall" (\n -> withCWString removeRoot (\c -> c_set_run n c 1))
                     pure (not (null others))
         unless keepSettings $ () <$ (try (removePathForcibly (settingsDir p)) :: IO (Either IOException ()))
