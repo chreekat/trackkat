@@ -131,29 +131,29 @@ data Sweep
 
 -- | The last pose tracked.
 data Recent = Recent
-    { recentPose :: Pose
-    , recentTime :: Double
+    { recentPose :: !Pose
+    , recentTime :: !Double
     -- ^ in seconds on the clock given to 'step'
-    , recentAllSeen :: Double
+    , recentAllSeen :: !Double
     -- ^ when all three reflectors were last seen
     , recentSince :: !Double
     -- ^ since when the clip has been tracked in every frame
     }
 
 data Tracker = Tracker
-    { trIntrinsics :: Intrinsics
-    , trModel :: Model
-    , trRecent :: Maybe Recent
+    { trIntrinsics :: !Intrinsics
+    , trModel :: !Model
+    , trRecent :: !(Maybe Recent)
     -- ^ predicts the next frame, and is the solver's starting point
-    , trSizes :: Three Size
-    , trReference :: Maybe Pose
-    , trLearner :: Learner
-    , trBranch :: Branch
+    , trSizes :: !(Three Size)
+    , trReference :: !(Maybe Pose)
+    , trLearner :: !Learner
+    , trBranch :: !Branch
     -- ^ whether the poses tracked and recentered on are the head's
-    , trSweep :: Maybe Sweep
-    , trPending :: [Request]
+    , trSweep :: !(Maybe Sweep)
+    , trPending :: ![Request]
     -- ^ oldest first
-    , trMasking :: Masking
+    , trMasking :: !Masking
     , trLights :: !Lights
     , trBlobs :: ![(Blob, BlobRole)]
     -- ^ the last frame's, all evaluated, so as not to hold on to the frames
