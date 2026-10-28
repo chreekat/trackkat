@@ -26,8 +26,7 @@ static const unsigned char *key;
 static bool launch_attempted;
 static np_freshness freshness;
 
-/* Append a line to npclient.log beside the DLL, so we can see what a game
- * asks for. */
+/* Append a line to npclient.log, so we can see what a game asks for. */
 static void np_log(const char *fmt, ...)
 {
     if (log_file == INVALID_HANDLE_VALUE)
@@ -58,14 +57,23 @@ static void np_log(const char *fmt, ...)
         }                                                                      \
     } while (0)
 
+/* Open npclient.log in %APPDATA%\trackkat, beside trackkat's settings, or
+ * beside the DLL without an %APPDATA%. */
 static void open_log(void)
 {
     wchar_t path[MAX_PATH];
-    DWORD n = GetModuleFileNameW(self, path, MAX_PATH);
-    wchar_t *slash = n && n < MAX_PATH ? wcsrchr(path, L'\\') : NULL;
-    if (!slash || (size_t)(slash + 1 - path) + wcslen(L"npclient.log") >= MAX_PATH)
-        return;
-    wcscpy(slash + 1, L"npclient.log");
+    DWORD n = GetEnvironmentVariableW(L"APPDATA", path, MAX_PATH);
+    if (n > 0 && n + wcslen(L"\\trackkat\\npclient.log") < MAX_PATH) {
+        wcscat(path, L"\\trackkat");
+        CreateDirectoryW(path, NULL);
+        wcscat(path, L"\\npclient.log");
+    } else {
+        n = GetModuleFileNameW(self, path, MAX_PATH);
+        wchar_t *slash = n && n < MAX_PATH ? wcsrchr(path, L'\\') : NULL;
+        if (!slash || (size_t)(slash + 1 - path) + wcslen(L"npclient.log") >= MAX_PATH)
+            return;
+        wcscpy(slash + 1, L"npclient.log");
+    }
     log_file = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     char exe[MAX_PATH];
@@ -102,7 +110,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 /* Start trackkat.exe from this DLL's folder, unless it is already running,
  * telling it a game started it: it then shows only in the system tray, with
  * no console window to take focus from the game, and quits once games are
- * done with it. Tried once per process. */
+ * done with it. Tried once per process. An installed trackkat.exe whose
+ * version is no longer the newest hands over to the newest. */
 static void ensure_trackkat(void)
 {
     if (launch_attempted)

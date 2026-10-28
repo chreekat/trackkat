@@ -12,24 +12,28 @@ import Control.Exception (Handler (..), IOException, bracket_, catch, catches, d
 import Control.Monad (forM_, forever, unless, when, (<=<))
 import Data.Functor (($>))
 import Data.IORef
+import Data.Maybe (fromMaybe)
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
 import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
 import System.Directory (doesFileExist, getModificationTime, renameFile)
-import System.Environment (getArgs, getExecutablePath)
-import System.Exit (exitFailure)
-import System.FilePath (takeDirectory, (</>))
+import System.Environment (getArgs)
+import System.Exit (exitFailure, exitSuccess)
+import System.FilePath ((</>))
 import System.IO
 import System.Timeout (timeout)
 import Text.Printf (printf)
 
+import TrackKat.Build
 import TrackKat.Calibration
 import TrackKat.Camera
 import TrackKat.Config
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
 import TrackKat.Gui
+import TrackKat.Install
 import TrackKat.Pose
+import TrackKat.Release
 import TrackKat.Response
 import TrackKat.Stats
 import TrackKat.Tracker
@@ -42,6 +46,70 @@ data Start
     | -- | by NPClient, for a game (@--by-game@): in the tray, and quitting
       -- when nothing has used it for 'idleSeconds'
       ByGame
+    | -- | by Windows at login (@--tray@, through trackkat-tray.exe): in the
+      -- tray, until quit
+      AtLogin
+
+-- | What the command line asks for.
+data Command
+    = -- | track, after the process given, if any, has quit
+      Run Start WindowAtStart (Maybe Int)
+    | -- | install this copy, and start it
+      InstallCommand
+    | UninstallCommand Uninstall
+    | -- | name the files of a release, for CI to check the zip
+      ListFiles
+
+parseCommand :: [String] -> Maybe Command
+parseCommand = \case
+    ["--install"] -> Just InstallCommand
+    ["--uninstall"] -> Just (UninstallCommand AskFirst)
+    ["--uninstall", "--quiet"] -> Just (UninstallCommand Quietly)
+    ["--list-files"] -> Just ListFiles
+    args -> go ByHand Nothing Nothing args
+  where
+    go s w a = \case
+        [] -> Just (Run s (fromMaybe (defaultWindow s) w) a)
+        "--by-game" : rest -> go ByGame w a rest
+        "--tray" : rest -> go AtLogin w a rest
+        "--window" : rest -> go s (Just WindowShown) a rest
+        "--after" : pid : rest | [(n, "")] <- reads pid -> go s w (Just n) rest
+        _ -> Nothing
+
+usage :: String
+usage =
+    unlines
+        [ "usage: trackkat [--by-game | --tray] [--window] [--after PID]"
+        , "       trackkat --install | --uninstall [--quiet] | --list-files"
+        , ""
+        , "  --by-game    started by a game: in the tray, quitting once games are done"
+        , "  --tray       started at login: in the tray"
+        , "  --window     open the window even so"
+        , "  --after PID  take over from that trackkat once it has quit"
+        , "  --install    install this copy for this user, and start it"
+        , "  --uninstall  uninstall trackkat; --quiet keeps settings without asking"
+        , "  --list-files name the files of a release"
+        ]
+
+defaultWindow :: Start -> WindowAtStart
+defaultWindow ByHand = WindowShown
+defaultWindow _ = WindowHidden
+
+-- | The arguments that start trackkat as it was started.
+startArgs :: Start -> WindowAtStart -> [String]
+startArgs s w =
+    case s of
+        ByHand -> []
+        ByGame -> ["--by-game"]
+        AtLogin -> ["--tray"]
+        ++ case (s, w) of
+            (ByHand, _) -> []
+            (_, WindowShown) -> ["--window"]
+            (_, WindowHidden) -> []
+
+-- | This build's version; none for a development build.
+version :: Maybe Version
+version = buildVersion >>= parseVersion
 
 -- | When started by a game, how long trackkat waits, with no game tracking
 -- and its window closed, before it quits. Long enough for a game to be
@@ -52,22 +120,55 @@ idleSeconds = 60
 main :: IO ()
 main = do
     hSetBuffering stdout LineBuffering
-    start <-
-        getArgs >>= \case
-            [] -> pure ByHand
-            ["--by-game"] -> pure ByGame
-            _ -> putStrLn "usage: trackkat [--by-game]" >> exitFailure
-    dir <- takeDirectory <$> getExecutablePath
-    first <- singleInstance
+    getArgs >>= \args -> case parseCommand args of
+        Nothing -> putStr usage >> exitFailure
+        Just ListFiles -> mapM_ putStrLn releaseFiles
+        Just (UninstallCommand how) -> uninstall how
+        Just InstallCommand -> installFromCommandLine
+        Just (Run start window after) -> run start window after
+
+-- | Install this copy, and start the installed one, taking over from any
+-- trackkat running.
+installFromCommandLine :: IO ()
+installFromCommandLine = do
+    paths <- findPaths
+    v <- maybe (putStrLn "A development build can't be installed." >> exitFailure) pure version
+    dir <- installCopy paths v >>= either (\err -> putStrLn ("Can't install trackkat: " ++ err) >> exitFailure) pure
+    running <- quitRunning
+    launch (dir </> "trackkat.exe") (maybe [] (\pid -> ["--after", show pid]) running) >>= \case
+        Right () -> putStrLn ("Installed trackkat in " ++ dir ++ ".")
+        Left e -> putStrLn ("Installed trackkat in " ++ dir ++ ", but can't start it (error " ++ show e ++ ").") >> exitFailure
+
+run :: Start -> WindowAtStart -> Maybe Int -> IO ()
+run start window after = do
+    paths <- findPaths
+    installedNow <- installedVersions paths
+    let place = placement (installRoot paths) (exeDir paths)
+    -- An older version, perhaps started by a game from its NPClient, or
+    -- with an update waiting, hands over to the newest installed.
+    forM_ (newerInstalled place installedNow) $ \v ->
+        launch (versionExe paths v) (startArgs start window ++ maybe [] (\pid -> ["--after", show pid]) after) >>= \case
+            Right () -> exitSuccess
+            Left e -> putStrLn ("Can't start trackkat " ++ versionFolder v ++ " (error " ++ show e ++ "); carrying on.")
+    first <- case after of
+        Nothing -> singleInstance
+        Just pid -> do
+            _ <- waitForExit pid 30
+            -- Games' NPClients check for trackkat, holding its name briefly.
+            let claim n = singleInstance >>= \ok -> if ok || n <= (0 :: Int) then pure ok else threadDelay 200000 >> claim (n - 1)
+            claim 50
     unless first $ do
         shown <- showRunning
         putStrLn (if shown then "trackkat is already running; showing its window." else "trackkat is already running.")
         exitFailure
-    let window = case start of
-            ByHand -> WindowShown
-            ByGame -> WindowHidden
+    showVersion (maybe "development build" describeVersion version)
     bracket_ (startGui window >>= either (\e -> say ("Can't show a window or tray icon (error " ++ show e ++ ").")) pure) stopGui $ do
-        let settingsFile = dir </> "trackkat.conf"
+        say $ case (version, place) of
+            (Nothing, _) -> "trackkat, a development build, which can't be installed or updated, running from " ++ exeDir paths
+            (Just v, Installed _) -> "trackkat " ++ describeVersion v ++ ", installed in " ++ exeDir paths
+            (Just v, Portable) -> "trackkat " ++ describeVersion v ++ ", running from " ++ exeDir paths
+        moveSettings say paths
+        let settingsFile = settingsDir paths </> "trackkat.conf"
         (config, stamp) <- loadConfig settingsFile
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
         startTrackIRStandIn >>= \case
@@ -76,7 +177,13 @@ main = do
                 say "NaturalPoint's TrackIR software is running: quit it, or games loading its NPClient get their pose from it, not trackkat."
             Left (StandInFailed e) -> say ("Can't stand in for NaturalPoint's software (error " ++ show e ++ ").")
         publish still
-        pointGames dir (npclient config)
+        pointGames (exeDir paths) (npclient config)
+        case place of
+            Installed v -> register say paths v
+            Portable -> pure ()
+        setStartup say paths (startup config)
+        offered <- newIORef NoOffer
+        refreshOffer paths place offered
         unwatched <- startHotkeys (hotkeyBindings config)
         forM_ unwatched $ \case
             (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
@@ -88,25 +195,26 @@ main = do
                 (keysAndButtons (recenterBindings config))
                 (keysAndButtons (pauseBindings config))
                 (keysAndButtons (trimBindings config))
-        let calibrationFile = dir </> "trackkat.calibration"
+        let calibrationFile = settingsDir paths </> "trackkat.calibration"
         session <- newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile
         showButtons session
         withAsync (console session) $ \_ ->
-            withAsync (watchSettings settingsFile session stamp config) $ \_ ->
+            withAsync (watchSettings paths settingsFile session stamp config) $ \_ ->
                 withAsync (joysticks session) $ \_ ->
                     withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
-                        withAsync (cameraLoop session) $ \camera -> do
-                            link camera
-                            controls start settingsFile session
-                            -- Let the camera go, turning its lights off, but
-                            -- not for long: after sleep a USB read may never
-                            -- return.
-                            _ <- timeout 3000000 (cancel camera)
-                            -- Reading the console can't be interrupted on
-                            -- Windows, so rather than wait for the console
-                            -- thread, leave at once.
-                            hFlush stdout
-                            quitProcess
+                        withAsync (maintain paths place session offered) $ \_ ->
+                            withAsync (cameraLoop session) $ \camera -> do
+                                link camera
+                                controls start settingsFile session (takeOffer paths start offered)
+                                -- Let the camera go, turning its lights off, but
+                                -- not for long: after sleep a USB read may never
+                                -- return.
+                                _ <- timeout 3000000 (cancel camera)
+                                -- Reading the console can't be interrupted on
+                                -- Windows, so rather than wait for the console
+                                -- thread, leave at once.
+                                hFlush stdout
+                                quitProcess
 
 -- | Tell games to load the NPClient chosen, trackkat's from its own folder,
 -- falling back to that if NaturalPoint's isn't installed.
@@ -125,6 +233,79 @@ pointGames dir choice = do
             | found == dir -> say ("Games will load trackkat's NPClient from " ++ dir)
             | otherwise -> say ("Games will load NaturalPoint's NPClient from " ++ found ++ "; start trackkat before the game.")
         Left e -> say ("Can't point games at NPClient (registry error " ++ show e ++ ").")
+
+-- | What the window offers, as installed versions now stand.
+refreshOffer :: Paths -> Placement -> IORef Offer -> IO ()
+refreshOffer paths place ref = do
+    o <- offer version place <$> installedVersions paths
+    before <- atomicModifyIORef' ref (\b -> (o, b))
+    unless (o == before) $ showOffer $ case o of
+        NoOffer -> Nothing
+        OfferInstall v ->
+            Just
+                ( "trackkat " ++ versionFolder v ++ " is running from " ++ exeDir paths ++ ". Install it to start it from the Start menu and keep it up to date."
+                , "Install trackkat"
+                , Nothing
+                )
+        OfferInstalled v ->
+            Just ("trackkat " ++ versionFolder v ++ " is installed; this copy, in " ++ exeDir paths ++ ", isn't.", "Use installed trackkat", Nothing)
+        OfferUpdate v ->
+            Just
+                ( "trackkat " ++ versionFolder v ++ " is ready. It starts next time trackkat does, or restart now."
+                , "Restart to update"
+                , Just ("Restart to update to " ++ versionFolder v)
+                )
+
+-- | Take up what the window offers: install this copy, or switch to an
+-- installed one, handing over to it. True if trackkat should now quit.
+takeOffer :: Paths -> Start -> IORef Offer -> IO Bool
+takeOffer paths start ref =
+    readIORef ref >>= \case
+        NoOffer -> pure False
+        OfferInstall v -> do
+            say ("Installing trackkat " ++ versionFolder v ++ " in " ++ installRoot paths ++ ".")
+            installCopy paths v >>= \case
+                Left err -> say ("Can't install trackkat: " ++ err) $> False
+                Right dir -> switchTo (dir </> "trackkat.exe")
+        OfferInstalled v -> switchTo (versionExe paths v)
+        OfferUpdate v -> switchTo (versionExe paths v)
+  where
+    switchTo exe =
+        handOver exe (startArgs start WindowShown ++ ["--window"]) >>= \case
+            Right () -> say ("Switching to " ++ exe ++ ".") $> True
+            Left e -> say ("Can't start " ++ exe ++ " (error " ++ show e ++ ").") $> False
+
+-- | How often an installed trackkat looks for a newer version, in seconds.
+updateEvery :: Double
+updateEvery = 4 * 3600
+
+-- | Keep an installed trackkat tidy and up to date: delete older versions
+-- once games have let go of them, and look for a newer one now and then,
+-- unless updates are off. Portable copies and development builds do
+-- neither.
+maintain :: Paths -> Placement -> Session -> IORef Offer -> IO ()
+maintain paths place s ref = case (place, version) of
+    (Installed _, Just self) -> go self Nothing
+    _ -> pure ()
+  where
+    go self checked = do
+        _ <- cleanUp say paths place
+        now <- getMonotonicTime
+        wanted <- (== UpdatesOn) . updates <$> readIORef (sSettings s)
+        checked' <-
+            if wanted && maybe True (\t -> now - t >= updateEvery) checked
+                then do
+                    checkForUpdate paths self >>= \case
+                        -- Offline, or behind a proxy that won't let it through:
+                        -- the console only, and again next time.
+                        Left err -> putStrLn ("Can't look for a newer trackkat: " ++ err)
+                        Right (Just v) -> say ("trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time.")
+                        Right Nothing -> pure ()
+                    refreshOffer paths place ref
+                    pure (Just now)
+                else pure checked
+        threadDelay (10 * 60 * 1000000)
+        go self checked'
 
 -- | Report the games that start head tracking through NaturalPoint's
 -- NPClient.
@@ -158,17 +339,18 @@ cameraLoop s = forever $ do
 -- window's count of games current, until the user quits, or, when a game
 -- started trackkat, until neither a game nor the window has used it for
 -- 'idleSeconds'.
-controls :: Start -> FilePath -> Session -> IO ()
-controls start path s = go 0 Nothing
+controls :: Start -> FilePath -> Session -> IO Bool -> IO ()
+controls start path s takeUp = go 0 Nothing
   where
     go checked idleSince = do
         threadDelay 20000
         actions <- takeActions
         mapM_ act actions
+        switched <- if OfferAction `elem` actions then takeUp else pure False
         reportTrackIRGames
         now <- getMonotonicTime
         if
-            | any quits actions -> pure ()
+            | any quits actions || switched -> pure ()
             -- Checking game processes is a few system calls; twice a
             -- second is plenty.
             | now - checked < 0.5 -> go checked idleSince
@@ -178,6 +360,7 @@ controls start path s = go 0 Nothing
                 open <- windowOpen
                 case (start, games > 0 || open, idleSince) of
                     (ByHand, _, _) -> go now Nothing
+                    (AtLogin, _, _) -> go now Nothing
                     (ByGame, True, Nothing) -> go now Nothing
                     (ByGame, True, Just _) -> do
                         say "A game or the window is using trackkat again; not quitting."
@@ -191,12 +374,14 @@ controls start path s = go 0 Nothing
                         | otherwise -> go now idleSince
     quits QuitAction = True
     quits _ = False
+
     act RecenterAction = recenter s
     act PauseAction = togglePause s
     act TrimAction = trim s
     act CalibrateAction = calibrate s
     act ClearCalibrationAction = clearCalibration s
     act QuitAction = say "Quitting."
+    act OfferAction = pure ()
     act SaveAction = saveSettings path
     act (KeyChosen k (Just b)) = addBinding k b
     act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
@@ -296,8 +481,8 @@ modificationTime path = (Just <$> getModificationTime path) `catch` \e -> const 
 -- | Apply the settings file each time it is saved. A file that is missing
 -- or doesn't parse leaves the settings as they were; an editor still
 -- writing it changes its time again when done, so it is read again then.
-watchSettings :: FilePath -> Session -> Maybe UTCTime -> Config -> IO ()
-watchSettings path s = go
+watchSettings :: Paths -> FilePath -> Session -> Maybe UTCTime -> Config -> IO ()
+watchSettings paths path s = go
   where
     go stamp config = do
         threadDelay 500000
@@ -312,7 +497,8 @@ watchSettings path s = go
                         Right (text, new) -> do
                             writeIORef (sSettings s) new
                             rebindHotkeys (hotkeyBindings new)
-                            when (npclient new /= npclient config) $ pointGames (takeDirectory path) (npclient new)
+                            when (npclient new /= npclient config) $ pointGames (exeDir paths) (npclient new)
+                            when (startup new /= startup config) $ setStartup say paths (startup new)
                             say (describeChanges config new)
                             when (clip new /= clip config) $ do
                                 atomicModifyIORef' (sTracker s) (\t -> (setModel (clipModel (clip new)) t, ()))

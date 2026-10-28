@@ -28,6 +28,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_TRIM 0x80
 #define ACT_KEY_TRIM 0x100
 #define ACT_CLEAR_CALIBRATION 0x200
+#define ACT_OFFER 0x400 /* take up what the banner offers: install, or restart to update */
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
@@ -37,10 +38,10 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
-enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness",
                                                     L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
-                                                    L"npclient"};
+                                                    L"npclient", L"updates", L"startup"};
 #define LISTS 3 /* binding lists: recenter, pause, trim */
 
 typedef struct State {
@@ -56,13 +57,17 @@ typedef struct State {
     wchar_t stats[TEXT_MAX];
     wchar_t calibration[TEXT_MAX];
     wchar_t settings_message[TEXT_MAX];
+    wchar_t offer[TEXT_MAX];       /* what the banner says, or nothing for no banner */
+    wchar_t offer_button[64];      /* its button */
+    wchar_t offer_tray[128];       /* the tray menu's item for it, or nothing for none */
 } State;
 
 /* ---- Shared with Haskell, under the lock --------------------------------- */
 
 static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, L"", L"",
-                       L"Changes are saved as you make them. Separate several keys or buttons with commas."};
+                       L"Changes are saved as you make them.", L"", L"", L""};
+static wchar_t version_text[64] = L"development build"; /* set before the window is made */
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
 static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings as the user asked to save them */
@@ -169,6 +174,25 @@ void hts_gui_stats(const wchar_t *text) { set_text(shared.stats, text); }
 void hts_gui_calibration(const wchar_t *text) { set_text(shared.calibration, text); }
 void hts_gui_settings_message(const wchar_t *text) { set_text(shared.settings_message, text); }
 
+/* Show a banner across the top of the window, with a button that takes up
+ * what it offers and a tray menu item that does the same; an empty text
+ * hides the banner, an empty tray item leaves it out of the menu. */
+void hts_gui_offer(const wchar_t *text, const wchar_t *button, const wchar_t *tray)
+{
+    AcquireSRWLockExclusive(&lock);
+    copy_text(shared.offer, TEXT_MAX, text);
+    copy_text(shared.offer_button, 64, button);
+    copy_text(shared.offer_tray, 128, tray);
+    ReleaseSRWLockExclusive(&lock);
+}
+
+/* The version shown in the title and beside the log. Call before
+ * hts_gui_start. */
+void hts_gui_version(const wchar_t *text)
+{
+    copy_text(version_text, 64, text);
+}
+
 static int field_index(const wchar_t *name)
 {
     for (int i = 0; i < F_COUNT; i++)
@@ -240,6 +264,7 @@ void hts_gui_add_binding(int which, const wchar_t *binding)
 #define WM_APP_TRAY (WM_APP + 1)
 #define WM_APP_SHOW (WM_APP + 2)
 #define WM_APP_CAPTURE_MOUSE (WM_APP + 3) /* to an Add button, once its click is done */
+#define WM_APP_QUIT (WM_APP + 4)          /* from another trackkat, uninstalling */
 #define TIMER_ID 1
 #define TIMER_MS 33
 
@@ -255,12 +280,14 @@ enum {
     ID_SMOOTHING,
     ID_TRIM,
     ID_ADD_TRIM,
+    ID_OFFER,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
     ID_MENU_PAUSE,
     ID_MENU_TRIM,
     ID_MENU_QUIT,
+    ID_MENU_OFFER,
     ID_CURVES_AS_TEXT,
     ID_MULTIPLIER = 400, /* + axis */
     ID_STEP = 410,       /* + axis */
@@ -270,7 +297,9 @@ enum {
 static HINSTANCE inst;
 static HWND tray_hwnd, main_hwnd, live_hwnd;
 static HWND recenter_button, pause_button, trim_button, calibration_text, settings_text, log_box;
-static HWND log_group, copy_button, log_hint;
+static HWND log_group, copy_button, log_hint, version_label;
+static HWND banner, offer_button; /* shown with an offer, above the rest */
+static int banner_shown;
 static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
 static wchar_t field_text[F_COUNT][FIELD_MAX]; /* values of the checkbox and sliders */
@@ -332,8 +361,8 @@ static void describe(const State *st, wchar_t *buf, size_t size)
                           : st->camera == CAMERA_DOWN    ? L"No camera"
                           : st->blobs < 0                ? L"Tracking"
                                                          : L"Clip out of sight";
-    _snwprintf(buf, size, L"trackkat\n%ls%ls%ls", what, st->games > 0 ? L"\nGame connected" : L"",
-               st->paused ? L"\nPaused" : L"");
+    _snwprintf(buf, size, L"trackkat\n%ls%ls%ls%ls", what, st->games > 0 ? L"\nGame connected" : L"",
+               st->paused ? L"\nPaused" : L"", st->offer_tray[0] ? L"\nUpdate ready: restart to update" : L"");
     buf[size - 1] = 0;
 }
 
@@ -373,6 +402,10 @@ static void tray_menu(void)
     AppendMenuW(m, MF_STRING | (seen.paused ? MF_CHECKED : 0), ID_MENU_PAUSE, L"&Pause");
     AppendMenuW(m, MF_STRING, ID_MENU_TRIM, L"&Trim: make this view forward");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    if (seen.offer_tray[0]) {
+        AppendMenuW(m, MF_STRING, ID_MENU_OFFER, seen.offer_tray);
+        AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    }
     AppendMenuW(m, MF_STRING, ID_MENU_QUIT, L"&Quit");
     SetMenuDefaultItem(m, ID_MENU_OPEN, FALSE);
     POINT p;
@@ -665,6 +698,39 @@ static LRESULT CALLBACK live_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         SelectObject(mem, old);
         DeleteObject(bmp);
         DeleteDC(mem);
+        EndPaint(w, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProcW(w, msg, wp, lp);
+}
+
+/* ---- The banner ----------------------------------------------------------- */
+
+/* What the banner offers, in the live view's colours, a bar of the accent
+ * on its left. */
+static LRESULT CALLBACK banner_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(w, &ps);
+        RECT rc;
+        GetClientRect(w, &rc);
+        fill_rect(dc, 0, 0, rc.right, rc.bottom, C_BACK);
+        fill_rect(dc, 0, 0, S(4), rc.bottom, C_ACCENT);
+        SetBkMode(dc, TRANSPARENT);
+        SelectObject(dc, ui_font);
+        SetTextColor(dc, C_TEXT);
+        /* Centred, on one line or two. */
+        RECT text = {S(14), 0, rc.right - S(8), rc.bottom};
+        RECT measure = text;
+        DrawTextW(dc, seen.offer, -1, &measure, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        int h = measure.bottom - measure.top;
+        text.top = (rc.bottom - h) / 2;
+        DrawTextW(dc, seen.offer, -1, &text, DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS);
         EndPaint(w, &ps);
         return 0;
     }
@@ -1168,6 +1234,8 @@ static void show_field(int i, const wchar_t *value)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"screen") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_NPCLIENT)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"trackir") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+    else if (i == F_UPDATES || i == F_STARTUP)
+        SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"on") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
         SendMessageW(field_ctl[i], BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1196,7 +1264,7 @@ static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
     for (int i = 0; i < F_COUNT; i++)
-        if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || slider_field(i))
+        if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
         else
             GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
@@ -1297,6 +1365,48 @@ static void copy_log(void)
 
 /* ---- The window ----------------------------------------------------------- */
 
+/* Layout, in pixels at 96 dpi. The log box takes what height is left. */
+#define CLIENT_W 720
+#define CURVES_TOP 506
+#define LOG_TOP (CURVES_TOP + 216)
+#define CLIENT_H (LOG_TOP + 172)
+#define BANNER_H 44 /* the banner's height, with the gap below it */
+
+static void layout(int width, int height);
+
+/* Show the banner or hide it, as the offer says, moving everything else
+ * down or up to make room, and the window's bottom with it. */
+static void show_banner(void)
+{
+    SetWindowTextW(offer_button, seen.offer_button);
+    InvalidateRect(banner, NULL, FALSE);
+    int show = seen.offer[0] != 0;
+    if (show == banner_shown)
+        return;
+    banner_shown = show;
+    int dy = show ? S(BANNER_H) : -S(BANNER_H);
+    for (HWND c = GetWindow(main_hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+        if (c == banner || c == offer_button)
+            continue;
+        RECT r;
+        GetWindowRect(c, &r);
+        MapWindowPoints(NULL, main_hwnd, (POINT *)&r, 2);
+        SetWindowPos(c, NULL, r.left, r.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    ShowWindow(banner, show ? SW_SHOWNA : SW_HIDE);
+    ShowWindow(offer_button, show ? SW_SHOWNA : SW_HIDE);
+    RECT client;
+    GetClientRect(main_hwnd, &client);
+    if (IsZoomed(main_hwnd))
+        layout(client.right, client.bottom);
+    else {
+        RECT r;
+        GetWindowRect(main_hwnd, &r);
+        SetWindowPos(main_hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top + dy,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
 static void refresh(void)
 {
     State st;
@@ -1327,12 +1437,15 @@ static void refresh(void)
         SetWindowTextW(calibration_text, st.calibration);
     if (wcscmp(st.settings_message, seen.settings_message) != 0)
         SetWindowTextW(settings_text, st.settings_message);
+    int offer_changed = wcscmp(st.offer, seen.offer) != 0 || wcscmp(st.offer_button, seen.offer_button) != 0;
     if (st.paused != seen.paused || fields & (1u << F_PAUSE)) {
         wchar_t label[FIELD_MAX + 32];
         binding_label(pause_button, label, FIELD_MAX + 32, st.paused ? L"Resume" : L"Pause", field_text[F_PAUSE]);
         SetWindowTextW(pause_button, label);
     }
     seen = st;
+    if (offer_changed)
+        show_banner();
     drain_log();
     update_tray(0);
     if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd)) {
@@ -1458,15 +1571,18 @@ static const wchar_t *const add_button_tip =
     L"Click, then press the key, joystick button, or middle or side mouse button (over this window) to add. Click "
     L"again to stop waiting.";
 
-/* Layout, in pixels at 96 dpi. The log box takes what height is left. */
-#define CLIENT_W 720
-#define CURVES_TOP 506
-#define LOG_TOP (CURVES_TOP + 216)
-#define CLIENT_H (LOG_TOP + 172)
-
 static void build_window(void)
 {
     make_tips();
+    banner = tip(CreateWindowExW(0, L"trackkat_banner", L"", WS_CHILD, S(10), S(8), S(540), S(36), main_hwnd, NULL,
+                                 inst, NULL),
+                 L"trackkat runs from wherever you unzipped it until you install it. Installed, it lives in your "
+                 L"user's programs folder (no admin needed), starts from the Start menu, keeps itself up to date, "
+                 L"and can be uninstalled from Settings' apps. Settings stay where they are.");
+    offer_button = tip(control(L"BUTTON", L"", WS_TABSTOP | BS_PUSHBUTTON, 560, 12, 150, 28, ID_OFFER),
+                       L"Install trackkat and switch to the installed copy, or switch to the newer version now. "
+                       L"trackkat restarts in a moment; games keep their head tracking.");
+    ShowWindow(offer_button, SW_HIDE);
     live_hwnd = CreateWindowExW(0, L"trackkat_live", L"", WS_CHILD | WS_VISIBLE, S(10), S(10), S(700), S(242),
                                 main_hwnd, NULL, inst, NULL);
     live_tips();
@@ -1578,20 +1694,32 @@ static void build_window(void)
         SendMessageW(curve_note[i], WM_SETFONT, (WPARAM)small_font, FALSE);
     }
 
-    field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean relative to where the game's view looks (lean = view)",
-                                    WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 370, 22, ID_FIELD + F_LEAN),
+    field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean relative to the view (lean = view)",
+                                    WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 262, 22, ID_FIELD + F_LEAN),
                             L"On, leaning follows the view: looking behind you, leaning left leans out of the "
                             L"cockpit's right side. Off, leaning moves you the same way whichever way you look.");
     field_ctl[F_NPCLIENT] = tip(
-        control(L"BUTTON", L"Anti-cheat mode (npclient = trackir)", WS_TABSTOP | BS_AUTOCHECKBOX, 410, CURVES_TOP + 140,
-                290, 22, ID_FIELD + F_NPCLIENT),
+        control(L"BUTTON", L"Anti-cheat mode (npclient = trackir)", WS_TABSTOP | BS_AUTOCHECKBOX, 292, CURVES_TOP + 140,
+                248, 22, ID_FIELD + F_NPCLIENT),
         L"For games whose anti-cheat blocks trackkat's NPClient, such as Arma Reforger: games load the NPClient of "
         L"NaturalPoint's TrackIR software instead, which must be installed but not running. Games can't start "
-        L"trackkat then, so start it first. Applies to games started after you change it.");
+        L"trackkat then, so start it first, or have it start with Windows. Applies to games started after you "
+        L"change it.");
+    field_ctl[F_STARTUP] = tip(
+        control(L"BUTTON", L"Start with Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 548, CURVES_TOP + 140, 152, 22,
+                ID_FIELD + F_STARTUP),
+        L"Start trackkat in the tray when you log in (startup = on). Games start trackkat themselves anyway, but "
+        L"in anti-cheat mode they can't: this is the way to use it without starting trackkat by hand.");
+    field_ctl[F_UPDATES] = tip(
+        control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 440, CURVES_TOP + 174, 132, 22,
+                ID_FIELD + F_UPDATES),
+        L"Once installed, look for a newer version when trackkat starts and every few hours, and fetch it in the "
+        L"background (updates = on). It is used when you click Restart to update, or when trackkat next starts. "
+        L"Your settings and calibration stay.");
 
     settings_text = tip(
-        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 540, 20, 0),
-        L"Settings are written to trackkat.conf, beside trackkat.exe, as you change them, and apply at once: "
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 410, 20, 0),
+        L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
         L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
         L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
         L"not, why.");
@@ -1601,8 +1729,14 @@ static void build_window(void)
                          L"trackkat.conf explains how.");
 
     log_hint = control(L"STATIC", L"What trackkat reports, but not the status shown above. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
-                       460, 20, 0);
+                       420, 20, 0);
     SendMessageW(log_hint, WM_SETFONT, (WPARAM)small_font, FALSE);
+    wchar_t version[96];
+    _snwprintf(version, 96, L"trackkat %ls", version_text);
+    version[95] = 0;
+    version_label = tip(control(L"STATIC", version, SS_RIGHT | SS_NOPREFIX, 446, LOG_TOP + 22, 146, 20, 0),
+                        L"The version of trackkat running, as bug reports should say; the log says it too.");
+    SendMessageW(version_label, WM_SETFONT, (WPARAM)small_font, FALSE);
     copy_button = tip(
         control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 600, LOG_TOP + 18, 100, 24, ID_COPY_LOG),
         L"Copy the whole log, to paste into a bug report.");
@@ -1621,12 +1755,16 @@ static void build_window(void)
 
 static void layout(int width, int height)
 {
-    int log_h = height - S(LOG_TOP) - S(10);
+    int top = banner_shown ? S(BANNER_H) : 0;
+    int log_h = height - S(LOG_TOP) - top - S(10);
     if (log_h < S(100))
         log_h = S(100);
-    MoveWindow(log_group, S(10), S(LOG_TOP), width - S(20), log_h, TRUE);
-    MoveWindow(copy_button, width - S(120), S(LOG_TOP + 18), S(100), S(24), TRUE);
-    MoveWindow(log_box, S(20), S(LOG_TOP + 48), width - S(40), log_h - S(58), TRUE);
+    MoveWindow(banner, S(10), S(8), width - S(180), S(36), TRUE);
+    MoveWindow(offer_button, width - S(160), S(12), S(150), S(28), TRUE);
+    MoveWindow(log_group, S(10), S(LOG_TOP) + top, width - S(20), log_h, TRUE);
+    MoveWindow(version_label, width - S(274), S(LOG_TOP + 22) + top, S(146), S(20), TRUE);
+    MoveWindow(copy_button, width - S(120), S(LOG_TOP + 18) + top, S(100), S(24), TRUE);
+    MoveWindow(log_box, S(20), S(LOG_TOP + 48) + top, width - S(40), log_h - S(58), TRUE);
 }
 
 static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
@@ -1701,6 +1839,17 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                       SendMessageW(field_ctl[F_NPCLIENT], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"trackir" : L"trackkat");
             save_soon(1);
             return 0;
+        case ID_FIELD + F_UPDATES:
+        case ID_FIELD + F_STARTUP: {
+            int i = id - ID_FIELD;
+            copy_text(field_text[i], FIELD_MAX,
+                      SendMessageW(field_ctl[i], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
+            save_soon(1);
+            return 0;
+        }
+        case ID_OFFER:
+            InterlockedOr(&actions, ACT_OFFER);
+            return 0;
         case ID_FIELD + F_SMOOTHING:
             show_field(F_SMOOTHING,
                        SendMessageW(field_ctl[F_SMOOTHING], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
@@ -1757,7 +1906,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         layout(LOWORD(lp), HIWORD(lp));
         return 0;
     case WM_GETMINMAXINFO: {
-        RECT r = {0, 0, S(CLIENT_W), S(LOG_TOP + 120)};
+        RECT r = {0, 0, S(CLIENT_W), S(LOG_TOP + 120 + (banner_shown ? BANNER_H : 0))};
         AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
         MINMAXINFO *mm = (MINMAXINFO *)lp;
         mm->ptMinTrackSize.x = r.right - r.left;
@@ -1792,6 +1941,9 @@ static LRESULT CALLBACK tray_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_APP_SHOW:
         show_window();
         return 0;
+    case WM_APP_QUIT:
+        InterlockedOr(&actions, ACT_QUIT);
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case ID_MENU_OPEN:
@@ -1808,6 +1960,9 @@ static LRESULT CALLBACK tray_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             break;
         case ID_MENU_QUIT:
             InterlockedOr(&actions, ACT_QUIT);
+            break;
+        case ID_MENU_OFFER:
+            InterlockedOr(&actions, ACT_OFFER);
             break;
         }
         return 0;
@@ -1907,6 +2062,10 @@ static int create_windows(void)
     wc.lpszClassName = L"trackkat_curve";
     if (!RegisterClassW(&wc))
         return 0;
+    wc.lpfnWndProc = banner_proc;
+    wc.lpszClassName = L"trackkat_banner";
+    if (!RegisterClassW(&wc))
+        return 0;
 
     /* Hidden, but top-level, so a second trackkat can find it and Explorer's
      * TaskbarCreated reaches it. */
@@ -1920,7 +2079,10 @@ static int create_windows(void)
     int height = r.bottom - r.top;
     if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) && height > work.bottom - work.top)
         height = work.bottom - work.top;
-    main_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_window", L"trackkat", WS_OVERLAPPEDWINDOW,
+    wchar_t title[96];
+    _snwprintf(title, 96, L"trackkat %ls", version_text);
+    title[95] = 0;
+    main_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_window", title, WS_OVERLAPPEDWINDOW,
                                 CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, height, NULL, NULL, inst, NULL);
     if (!main_hwnd)
         return 0;
@@ -2014,6 +2176,19 @@ void hts_gui_quit(void)
 int hts_gui_window_open(void)
 {
     return main_hwnd && IsWindowVisible(main_hwnd);
+}
+
+/* Ask a trackkat already running, if there is one, to quit. Returns its
+ * process ID, or 0 if none was found. */
+int hts_gui_quit_running(void)
+{
+    HWND other = FindWindowW(L"trackkat", NULL);
+    if (!other)
+        return 0;
+    DWORD pid;
+    GetWindowThreadProcessId(other, &pid);
+    PostMessageW(other, WM_APP_QUIT, 0, 0);
+    return (int)pid;
 }
 
 /* Show the window of a trackkat already running, if there is one. Returns

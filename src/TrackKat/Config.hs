@@ -4,6 +4,8 @@
 module TrackKat.Config (
     Config (..),
     NPClient (..),
+    Updates (..),
+    Startup (..),
     defaultConfig,
     parseConfig,
     renderConfig,
@@ -47,7 +49,17 @@ data Config = Config
     , response :: Response
     , clip :: ClipShape
     , npclient :: NPClient
+    , updates :: Updates
+    , startup :: Startup
     }
+    deriving (Eq, Show)
+
+-- | Whether an installed trackkat looks for, and fetches, newer versions.
+data Updates = UpdatesOn | UpdatesOff
+    deriving (Eq, Show)
+
+-- | Whether Windows starts trackkat, in the tray, when the user logs in.
+data Startup = StartAtLogin | NoStartAtLogin
     deriving (Eq, Show)
 
 -- | Whose NPClient DLL games load: trackkat's own, or that of NaturalPoint's
@@ -102,6 +114,8 @@ defaultConfig =
                 }
         , clip = defaultClip
         , npclient = TrackKatNPClient
+        , updates = UpdatesOn
+        , startup = NoStartAtLogin
         }
   where
     gain g = Points [(1, g)]
@@ -185,12 +199,15 @@ setting (c, k@(Knobs on s r)) name value =
             "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
             "clip" -> (\cl -> (c{clip = cl}, k)) <$> parseClip value
             "npclient" -> (\n -> (c{npclient = n}, k)) <$> parseNPClient value
+            "updates" -> (\u -> (c{updates = u}, k)) <$> parseUpdates value
+            "startup" -> (\st -> (c{startup = st}, k)) <$> parseStartup value
             _ -> Left ("unknown setting " ++ show name)
 
 renderConfig :: Config -> String
 renderConfig c =
     unlines
-        [ "# trackkat settings."
+        [ "# trackkat settings, kept in %APPDATA%\\trackkat with what trackkat"
+        , "# learns, in trackkat.calibration."
         , "#"
         , "# Settings take effect as soon as the file is saved."
         , "#"
@@ -261,6 +278,16 @@ renderConfig c =
         , "# npclient = trackir: games load the NPClient of NaturalPoint's TrackIR"
         , "# software, which anti-cheat allows; start trackkat before the game."
         , "npclient = " ++ renderNPClient (npclient c)
+        , ""
+        , "# updates = on: once installed, trackkat looks for a newer version when"
+        , "# it starts and every few hours, fetches it in the background, and"
+        , "# switches to it when you click Restart to update, or when it next"
+        , "# starts."
+        , "updates = " ++ renderUpdates (updates c)
+        , ""
+        , "# startup = on: Windows starts trackkat in the tray when you log in, so"
+        , "# it is running before any game, as anti-cheat mode needs."
+        , "startup = " ++ renderStartup (startup c)
         ]
   where
     r = response c
@@ -285,7 +312,12 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
-                ++ [("lean", renderLean (lean r)), ("clip", renderClip (clip c)), ("npclient", renderNPClient (npclient c))]
+                ++ [ ("lean", renderLean (lean r))
+                   , ("clip", renderClip (clip c))
+                   , ("npclient", renderNPClient (npclient c))
+                   , ("updates", renderUpdates (updates c))
+                   , ("startup", renderStartup (startup c))
+                   ]
 
 parseLean :: String -> Either String Lean
 parseLean "view" = Right LeanWithView
@@ -304,6 +336,24 @@ parseNPClient _ = Left "npclient is trackkat or trackir"
 renderNPClient :: NPClient -> String
 renderNPClient TrackKatNPClient = "trackkat"
 renderNPClient TrackIRNPClient = "trackir"
+
+parseUpdates :: String -> Either String Updates
+parseUpdates "on" = Right UpdatesOn
+parseUpdates "off" = Right UpdatesOff
+parseUpdates _ = Left "updates is on or off"
+
+renderUpdates :: Updates -> String
+renderUpdates UpdatesOn = "on"
+renderUpdates UpdatesOff = "off"
+
+parseStartup :: String -> Either String Startup
+parseStartup "on" = Right StartAtLogin
+parseStartup "off" = Right NoStartAtLogin
+parseStartup _ = Left "startup is on or off"
+
+renderStartup :: Startup -> String
+renderStartup StartAtLogin = "on"
+renderStartup NoStartAtLogin = "off"
 
 -- | Read three distances in mm, separated by spaces or commas or both.
 parseClip :: String -> Either String ClipShape
