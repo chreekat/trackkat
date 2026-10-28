@@ -11,6 +11,8 @@ module TrackKat.Gui (
     showRunning,
     quitRunning,
     showVersion,
+    UpdateButton (..),
+    showUpdateButton,
     showOffer,
     windowOpen,
     Action (..),
@@ -54,6 +56,7 @@ foreign import ccall unsafe "hts_gui_quit" c_quit :: IO ()
 foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
 foreign import ccall unsafe "hts_gui_quit_running" c_quit_running :: IO CInt
 foreign import ccall unsafe "hts_gui_version" c_version :: CWString -> IO ()
+foreign import ccall unsafe "hts_gui_updatable" c_updatable :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_offer" c_offer :: CWString -> CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_window_open" c_window_open :: IO CInt
 foreign import ccall unsafe "hts_gui_take_actions" c_take_actions :: IO CInt
@@ -107,6 +110,15 @@ quitRunning = (\pid -> if pid == 0 then Nothing else Just (fromIntegral pid)) <$
 showVersion :: String -> IO ()
 showVersion v = withCWString v c_version
 
+-- | Whether the window's Check for updates button works: only for a copy
+-- that updates itself.
+data UpdateButton = UpdateButtonEnabled | UpdateButtonDisabled
+
+-- | Enable the Check for updates button, or not. Call before 'startGui'.
+showUpdateButton :: UpdateButton -> IO ()
+showUpdateButton UpdateButtonEnabled = c_updatable 1
+showUpdateButton UpdateButtonDisabled = c_updatable 0
+
 -- | Show a banner across the top of the window offering something, with a
 -- button, and perhaps an item in the tray's menu, either of which asks for
 -- it with 'OfferAction'. Nothing hides the banner.
@@ -131,6 +143,8 @@ data Action
     | QuitAction
     | -- | the banner's button, or its item in the tray's menu
       OfferAction
+    | -- | look for a newer version now
+      CheckForUpdatesAction
     | -- | the Save button: read the settings with 'savedSettings'
       SaveAction
     | -- | a key pressed to add to a binding list, if it has a name
@@ -142,7 +156,7 @@ takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
     keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10)], testBit bits b] ++ keys)
+    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11)], testBit bits b] ++ keys)
   where
     chosen k = do
         code <- fromIntegral <$> c_chosen_key (list k)

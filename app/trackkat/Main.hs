@@ -9,7 +9,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, withAsync)
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
-import Control.Monad (forM_, forever, unless, when, (<=<))
+import Control.Monad (forM_, forever, unless, void, when, (<=<))
 import Data.Functor (($>))
 import Data.IORef
 import Data.Maybe (fromMaybe)
@@ -163,6 +163,7 @@ run start window after = do
         putStrLn (if shown then "trackkat is already running; showing its window." else "trackkat is already running.")
         exitFailure
     showVersion (maybe "development build" describeVersion version)
+    showUpdateButton (maybe UpdateButtonDisabled (const UpdateButtonEnabled) (selfUpdating place))
     bracket_ (startGui window >>= either (\e -> say ("Can't show a window or tray icon (error " ++ show e ++ ").")) pure) stopGui $ do
         say $ case (version, place) of
             (Nothing, _) -> "trackkat, a development build, which can't be installed or updated, running from " ++ exeDir paths
@@ -280,33 +281,80 @@ takeOffer paths start ref =
 updateEvery :: Double
 updateEvery = 4 * 3600
 
+-- | The version of this copy, if it updates itself: an installed release.
+-- Portable copies and development builds don't.
+selfUpdating :: Placement -> Maybe Version
+selfUpdating place = case (place, version) of
+    (Installed _, Just self) -> Just self
+    _ -> Nothing
+
+-- | Why trackkat looks for a newer version.
+data Looking
+    = -- | 'updateEvery' has passed, and updates are on
+      Due
+    | -- | the user clicked Check for updates
+      Asked
+
+-- | Whether the log has said a look for a newer version failed, since one
+-- last worked.
+data FailureLogged = FailureLogged | NoFailureLogged
+
 -- | Keep an installed trackkat tidy and up to date: delete older versions
 -- once games have let go of them, and look for a newer one now and then,
--- unless updates are off. Portable copies and development builds do
--- neither.
+-- unless updates are off, and whenever the user asks with 'sCheckAsked'.
+-- Portable copies and development builds do neither. Only this thread
+-- looks, so two looks never run at once.
 maintain :: Paths -> Placement -> Session -> IORef Offer -> IO ()
-maintain paths place s ref = case (place, version) of
-    (Installed _, Just self) -> go self Nothing
-    _ -> pure ()
+maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothing NoFailureLogged
   where
-    go self checked = do
+    go self checked logged = do
         _ <- cleanUp say paths place
         now <- getMonotonicTime
         wanted <- (== UpdatesOn) . updates <$> readIORef (sSettings s)
-        checked' <-
+        (checked', logged') <-
             if wanted && maybe True (\t -> now - t >= updateEvery) checked
-                then do
-                    checkForUpdate paths self >>= \case
-                        -- Offline, or behind a proxy that won't let it through:
-                        -- the console only, and again next time.
-                        Left err -> putStrLn ("Can't look for a newer trackkat: " ++ err)
-                        Right (Just v) -> say ("trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time.")
-                        Right Nothing -> pure ()
-                    refreshOffer paths place ref
-                    pure (Just now)
-                else pure checked
-        threadDelay (10 * 60 * 1000000)
-        go self checked'
+                then (Just now,) <$> look self Due logged
+                else pure (checked, logged)
+        -- Read, not taken, so a click the timeout cuts off is still there
+        -- next time round; emptied once a look has answered it, along with
+        -- any clicks while it looked.
+        timeout (10 * 60 * 1000000) (readMVar (sCheckAsked s)) >>= \case
+            Nothing -> go self checked' logged'
+            Just () -> do
+                logged'' <- look self Asked logged'
+                _ <- tryTakeMVar (sCheckAsked s)
+                looked <- getMonotonicTime
+                go self (Just looked) logged''
+    look self why logged = do
+        case why of
+            Asked -> say "Looking for a newer trackkat."
+            Due -> pure ()
+        found <- checkForUpdate paths self
+        refreshOffer paths place ref
+        waiting <- readIORef ref
+        case (found, waiting) of
+            -- Offline, or behind a proxy that won't let it through: the log
+            -- says so when asked, and otherwise once until a look works, so
+            -- a lasting failure shows; the console every time.
+            (Left err, _) -> do
+                let line = "Can't look for a newer trackkat: " ++ err
+                case (why, logged) of
+                    (Due, FailureLogged) -> putStrLn line
+                    _ -> say line
+                pure FailureLogged
+            (Right (Just v), _) -> say (ready v) $> NoFailureLogged
+            -- Fetched by an earlier look, and waiting for a restart.
+            (Right Nothing, OfferUpdate v) -> do
+                case why of
+                    Asked -> say (ready v)
+                    Due -> pure ()
+                pure NoFailureLogged
+            (Right Nothing, _) -> do
+                case why of
+                    Asked -> say ("trackkat is up to date (" ++ versionFolder self ++ ").")
+                    Due -> pure ()
+                pure NoFailureLogged
+    ready v = "trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time."
 
 -- | Report the games that start head tracking through NaturalPoint's
 -- NPClient.
@@ -383,6 +431,7 @@ controls start path s takeUp = go 0 Nothing
     act ClearCalibrationAction = clearCalibration s
     act QuitAction = say "Quitting."
     act OfferAction = pure ()
+    act CheckForUpdatesAction = void (tryPutMVar (sCheckAsked s) ())
     act SaveAction = saveSettings path
     act (KeyChosen k (Just b)) = addBinding k b
     act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
@@ -536,6 +585,9 @@ data Session = Session
     -- ^ until when joystick button presses are printed, in monotonic seconds
     , sSaving :: MVar Calibration
     -- ^ a calibration waiting to be saved
+    , sCheckAsked :: MVar ()
+    -- ^ full from when the user asks to look for a newer version until
+    -- 'maintain' has looked
     }
 
 newSession :: Config -> Calibration -> IO Session
@@ -549,6 +601,7 @@ newSession config c =
         <*> newIORef NoTrim
         <*> newIORef centred
         <*> newIORef 0
+        <*> newEmptyMVar
         <*> newEmptyMVar
 
 -- | The head at its centre.
