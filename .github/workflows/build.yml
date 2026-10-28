@@ -171,13 +171,9 @@ jobs:
           name: trackkat-windows
           path: dist
 
-      # Artifacts need a GitHub login to download; release assets don't.
       # Installed copies of trackkat read trackkat-windows.json to update.
-      - name: Publish dev release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Zip, and describe the zip
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           Compress-Archive -Path dist\* -DestinationPath trackkat-windows.zip
           $sha = (Get-FileHash trackkat-windows.zip -Algorithm SHA256).Hash.ToLower()
@@ -187,6 +183,24 @@ jobs:
             sha256 = $sha
           } | ConvertTo-Json | Out-File -FilePath trackkat-windows.json -Encoding ascii
           Get-Content trackkat-windows.json
+
+      # TEMPORARY: a draft release of each build of this branch, for testing.
+      - name: Draft a test release
+        if: github.ref == 'refs/heads/installer'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "test-${{ github.run_number }}" trackkat-windows.zip trackkat-windows.json --draft `
+            --target $env:GITHUB_SHA --title "Test build $env:TRACKKAT_VERSION" --notes "For testing; to be deleted."
+
+      # Artifacts need a GitHub login to download; release assets don't.
+      - name: Publish dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           gh release delete dev --yes --cleanup-tag 2>$null
           $global:LASTEXITCODE = 0
           gh release create dev trackkat-windows.zip trackkat-windows.json --prerelease --target $env:GITHUB_SHA `
