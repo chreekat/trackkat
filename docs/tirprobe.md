@@ -42,6 +42,8 @@ carries on through these, and the line ends with a note when it happens:
   from the last frames while the other two are followed. After a second of
   this the clip counts as lost.
 - `merged`: two reflectors made one blob, split by its shape. Less accurate.
+  A blob no bigger than one reflector may be just one, the other out of
+  sight, so after a few seconds of that the clip counts as lost too.
 - `+1 stray`: a blob that isn't a reflector was ignored.
 - `+2 masked`: blobs where a bright light stays put, such as a lit fire
   behind you, were ignored; see [still lights](details.md#still-lights).

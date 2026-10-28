@@ -17,6 +17,7 @@ module TrackKat.Match (
     Match (..),
     matches,
     splitMerged,
+    bigEnoughForTwo,
 ) where
 
 import Data.Foldable (toList)
@@ -88,15 +89,18 @@ data Match = Match
 -- the blobs, and pairs of blobs close together taken as one (a reflector
 -- that broke in two); a reflector can also go unseen, at a fixed cost, but
 -- only one of them. Two reflectors predicted close together can also share
--- one blob, split along its length by 'splitMerged'.
+-- one blob, split along its length by 'splitMerged'; whether it is big
+-- enough to be both says whether they are both seen (see
+-- 'bigEnoughForTwo').
 --
 -- A way of matching costs the squared distances, in pixels, between where
 -- it sees the reflectors and where they were predicted, after taking out
 -- the shift they share (fast movement moves them all together), plus a
 -- cost for each blob that is far from the size predicted. A reflector is
--- not taken to be unseen while a blob of half its usual size or more is
--- left over. Matches come best first; the caller solves for the pose from
--- the first, and checks it.
+-- not taken to be unseen, nor two to share a blob, while a blob of half
+-- the usual size of one of them or more is left over: that would be it.
+-- Matches come best first; the caller solves for the pose from the first,
+-- and checks it.
 
 -- | The ways to match blobs to reflectors, best first, given a recent pose
 -- and the reflectors' recent sizes. At least two reflectors are seen in
@@ -115,9 +119,9 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
     options = (\e q -> take 4 (sortOn (\(_, s) -> distance2 q (sightAt s) + sizeCost e (sightPixels s)) units)) <$> expected <*> predicted
     unused used = length blobs - length used
     usual = fmap (\s -> sizeUsual s / (metres * metres)) sizes
-    -- A reflector can go unseen only if no blob left over is half its usual
-    -- size or more: that would be the reflector, seen far from where it
-    -- was predicted.
+    -- A reflector can go unseen, or share a blob, only if no blob left over
+    -- is half its usual size or more: that would be the reflector, seen far
+    -- from where it was predicted.
     missingPlausible used size Nothing = size <= 0 || and [2 * pixels b < size | (i, b) <- indexed, i `notElem` used]
     missingPlausible _ _ (Just _) = True
     separate =
@@ -134,11 +138,12 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
         ]
     merged =
         [ Match (place (Just si) (Just sj) (Just third)) (unused (i : thirdUsed)) cost
-        | (qi, qj, qk, ei, ej, ek, otherOptions, place) <- pairs
+        | (qi, qj, qk, ei, ej, ek, ui, uj, otherOptions, place) <- pairs
         , distance2 qi qj <= reach ei ej ^ (2 :: Int)
         , (i, b) <- take 2 (sortOn (\(_, b) -> distance2 (between qi qj ei ej) (blobX b, blobY b)) indexed)
         , let (si, sj) = splitMerged b qi qj ei ej
         , (thirdUsed, third) <- take 1 [o | o@(us, _) <- otherOptions, i `notElem` us]
+        , missingPlausible (i : thirdUsed) ui Nothing && missingPlausible (i : thirdUsed) uj Nothing
         , let cost =
                 shiftedCost [(qi, sightAt si), (qj, sightAt sj), (qk, sightAt third)]
                     + sizeCost (ei + ej) (pixels b)
@@ -147,10 +152,11 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
     Three qL qR qT = predicted
     Three eL eR eT = expected
     Three oL oR oT = options
+    Three uL uR uT = usual
     pairs =
-        [ (qL, qR, qT, eL, eR, eT, oT, \a b c -> Three a b c)
-        , (qL, qT, qR, eL, eT, eR, oR, \a b c -> Three a c b)
-        , (qR, qT, qL, eR, eT, eL, oL, \a b c -> Three c a b)
+        [ (qL, qR, qT, eL, eR, eT, uL, uR, oT, \a b c -> Three a b c)
+        , (qL, qT, qR, eL, eT, eR, uL, uT, oR, \a b c -> Three a c b)
+        , (qR, qT, qL, eR, eT, eL, uR, uT, oL, \a b c -> Three c a b)
         ]
     between (ui, vi) (uj, vj) ei ej =
         let f = share ei ej in (f * ui + (1 - f) * uj, f * vi + (1 - f) * vj)
@@ -215,6 +221,13 @@ reach :: Double -> Double -> Double
 reach ei ej = 1.5 * (radius ei + radius ej)
   where
     radius e = if e > 0 then sqrt (e / pi) else 10
+
+-- | Whether a blob is big enough to be two reflectors of the given expected
+-- sizes (0 for unknown) together: nearer, on the log scale that sizes are
+-- compared on, to the two side by side than to the bigger alone. One no
+-- bigger could as well be either alone, the other out of sight.
+bigEnoughForTwo :: Double -> Double -> Double -> Bool
+bigEnoughForTwo area ei ej = ei <= 0 || ej <= 0 || area * area > max ei ej * (ei + ej)
 
 -- | The first reflector's share of a blob the two make together, from their
 -- expected sizes.
