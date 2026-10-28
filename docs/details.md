@@ -156,6 +156,36 @@ trackkat learns nothing while it isn't sure which pose is your head's. A
 calibration learnt from mirror images, whose neck pivot is in front of the
 clip, is forgotten when trackkat starts, with a line in the log saying so.
 
+## Still lights
+
+Something bright behind you that stays put, such as a lamp or a lit fire,
+shows to the camera as a blob much like a reflector. While trackkat follows
+the clip it ignores such blobs anyway, but to find the clip afresh, when it
+starts or after losing it, it needs exactly three big blobs, and a fire
+makes a fourth. So trackkat learns lights that stay within a few pixels for
+three seconds, with any flickering bits around them, and from then on
+ignores blobs there, except where it expects the clip (your head can pass
+in front of the light). It learns them while it has lost the clip too, but
+never from where the clip is or just was. The log says so:
+
+```
+Ignoring a bright light at (156, 297).
+No longer ignoring the light at (156, 297): it has been gone a while.
+```
+
+The second line comes once the light has been out of sight for 45
+seconds. The status line notes blobs ignored, such as `+2 masked`, and
+`tirprobe --blobs` marks them `masked`.
+
+So with a fire lit, trackkat finds the clip about three seconds after it
+starts, and at once after that. If you hold perfectly still while it
+learns the fire, it learns your clip with it, sees that it was the clip,
+and finds it anyway. A clip that sits still for a few seconds while
+trackkat can't find it for some other reason can be learnt as a light:
+move your head a little and it is found. If ignoring lights causes
+trouble, clear **Ignore still lights** in the window, or set
+`ignore lights = off`; tirprobe takes `--no-mask`.
+
 ## Anti-cheat
 
 Some anti-cheat, such as BattlEye in Arma Reforger, refuses to let a game
