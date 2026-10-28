@@ -118,21 +118,29 @@ levelTurning = upWeight
 pivotTurns :: Calibration -> Double
 pivotTurns = pivotWindows
 
--- | A line for the console about the learnt level.
-describeLevel :: Calibration -> String
-describeLevel c =
-    let (down, right) = cameraTilt (estimatedLevel c)
-     in printf
-            "Level learnt: camera tipped %.1f degrees down and %.1f to its right, from %.0f degrees of head turning."
-            down
-            right
-            (levelTurning c)
+-- | What to do to have something learnt, ending a line saying that it
+-- hasn't been yet.
+notLearnt :: String
+notLearnt = "not learnt yet; turn your head left and right."
 
--- | A line for the console about the learnt pivot, given the clip's pose at
--- the centre. Directions are along the level axes with the head at the
+-- | A line for the console about the learnt level, or that none is yet.
+describeLevel :: Calibration -> String
+describeLevel c
+    | levelTurning c <= 0 = "Level: " ++ notLearnt
+    | otherwise =
+        let (down, right) = cameraTilt (estimatedLevel c)
+         in printf
+                "Level learnt: camera tipped %.1f degrees down and %.1f to its right, from %.0f degrees of head turning."
+                down
+                right
+                (levelTurning c)
+
+-- | A line for the console about the learnt pivot, or that none is yet,
+-- given the clip's pose at the centre. Directions are along the level axes with the head at the
 -- centre, facing the camera, however the clip sits on the head; without a
 -- centre, only the distance is given.
 describePivot :: Maybe Pose -> Calibration -> String
+describePivot _ c | pivotTurns c <= 0 = "Neck pivot: " ++ notLearnt
 describePivot Nothing c =
     printf "Neck pivot learnt: %.0f mm from the clip, from %.0f head turns." (norm (estimatedPivot c)) (pivotTurns c)
 describePivot (Just centre) c =
