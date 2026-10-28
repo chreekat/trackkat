@@ -14,13 +14,13 @@ jobs:
   windows:
     runs-on: windows-latest
     permissions:
+      # To publish releases; SignPath reads the job and its artifact.
       contents: write
-      # For signing in to Azure with OIDC: see docs/signing.md.
-      id-token: write
+      actions: read
     env:
-      # Builds of main are signed, once the repository is set up for it.
-      SIGN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AZURE_SIGNING_ACCOUNT != '' }}
-      SIGN_WITH_SECRET: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
+      # Builds of main are signed once the repository is set up for SignPath:
+      # see docs/signing.md.
+      SIGN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,46 +129,45 @@ jobs:
           $diff = Compare-Object $listed $packed
           if ($diff) { "::error::dist doesn't hold the files trackkat --list-files names: $($diff | Out-String)"; exit 1 }
 
-      # Sign in to Azure with OIDC, unless a client secret is set instead.
-      - name: Sign in to Azure
-        if: env.SIGN == 'true' && env.SIGN_WITH_SECRET != 'true'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      # Sign trackkat's own programs and DLLs (not libusb's), before zipping,
-      # so the SHA-256 published is of them signed. To sign another way, such
-      # as with SignPath, replace this step and the one before: see
-      # docs/signing.md.
-      - name: Sign
-        if: env.SIGN == 'true'
-        uses: azure/artifact-signing-action@v2
-        with:
-          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
-          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          files: |
-            ${{ github.workspace }}\dist\trackkat.exe
-            ${{ github.workspace }}\dist\trackkat-tray.exe
-            ${{ github.workspace }}\dist\tirprobe.exe
-            ${{ github.workspace }}\dist\npgame.exe
-            ${{ github.workspace }}\dist\trackdemo.exe
-            ${{ github.workspace }}\dist\NPClient.dll
-            ${{ github.workspace }}\dist\NPClient64.dll
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          description: trackkat
-          description-url: https://github.com/chreekat/trackkat
-
+      # Unsigned; SignPath signs from this artifact.
       - uses: actions/upload-artifact@v4
+        id: unsigned
         with:
           name: trackkat-windows
+          path: dist
+
+      # SignPath signs trackkat's own programs and DLLs (not libusb's), as
+      # .signpath/artifact-configuration.xml says, and they replace the
+      # unsigned ones before zipping, so the SHA-256 published is of them
+      # signed. Skipped until the repository is set up: see docs/signing.md.
+      - name: Sign
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          # Long enough for an approver to approve the request.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      - name: Use the signed files
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $want = Get-ChildItem dist -Name | Sort-Object
+          $got = Get-ChildItem signed -Name | Sort-Object
+          if (Compare-Object $want $got) { "::error::SignPath returned other files: $got"; exit 1 }
+          Remove-Item -Recurse dist
+          Rename-Item signed dist
+
+      - uses: actions/upload-artifact@v4
+        if: env.SIGN == 'true'
+        with:
+          name: trackkat-windows-signed
           path: dist
 
       # Installed copies of trackkat read trackkat-windows.json to update.
