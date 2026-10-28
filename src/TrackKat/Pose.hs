@@ -98,7 +98,7 @@ triangle lean lr lt rt
     h = sqrt h2
     theta = lean * pi / 180
 
-data Pose = Pose {poseR :: M33, poseT :: V3}
+data Pose = Pose {poseR :: !M33, poseT :: !V3}
     deriving (Show)
 
 project :: Intrinsics -> Pose -> V3 -> (Double, Double)
@@ -160,10 +160,12 @@ alternatives k m pose@(Pose r t) = case map (project k pose) [mLeft m, mRight m,
 turnBetweenPoses :: Pose -> Pose -> Double
 turnBetweenPoses a b = fst (poseChange (V3 0 0 0) a b)
 
--- | Of some poses, the one with the least turning from the given one.
+-- | Of some poses, the one with the least turning from the given one,
+-- evaluated, so that a pose followed from frame to frame this way doesn't
+-- hold on to those before it.
 nearestPose :: Pose -> [Pose] -> Maybe Pose
 nearestPose to poses = case sortOn (turnBetweenPoses to) poses of
-    p : _ -> Just p
+    p : _ -> Just $! p
     [] -> Nothing
 
 -- | The mirror image of a pose: the other pose that puts the model's three
