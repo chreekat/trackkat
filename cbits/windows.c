@@ -115,11 +115,16 @@ int hts_games_tracking(void)
 /* ---- Single instance ---------------------------------------------------- */
 
 /* Nonzero if this process now holds the trackkat instance mutex, which our
- * NPClient DLL checks to see whether trackkat is running. */
+ * NPClient DLL checks to see whether trackkat is running. Otherwise it
+ * keeps no handle to it, so it can try again once the holder has quit. */
 int hts_single_instance(void)
 {
     HANDLE m = CreateMutexA(NULL, TRUE, TRACKKAT_RUNNING_MUTEX);
-    return m != NULL && GetLastError() != ERROR_ALREADY_EXISTS;
+    if (m && GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(m);
+        return 0;
+    }
+    return m != NULL;
 }
 
 /* ---- Registry ------------------------------------------------------------ */

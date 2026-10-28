@@ -97,15 +97,16 @@ defaultWindow _ = WindowHidden
 
 -- | The arguments that start trackkat as it was started.
 startArgs :: Start -> WindowAtStart -> [String]
-startArgs s w =
-    case s of
+startArgs s w = how ++ window
+  where
+    how = case s of
         ByHand -> []
         ByGame -> ["--by-game"]
         AtLogin -> ["--tray"]
-        ++ case (s, w) of
-            (ByHand, _) -> []
-            (_, WindowShown) -> ["--window"]
-            (_, WindowHidden) -> []
+    window = case (s, w) of
+        (ByHand, _) -> []
+        (_, WindowShown) -> ["--window"]
+        (_, WindowHidden) -> []
 
 -- | This build's version; none for a development build.
 version :: Maybe Version
@@ -271,7 +272,7 @@ takeOffer paths start ref =
         OfferUpdate v -> switchTo (versionExe paths v)
   where
     switchTo exe =
-        handOver exe (startArgs start WindowShown ++ ["--window"]) >>= \case
+        handOver exe (startArgs start WindowShown) >>= \case
             Right () -> say ("Switching to " ++ exe ++ ".") $> True
             Left e -> say ("Can't start " ++ exe ++ " (error " ++ show e ++ ").") $> False
 
