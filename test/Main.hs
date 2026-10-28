@@ -945,6 +945,15 @@ main = do
     let (_, mirrorRows) = trackNoisy clipBent 1 [(t, headSeen 60 0 0 0, allLit) | t <- at30 60]
     check ("held still on the mirror image " ++ show (length (filter isMirrored (map fst mirrorRows))) ++ ", no light learnt " ++ show (ignored mirrorRows)) $
         null (ignored mirrorRows)
+    -- Looking up, the top reflector goes out of sight beside a lower one,
+    -- leaving the lower pair. A blob no bigger than one reflector isn't
+    -- taken for two for long: the clip is lost, and with all three back,
+    -- followed again.
+    let (_, pairRows) = trackNoisy clipBent 1 (heldScene 20 (const (lookingDown, (1, 1, 0))) True)
+        pairTracked = [t | (t, _, Tracked{}, _) <- after 5 (map fst pairRows), t < 22]
+        pairBack = after 23 (map fst pairRows)
+    check ("with the lower pair in view, lost after a while, not tracked for " ++ show (length pairTracked) ++ " frames") $ null pairTracked
+    check ("and followed when all three are back " ++ show (summed pairBack)) $ lostCount pairBack == 0 && fst (worstError pairBack) < 1.5
 
     -- A lamp the size of a reflector is learnt as quickly as a fire while
     -- the clip is tracked elsewhere with all three reflectors in view.
