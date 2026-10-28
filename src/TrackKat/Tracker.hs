@@ -2,27 +2,34 @@
 module TrackKat.Tracker (
     Tracker,
     newTracker,
+    Masking (..),
     trackerCalibration,
     trackerCentre,
     trackerPose,
+    trackerMasks,
     Request (..),
     request,
     setModel,
+    setMasking,
     Event (..),
     Outcome (..),
     Seen (..),
     describeSeen,
+    describeMasked,
+    describeLightIgnored,
+    describeLightForgotten,
     findBlobs,
     step,
 ) where
 
 import Data.Foldable (toList)
-import Data.List (intercalate, sortOn)
+import Data.List (intercalate, partition, sortOn)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 
 import TrackKat.Branch
 import TrackKat.Calibration
 import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
+import TrackKat.Lights
 import TrackKat.Linear (M33, mulMM, norm, transpose)
 import TrackKat.Match
 import TrackKat.Pose
@@ -46,6 +53,12 @@ data Event
       -- mirror image of the head's (see "TrackKat.Branch") and was
       -- switched for the head's.
       Corrected
+    | -- | A bright light that stays put, at this place in the image, is
+      -- ignored from now on (see "TrackKat.Lights").
+      LightIgnored (Double, Double)
+    | -- | The light ignored at this place hasn't been seen for a while,
+      -- and isn't ignored any more.
+      LightForgotten (Double, Double)
     deriving (Show)
 
 -- | What a frame showed.
@@ -58,8 +71,13 @@ data Outcome
         -- ^ RMS reprojection error, pixels
         , outSeen :: Seen
         }
-    | -- | The clip couldn't be made out; how many blobs there were.
-      Lost Int
+    | -- | The clip couldn't be made out.
+      Lost
+        { outBlobs :: Int
+        -- ^ blobs there were, besides those masked
+        , outMasked :: Int
+        -- ^ blobs ignored as part of a still light
+        }
     deriving (Show)
 
 -- | How the reflectors appeared in a tracked frame.
@@ -70,6 +88,8 @@ data Seen = Seen
     -- ^ reflectors sharing a blob with another
     , seenStrays :: Int
     -- ^ blobs that weren't reflectors
+    , seenMasked :: Int
+    -- ^ blobs ignored as part of a still light
     }
     deriving (Eq, Show)
 
@@ -77,7 +97,7 @@ data Seen = Seen
 -- the reflectors appeared, like "   2 of 3 reflectors, +1 stray"; empty if
 -- they were three blobs and nothing else.
 describeSeen :: Seen -> String
-describeSeen (Seen missing merged strays) = case notes of
+describeSeen (Seen missing merged strays masked) = case notes of
     [] -> ""
     _ -> "   " ++ intercalate ", " notes
   where
@@ -85,6 +105,20 @@ describeSeen (Seen missing merged strays) = case notes of
         [show (3 - missing) ++ " of 3 reflectors" | missing > 0]
             ++ ["merged" | merged > 0]
             ++ ["+" ++ show strays ++ (if strays == 1 then " stray" else " strays") | strays > 0]
+            ++ [describeMasked masked | masked > 0]
+
+-- | Blobs ignored as part of a still light, as notes on the status say.
+describeMasked :: Int -> String
+describeMasked n = "+" ++ show n ++ " masked"
+
+-- | Lines for the log on a still light being ignored, and forgotten, at a
+-- place in the image.
+describeLightIgnored, describeLightForgotten :: (Double, Double) -> String
+describeLightIgnored p = "Ignoring a bright light at " ++ describePlace p ++ "."
+describeLightForgotten p = "No longer ignoring the light at " ++ describePlace p ++ ": it has been gone a while."
+
+describePlace :: (Double, Double) -> String
+describePlace (u, v) = "(" ++ show (round u :: Int) ++ ", " ++ show (round v :: Int) ++ ")"
 
 -- | A requested calibration of level in progress.
 data Sweep
@@ -101,6 +135,8 @@ data Recent = Recent
     -- ^ in seconds on the clock given to 'step'
     , recentAllSeen :: Double
     -- ^ when all three reflectors were last seen
+    , recentSince :: Double
+    -- ^ since when the clip has been tracked in every frame
     }
 
 data Tracker = Tracker
@@ -116,12 +152,14 @@ data Tracker = Tracker
     , trSweep :: Maybe Sweep
     , trPending :: [Request]
     -- ^ oldest first
+    , trMasking :: Masking
+    , trLights :: Lights
     }
 
 -- | A tracker that starts from the given calibration and recenters on the
 -- first frame it tracks.
-newTracker :: Intrinsics -> Model -> Calibration -> Tracker
-newTracker k m c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newBranch m) Nothing [Recenter]
+newTracker :: Intrinsics -> Model -> Masking -> Calibration -> Tracker
+newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newBranch m) Nothing [Recenter] masking noLights
 
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
@@ -134,6 +172,18 @@ trackerCentre = trReference
 -- | The clip's pose in the camera's axes, as last tracked.
 trackerPose :: Tracker -> Maybe Pose
 trackerPose = fmap recentPose . trRecent
+
+-- | Whether a blob is in the area of a still light learnt, wherever the
+-- clip is.
+trackerMasks :: Tracker -> Blob -> Bool
+trackerMasks t = inMask (activeMask [] (trLights t))
+
+-- | Learn and mask still lights, or not, from the next frame; turned off,
+-- what was learnt is forgotten.
+setMasking :: Masking -> Tracker -> Tracker
+setMasking masking t
+    | masking == trMasking t = t
+    | otherwise = t{trMasking = masking, trLights = noLights}
 
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
@@ -166,6 +216,11 @@ findBlobs = stripesToBlobs minFaintPixels maxBlobPixels
 -- longer out of sight, the clip is found afresh.
 predictionSeconds :: Double
 predictionSeconds = 0.5
+
+-- | For how long, in seconds, the clip must have been tracked in every
+-- frame for still lights to be learnt clear of it.
+confirmSeconds :: Double
+confirmSeconds = 0.5
 
 -- | For how long, in seconds since all three were last seen, two reflectors
 -- are enough to track.
@@ -214,15 +269,48 @@ data Sighting
         (Three (Maybe Sight))
         -- | blobs that weren't reflectors
         Int
+        -- | blobs ignored as part of a still light
+        Int
 
 -- | Handle one frame's stripes, seen at the given time in seconds. Pending
 -- requests wait for a frame where the clip is tracked.
 step :: Double -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
 step now stripes t =
     case sighting of
-        Nothing -> (t{trLearner = lostSight (trLearner t)}, Lost (length blobs), [])
-        Just (Sighting finding seenPose fit sights unused) ->
+        Nothing ->
+            let (learntLights, learntNews) = learnt []
+                -- Lights just learnt that the clip would be found in are
+                -- the clip, held still: they are forgotten unannounced.
+                newly = [p | LightIgnored p <- learntNews]
+                learntMask = activeMask [] learntLights
+                (lights, unlearnt)
+                    | null newly = (learntLights, [])
+                    | otherwise = case findAfresh (learntMask, partition (inMask learntMask) blobs) of
+                        Just (_, restored) -> unlearn newly (map at restored) learntLights
+                        Nothing -> (learntLights, [])
+                news = [e | e <- learntNews, not (isUnlearnt e)]
+                isUnlearnt (LightIgnored p) = p `elem` unlearnt
+                isUnlearnt _ = False
+                -- Something tracked a moment ago in a light just learnt
+                -- was the light, and isn't followed.
+                untracked = case trRecent t of
+                    Just r
+                        | not (holding [p | LightIgnored p <- news] (toList (project k (recentPose r) <$> modelPoints m)) lights) ->
+                            Just r{recentSince = now}
+                    _ -> Nothing
+             in (t{trLearner = lostSight (trLearner t), trLights = lights, trRecent = untracked}, Lost (length visible) (length masked), news)
+        Just (Sighting finding seenPose fit sights unused hidden) ->
             let allSeen = all isJust sights
+                since = case finding of
+                    Followed -> maybe now recentSince (trRecent t)
+                    FoundAfresh -> now
+                -- Lights are learnt clear of the clip once it has been
+                -- tracked a while: something tracked for a moment can be
+                -- lights that look like the clip. If it was, and the light
+                -- is learnt, it is no longer followed.
+                confirmed = now - since >= confirmSeconds
+                (lights, news) = learnt (if confirmed then reflectorDiscs seenPose sights else [])
+                wasLight = not confirmed && holding [p | LightIgnored p <- news] (toList (project k seenPose <$> modelPoints m)) lights
                 -- See Note [Which pose is the head's] in TrackKat.Branch.
                 others = if allSeen then Just (alternatives k m seenPose) else Nothing
                 watched = watch now pivot seenPose others $ case finding of
@@ -236,7 +324,7 @@ step now stripes t =
                     | fix `elem` [MirrorReference, MirrorBoth] = (\old -> fromMaybe old (mirrorPose k m old)) <$> trReference t
                     | otherwise = trReference t
                 correcting = fix /= MirrorNeither
-                recent = Recent pose now (if allSeen then now else maybe now recentAllSeen (trRecent t))
+                recent = Recent pose now (if allSeen then now else maybe now recentAllSeen (trRecent t)) since
                 sizes = resize (metres pose) <$> trSizes t <*> sights
                 -- Learning in progress from before a correction was of
                 -- the mirror image, and so was a requested calibration's
@@ -250,6 +338,7 @@ step now stripes t =
                         , trBranch = corrected fix seenPose watched
                         , trLearner = if correcting then lostSight (trLearner t) else trLearner t
                         , trSweep = if correcting then fmap (\(Sweep deadline _) -> Sweep deadline []) (trSweep t) else trSweep t
+                        , trLights = lights
                         }
                 (t1, requested) = foldl (handle pose) (restarted, []) (trPending t)
                 ref = maybe pose id (trReference t1)
@@ -264,31 +353,70 @@ step now stripes t =
                         (length (filter isNothing (toList sights)))
                         (length [() | Just s <- toList sights, sightKind s == Merged])
                         unused
-             in ( t2
+                        hidden
+             in ( if wasLight then t2{trRecent = Nothing} else t2
                 , Tracked (relativePose (appliedLevel applied) (appliedPivot applied) ref pose) (norm (poseT pose)) fit seen
-                , [Corrected | correcting] ++ reverse requested ++ [Refined r (learnerCalibration learner) | r <- refinements] ++ calibrated
+                , [Corrected | correcting]
+                    ++ reverse requested
+                    ++ [Refined r (learnerCalibration learner) | r <- refinements]
+                    ++ calibrated
+                    ++ news
                 )
   where
-    -- Big enough to be a reflector: of a fair size, and not tiny beside the
-    -- biggest blob, as other reflections often are.
-    big b = blobPoints b >= minBlobPixels && blobPoints b * 25 >= biggest * 3
-    biggest = maximum (0 : map blobPoints blobs)
     k = trIntrinsics t
     m = trModel t
     blobs = findBlobs stripes
+    -- Blobs in a still light's area are ignored, but for any where the
+    -- clip is predicted to be.
+    following = case trRecent t of
+        Just r | now - recentTime r <= predictionSeconds -> Just r
+        _ -> Nothing
+    mask = case trMasking t of
+        NoMasking -> noMask
+        MaskLights -> activeMask (maybe [] (\r -> toList (project k (recentPose r) <$> modelPoints m)) following) (trLights t)
+    (masked, visible) = partition (inMask mask) blobs
+    -- Learning still lights, given discs around where the reflectors are:
+    -- the lights learnt, and the events saying what changed.
+    learnt discs = case trMasking t of
+        NoMasking -> (trLights t, [])
+        MaskLights -> map toEvent <$> learnLights now discs blobs (trLights t)
+    toEvent (Learnt p) = LightIgnored p
+    toEvent (Forgotten p) = LightForgotten p
+    -- Where each reflector is, or would be, in the image at a pose, out to
+    -- a margin that takes in the pieces of the biggest seen, such as a
+    -- reflector broken in two.
+    reflectorDiscs pose sights =
+        let biggestSeen = maximum (0 : [sightPixels s | Just s <- toList sights])
+         in [(project k pose p, 15 + 2 * sqrt (biggestSeen / pi)) | p <- toList (modelPoints m)]
     pivot = appliedPivot (trLearner t)
     metres pose = norm (poseT pose) / 1000
-    sighting = case trRecent t of
-        Just r | now - recentTime r <= predictionSeconds -> follow r
-        _ -> findAfresh
+    sighting = maybe (fst <$> findAfresh (mask, (masked, visible))) follow following
     -- With nothing to predict from, three big blobs by their layout,
-    -- solved from where the clip was last seen if anywhere.
-    findAfresh = do
-        (l, r, top) <- identify (\b -> (blobX b, blobY b)) (filter big blobs)
-        let at b = (blobX b, blobY b)
-            whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
-        (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
-        if plausible pose then Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length blobs - 3)) else Nothing
+    -- solved from where the clip was last seen if anywhere, given a mask
+    -- and the blobs it masks and doesn't; and the masked blobs taken as
+    -- reflectors. With fewer than three big blobs unmasked, the heaviest
+    -- in each of a few masked areas are tried too, those that make the
+    -- three most alike in size first: a clip held still can be learnt as
+    -- lights (see Note [Still lights] in TrackKat.Lights).
+    findAfresh (areas, (hidden, shown)) = listToMaybe (mapMaybe attempt choices)
+      where
+        -- Big enough to be a reflector: of a fair size, and not tiny
+        -- beside the biggest blob, as other reflections often are.
+        big b = blobPoints b >= minBlobPixels && blobPoints b * 25 >= biggest * 3
+        biggest = maximum (0 : map blobPoints shown)
+        bigShown = filter big shown
+        choices = case compare (length bigShown) 3 of
+            EQ -> [[]]
+            LT -> sortOn alike (choose (3 - length bigShown) (take 4 (filter big (heaviestIn areas hidden))))
+            GT -> []
+        alike extra = let ps = map blobPoints (bigShown ++ extra) in fromIntegral (maximum ps) / fromIntegral (max 1 (minimum ps)) :: Double
+        whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
+        attempt extra = do
+            (l, r, top) <- identify at (bigShown ++ extra)
+            (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
+            if plausible pose
+                then Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra), extra)
+                else Nothing
     -- The best match to the prediction, unless its pose is an impossible
     -- jump; then, of the next few that see as many reflectors, the one whose
     -- pose is nearest. (Fewer reflectors can always be fitted by a pose
@@ -296,13 +424,13 @@ step now stripes t =
     follow r =
         let dt = now - recentTime r
             twoAllowed = now - recentAllSeen r <= twoReflectorSeconds
-            candidates = [c | c <- matches k m (recentPose r) (trSizes t) blobs, twoAllowed || all isJust (matchSights c)]
+            candidates = [c | c <- matches k m (recentPose r) (trSizes t) visible, twoAllowed || all isJust (matchSights c)]
             attempt c = do
                 (pose, fit) <- solveNear k pivot (recentPose r) (observations (metres (recentPose r)) c)
                 let (turn, move) = poseChange pivot (recentPose r) pose
                     jump = max (turn / maxTurn dt) (move / maxMove dt)
                 if fit <= maxFit && jump <= 1 && plausible pose
-                    then Just (jump, Sighting Followed pose fit (matchSights c) (matchUnused c))
+                    then Just (jump, Sighting Followed pose fit (matchSights c) (matchUnused c) (length masked))
                     else Nothing
          in case candidates of
                 [] -> Nothing
@@ -334,6 +462,7 @@ step now stripes t =
          in case seen of
                 Nothing -> size{sizeUsual = usual}
                 Just s -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
+    at b = (blobX b, blobY b)
     handle pose (acc, evs) Recenter = (acc{trReference = Just pose, trBranch = recentered (trBranch acc)}, Recentered : evs)
     handle _ (acc, evs) Calibrate =
         (acc{trSweep = Just (Sweep (now + calibrationSeconds) [])}, CalibrationStarted : evs)
@@ -347,3 +476,9 @@ step now stripes t =
                 Just l ->
                     let acc' = acc{trSweep = Nothing, trLearner = calibrateLevel l (trLearner acc)}
                      in (acc', [Calibrated (trackerCalibration acc')])
+
+-- | The ways to choose so many of a list, in order.
+choose :: Int -> [a] -> [[a]]
+choose 0 _ = [[]]
+choose _ [] = []
+choose n (x : xs) = map (x :) (choose (n - 1) xs) ++ choose n xs

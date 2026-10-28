@@ -187,7 +187,7 @@ main = do
         clipAt pose = concatMap (square . project defaultIntrinsics pose) [mLeft headset, mRight headset, mTop headset]
         facing = Pose identity (V3 0 0 700)
         turned = Pose (rotYXZ 20 0 0) (V3 0 0 700)
-        t0 = newTracker defaultIntrinsics headset defaultCalibration
+        t0 = newTracker defaultIntrinsics headset MaskLights defaultCalibration
         (t1, firstOut, firstEvents) = step 0 (clipAt facing) t0
         (t2, lostOut, lostEvents) = step 0.1 (take 5 (clipAt facing)) (request Recenter t1)
         (_, laterOut, laterEvents) = step 0.2 (clipAt turned) t2
@@ -195,7 +195,7 @@ main = do
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
     check ("one blob is lost: " ++ show (lostOut, lostEvents)) $ case (lostOut, lostEvents) of
-        (Lost 1, []) -> True
+        (Lost 1 0, []) -> True
         _ -> False
     check ("pending recenter waits for tracking: " ++ show (laterOut, laterEvents)) $ case (laterOut, laterEvents) of
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
@@ -720,7 +720,7 @@ main = do
     check "the stray reported" $ all ((== 1) . seenStrays) (seens reflected)
     let alone = headSeen bentWorn 0 0 0
     check "two reflectors and a stray aren't three reflectors" $ case trackFrames clipBent [(0, alone, renderDiscs (stray : reflectorDiscs clipBent (1, 0, 1) alone))] of
-        [(_, _, Lost 3, _)] -> True
+        [(_, _, Lost 3 0, _)] -> True
         _ -> False
 
     -- Lights close to the camera laid out like the clip, as a phone's can
@@ -820,6 +820,83 @@ main = do
     check ("swaying isn't corrected " ++ show (corrections swayRows, length (filter isMirrored (map fst swayRows)))) $
         null (corrections swayRows) && length (filter isMirrored (map fst swayRows)) < 12
 
+    -- A lit fireplace behind the user, as the camera saw one: a steady core
+    -- and flickering flames around it. Finding the clip afresh needs
+    -- exactly three big blobs, and the fire's core is always a fourth;
+    -- learnt as a still light and masked, it no longer stops that.
+    let fireAt = (156, 297)
+        -- The clip high in the image, its lower pair about 60 pixels
+        -- apart around (300, 100), as on the user's camera.
+        raised (Pose r p) = Pose r (p ^+^ V3 (-26) (-165) 0)
+        fidgeting t = raised (headSeen bentWorn (3 * sin (2 * pi * t / 3)) (2 * sin (2 * pi * t / 4.3)) 0)
+        lit seen = if seen then allLit else (0, 0, 0)
+        -- (time, head, reflectors lit, fire lit) to rendered frames
+        withFire place rows =
+            [ (t, pose, renderDiscs (heads ++ (if fire then occluded heads (fireDiscs place i) else [])))
+            | (i, (t, pose, l, fire)) <- zip [0 :: Int ..] rows
+            , let heads = reflectorDiscs clipBent l pose
+            ]
+        firstTracked from rows = case [t | (t, _, Tracked{}, _) <- rows, t >= from] of
+            t : _ -> Just t
+            [] -> Nothing
+        ignored rows = [p | (_, evs) <- rows, LightIgnored p <- evs]
+        forgotten rows = [(t, p) | ((t, _, _, _), evs) <- rows, LightForgotten p <- evs]
+        nearFire p = distance p fireAt < 10
+        coldFrames = withFire fireAt [(t, fidgeting t, allLit, True) | t <- at120 8]
+        coldWith masking = trackFramesEventsWith masking clipBent coldFrames
+        (_, coldRows) = coldWith MaskLights
+        cold = map fst coldRows
+        coldStart = firstTracked 0 cold
+        coldUnmasked = firstTracked 0 (map fst (snd (coldWith NoMasking)))
+    check ("the clip where the user's camera saw it " ++ show (map (project defaultIntrinsics (fidgeting 0)) [mLeft clipBent, mRight clipBent, mTop clipBent])) True
+    check ("with the fire lit, the clip found " ++ show coldStart ++ " s after a cold start, ignoring " ++ show (ignored coldRows)) $
+        maybe False (< 3.5) coldStart && all nearFire (ignored coldRows) && length (ignored coldRows) == 1
+    check ("then followed " ++ show (summed (after 3.5 cold))) $ lostCount (after 3.5 cold) == 0 && fst (worstError cold) < 1.5
+    check ("the masked fire reported " ++ show (take 1 (seens (after 3.5 cold)))) $ all ((> 0) . seenMasked) (seens (after 3.5 cold))
+    check ("without the mask, never found " ++ show coldUnmasked) $ isNothing coldUnmasked
+
+    -- Lost for a second and a half with the fire lit, and found again.
+    let refinding = trackFramesEvents clipBent (withFire fireAt [(t, fidgeting t, lit (t < 5 || t > 6.5), True) | t <- at120 8])
+        refound = fmap (subtract 6.5) (firstTracked 6.5 (map fst (snd refinding)))
+    check ("found again with the fire lit after " ++ show refound ++ " s") $ maybe False (< 0.05) refound
+
+    -- The head passes in front of the fire, hiding it, and over its area:
+    -- the reflectors there are not masked.
+    let passPose t = leaning (max 0 (min 1 (min (t - 5) (9 - t))))
+        leaning f = let Pose r p = raised (headSeen bentWorn 0 0 0) in Pose r (p ^+^ V3 (-130 * f) 0 0)
+        passFire = project defaultIntrinsics (leaning 1) (mLeft clipBent)
+        (_, passRows) = trackFramesEvents clipBent (withFire passFire [(t, passPose t, allLit, True) | t <- at120 10.5])
+        passed = map fst passRows
+        passIgnored = [p | ((t, _, _, _), evs) <- passRows, t < 5, LightIgnored p <- evs]
+    check ("the fire at " ++ show passFire ++ " learnt before the head passes " ++ show passIgnored) $
+        length passIgnored == 1 && all (\p -> distance p passFire < 10) passIgnored
+    check ("the head passing in front of the fire " ++ show (summed (after 4 passed), maximum (0 : map seenMissing (seens (after 4 passed))))) $
+        lostCount (after 4 passed) == 0 && all ((== 0) . seenMissing) (seens (after 4 passed)) && fst (worstError (after 4 passed)) < 1.5
+
+    -- The fire goes out: it is forgotten after a while.
+    let at30 :: Double -> [Double]
+        at30 seconds = [fromIntegral i / 30 | i <- [0 .. round (seconds * 30) :: Int]]
+        (_, outRows) = trackFramesEvents clipBent (withFire fireAt [(t, fidgeting t, (0, 0, 0), t < 5) | t <- at30 60])
+    check ("the fire learnt alone, then forgotten after it goes out " ++ show (ignored outRows, forgotten outRows)) $
+        map nearFire (ignored outRows) == [True] && case forgotten outRows of
+            [(t, p)] -> nearFire p && t > 45 && t < 55
+            _ -> False
+    -- Before it was learnt, the fire and its flames were at times taken
+    -- for the clip, as three big blobs; masked, never.
+    check ("the fire masked isn't taken for the clip " ++ show [(t, s) | ((t, _, Tracked{outSeen = s}, _), _) <- outRows, t > 3]) $ all isLost [o | ((t, _, o, _), _) <- outRows, t > 3.5]
+    let (_, unmaskedRows) = trackFramesEventsWith NoMasking clipBent (withFire fireAt [(t, fidgeting t, (0, 0, 0), True) | t <- at30 10])
+    check "without the mask, nothing learnt or masked" $
+        null (ignored unmaskedRows) && and [m == 0 | ((_, _, Lost{outMasked = m}, _), _) <- unmaskedRows]
+
+    -- A head held still for a minute by the fire, from a cold start: its
+    -- reflectors, still with the fire for as long as it takes to learn it,
+    -- are learnt with it but found in it at once, and not announced; then,
+    -- being matched, they are never masked.
+    let (_, stillRows) = trackFramesEvents clipBent (withFire fireAt [(t, raised (headSeen bentWorn 0 0 0), allLit, True) | t <- at30 60])
+        stilled = map fst stillRows
+    check ("a still head isn't masked " ++ show (summed stilled, ignored stillRows)) $
+        lostCount stilled <= 93 && lostCount (after 3.5 stilled) == 0 && map nearFire (ignored stillRows) == [True]
+
     -- Learning from mirror-image poses can't put the pivot in front of the
     -- clip, where it seems to be on them.
     let mirroredPoses = [(t, mp) | (t, truth, _) <- slipping, Just mp <- [mirrorPose defaultIntrinsics clipBent truth]]
@@ -902,9 +979,37 @@ trackFrames m = map fst . snd . trackFramesEvents m
 -- | Track frames as 'trackFrames' does, with each frame's events, and the
 -- tracker at the end.
 trackFramesEvents :: Model -> [(Double, Pose, [Stripe])] -> (Tracker, [((Double, Pose, Outcome, Maybe Pose), [Event])])
-trackFramesEvents m = mapAccumL frame (newTracker defaultIntrinsics m defaultCalibration)
+trackFramesEvents = trackFramesEventsWith (lightMasking defaultConfig)
+
+-- | Track frames as 'trackFramesEvents' does, still lights masked or not.
+trackFramesEventsWith :: Masking -> Model -> [(Double, Pose, [Stripe])] -> (Tracker, [((Double, Pose, Outcome, Maybe Pose), [Event])])
+trackFramesEventsWith masking m = mapAccumL frame (newTracker defaultIntrinsics m masking defaultCalibration)
   where
     frame t (time, truth, stripes) = let (t', o, evs) = step time stripes t in (t', ((time, truth, o, trackerPose t'), evs))
+
+-- | A lit fire's discs in the i-th frame, around its core's place: the
+-- core, lighting 600 to 870 pixels, its centroid jittering by a pixel or
+-- so, and up to four flames of 6 to 100 pixels flickering within 20
+-- pixels of it, each there in about half the frames.
+fireDiscs :: (Double, Double) -> Int -> [((Double, Double), Double)]
+fireDiscs (u, v) i =
+    ((u + 2 * noise 0 - 1, v + 2 * noise 1 - 1), sqrt ((600 + 270 * noise 2) / pi))
+        : [ ((u + d * cos a, v + d * sin a), sqrt ((6 + 94 * noise (k + 0.4)) / pi))
+          | k <- [3 .. 6]
+          , noise (k + 0.1) > 0.5
+          , let a = negate pi * noise (k + 0.2)
+                d = 18 + 2 * noise (k + 0.3)
+          ]
+  where
+    noise k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int)
+
+-- | The discs of a light not hidden by the head the given reflectors are
+-- on: none within 70 pixels of one.
+occluded :: [((Double, Double), Double)] -> [((Double, Double), Double)] -> [((Double, Double), Double)]
+occluded heads = filter (\(p, _) -> all (\(q, _) -> distance p q > 70) heads)
+
+distance :: (Double, Double) -> (Double, Double) -> Double
+distance (a, b) (c, d) = sqrt ((a - c) ^ (2 :: Int) + (b - d) ^ (2 :: Int))
 
 -- | Track a head along a path of (time, true pose, how lit each reflector is).
 trackPath :: Model -> [(Double, Pose, (Double, Double, Double))] -> [(Double, Pose, Outcome, Maybe Pose)]
@@ -957,7 +1062,7 @@ poseError :: Pose -> Pose -> (Double, Double)
 poseError a b = (norm (rotationVector (poseR a `mulMM` transpose (poseR b))) * 180 / pi, norm (poseT a ^-^ poseT b))
 
 lostCount :: [(Double, Pose, Outcome, Maybe Pose)] -> Int
-lostCount rows = length [() | (_, _, Lost _, _) <- rows]
+lostCount rows = length [() | (_, _, Lost{}, _) <- rows]
 
 isLost :: Outcome -> Bool
 isLost Lost{} = True

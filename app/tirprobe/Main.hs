@@ -16,7 +16,7 @@ import Text.Read (readMaybe)
 
 import TrackKat.Calibration
 import TrackKat.Camera
-import TrackKat.Config (clip, clipModel, clipShape, defaultConfig)
+import TrackKat.Config (clip, clipModel, clipShape, defaultConfig, lightMasking)
 import TrackKat.Frame
 import TrackKat.Pose
 import TrackKat.Tracker
@@ -29,20 +29,22 @@ data Options = Options
     , optBlobs :: Bool
     , optModel :: Model
     , optFocal :: Double
+    , optMasking :: Masking
     }
 
 usage :: String
 usage =
     unlines
         [ "usage: tirprobe [--blobs] [--clip LR,LT,RT] [--focal F] [--threshold N]"
-        , "                [--ir 5|6|7] [--no-status-led] [--raw]"
+        , "                [--ir 5|6|7] [--no-status-led] [--no-mask] [--raw]"
         , "       tirprobe --list"
         , ""
         , "Shows head pose relative to where you were when you last pressed Enter."
         , "Type c and Enter, then turn your head left and right for a few seconds,"
         , "to calibrate which way is up."
         , ""
-        , "  --blobs           show the raw blob positions instead of the pose"
+        , "  --blobs           show the raw blob positions instead of the pose,"
+        , "                    marking those masked as part of a still light"
         , "  --clip LR,LT,RT   headset clip: reflector spacing in mm, as you wear"
         , "                    it: left-right, left-top, right-top, with the top"
         , "                    reflector's post leaning back (default: 70,110,110)"
@@ -50,6 +52,7 @@ usage =
         , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
         , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
         , "  --no-status-led   leave the green lights off"
+        , "  --no-mask         don't learn and ignore bright lights that stay put"
         , "  --raw             also hex-dump every USB transfer"
         , "  --list            list all USB devices and whether we can open them"
         , ""
@@ -67,6 +70,7 @@ parseArgs ("--clip" : spec : r) o
     , Just cl <- clipShape lr lt rt =
         parseArgs r o{optModel = clipModel cl}
     | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
+parseArgs ("--no-mask" : r) o = parseArgs r o{optMasking = NoMasking}
 parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLed = False}}
 parseArgs ("--threshold" : n : r) o | Just v <- readMaybe n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
 parseArgs ("--ir" : n : r) o | Just v <- readMaybe n = parseArgs r o{optSettings = (optSettings o){irBrightness = v}}
@@ -76,7 +80,7 @@ main :: IO ()
 main = do
     hSetBuffering stdout LineBuffering
     args <- getArgs
-    opts <- case parseArgs args (Options defaultSettings False False False defaultClip (focal defaultIntrinsics)) of
+    opts <- case parseArgs args (Options defaultSettings False False False defaultClip (focal defaultIntrinsics) (lightMasking defaultConfig)) of
         Right o -> pure o
         Left err -> hPutStrLn stderr (err ++ "\n\n" ++ usage) >> exitFailure
     let logger = putStrLn . ("# " ++)
@@ -128,7 +132,7 @@ run opts cam = do
     putStrLn "# tracking; Enter recenters, c Enter calibrates level, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
-    tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts) defaultCalibration)
+    tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} (optModel opts) (optMasking opts) defaultCalibration)
     let console = do
             eof <- isEOF
             unless eof $ do
@@ -140,17 +144,18 @@ run opts cam = do
                 console
     let track stripes = do
             now <- getMonotonicTime
-            (outcome, events, centre) <- atomicModifyIORef' tracker $ \t ->
-                let (t', o, evs) = step now stripes t in (t', (o, evs, trackerCentre t'))
+            (outcome, events, centre, masks) <- atomicModifyIORef' tracker $ \t ->
+                let (t', o, evs) = step now stripes t in (t', (o, evs, trackerCentre t', trackerMasks t'))
             mapM_ (putStrLn . describeEvent centre) events
-            pure outcome
+            pure (outcome, masks)
     let loop lights next = do
             (_, pkts) <- next
             forM_ pkts $ \p -> do
                 when (optRaw opts) $ putStrLn ("raw " ++ describeRaw p)
                 case p of
                     Frame n stripes -> do
-                        tracked <- if optBlobs opts then pure (Lost 0) else track stripes
+                        -- Tracking in blobs mode too, to learn still lights.
+                        (tracked, masks) <- track stripes
                         when (not (optBlobs opts)) $ lights (if isTracked tracked then On else Off) Off
                         modifyIORef' frames (+ 1)
                         now <- getMonotonicTime
@@ -163,7 +168,7 @@ run opts cam = do
                                 blobs = findBlobs stripes
                             putStrLn $
                                 if optBlobs opts
-                                    then summary n fps blobs
+                                    then summary n fps masks blobs
                                     else showOutcome tracked
                     Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
                     _ -> pure ()
@@ -185,9 +190,12 @@ describeEvent _ (Calibrated c) =
 describeEvent _ (Refined LevelRefined c) = "# " ++ describeLevel c
 describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
 describeEvent _ Corrected = "# corrected a mirror-image pose"
+describeEvent _ (LightIgnored p) = "# " ++ describeLightIgnored p
+describeEvent _ (LightForgotten p) = "# " ++ describeLightForgotten p
 
 showOutcome :: Outcome -> String
-showOutcome (Lost n) = "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3"
+showOutcome (Lost n masked) =
+    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "")
 showOutcome (Tracked hp dist err seen) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
@@ -201,8 +209,9 @@ showOutcome (Tracked hp dist err seen) =
         err
         ++ describeSeen seen
 
-summary :: (Integral a) => a -> Double -> [Blob] -> String
-summary n fps blobs =
+-- | A frame's blobs, those in a still light's area marked.
+summary :: (Integral a) => a -> Double -> (Blob -> Bool) -> [Blob] -> String
+summary n fps masks blobs =
     printf
         "frame %3d  %5.1f fps  %d blob%s "
         (fromIntegral n :: Int)
@@ -213,7 +222,7 @@ summary n fps blobs =
   where
     -- Elongation, length to width: about 1 for one reflector, more for two
     -- run together.
-    showBlob b = printf " (%6.1f, %6.1f) %4dpx %3.1f:1" (blobX b) (blobY b) (blobPoints b) (blobElongation b)
+    showBlob b = printf " (%6.1f, %6.1f) %4dpx %3.1f:1%s" (blobX b) (blobY b) (blobPoints b) (blobElongation b) (if masks b then " masked" else "")
 
 describeRaw :: Packet -> String
 describeRaw (Frame n ss) = "frame " ++ show n ++ " " ++ show ss
