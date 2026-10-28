@@ -2,6 +2,45 @@
 
 The details behind the [README](../README.md).
 
+## Installing and updating
+
+trackkat runs from wherever it was unzipped until you click **Install
+trackkat** in its window (or run `trackkat.exe --install`). That copies it to
+`%LOCALAPPDATA%\Programs\trackkat\<version>`, for you alone and without
+admin, adds it to the Start menu and to Settings → Apps, points games at its
+NPClient there, and switches to the installed copy. If a copy as new is
+installed already, the window offers to switch to it instead.
+
+Settings, calibration and `npclient.log` live in `%APPDATA%\trackkat`, for
+any copy, installed or not, so installing and updating leave them alone.
+Settings files beside `trackkat.exe`, where older versions kept them, are
+moved there once.
+
+Each build has a version, such as `0.1.142 (3f9c2e1)`: the build's number and
+its commit. The window's title and the start of the log show it. An
+installed trackkat looks for a newer build when it starts and every four
+hours, downloads it in the background, checks its SHA-256 and unpacks it
+beside the others. The window then offers **Restart to update**, as does the
+tray menu; otherwise the new version starts the next time trackkat does. If
+it can't reach GitHub, it says so on the console and tries again later.
+**Keep up to date** (`updates = off`) stops this.
+
+A game keeps the NPClient it loaded until it quits, and that DLL starts
+`trackkat.exe` from its own folder, so an older version's folder is kept
+while any game has its DLL, and deleted once none does. Its `trackkat.exe`,
+started by such a game, hands over to the newest installed.
+
+**Start with Windows** (`startup = on`) starts trackkat in the tray when you
+log in, through `trackkat-tray.exe`, which starts it without a console
+window. Games start trackkat themselves anyway, except in
+[anti-cheat mode](#anti-cheat).
+
+To uninstall, use Settings → Apps → trackkat. It quits trackkat, removes its
+shortcut, apps entry, start at login and its NPClient pointer, and its
+folders; files a running game holds go when you next log in. It asks
+whether to keep your settings. `trackkat.exe --uninstall --quiet` keeps them
+without asking.
+
 ## Tray icon
 
 trackkat shows a cat in the system tray, its eyes green while tracking,
@@ -17,6 +56,9 @@ lets it go.
 Enter recenters, `c` Enter calibrates, `j` Enter names the joystick buttons
 you press for the next minute, and Ctrl-C quits. Running it again shows the
 window of the one already running.
+
+**Started with Windows** (`--tray`), trackkat shows only its tray icon, with
+no console, until you quit it.
 
 **Started by a game**, trackkat shows only its tray icon, with no console.
 Once no game has been tracking for a minute, and its window isn't open, it
@@ -63,8 +105,8 @@ takes the held view as forward, and games stay held until you resume.
 ## Calibration
 
 trackkat learns two things from how you move your head, and keeps them in
-`trackkat.calibration` beside `trackkat.exe`, so it carries on from where it
-left off:
+`trackkat.calibration`, in `%APPDATA%\trackkat`, so it carries on from where
+it left off:
 
 - **Which way is up.** The camera is usually tipped down at you, so its own
   axes would mix some of a left-right turn into roll. trackkat takes up to
@@ -124,7 +166,8 @@ for that software, which the DLL gets the pose from. So:
 
 - NaturalPoint's TrackIR software must be installed, but not running: quit
   it, including from the tray. The camera stays on WinUSB.
-- Games can't start trackkat this way, so start trackkat before the game.
+- Games can't start trackkat this way, so start trackkat before the game,
+  or tick **Start with Windows**.
 - When a game starts head tracking, trackkat's log says so, with the game's
   number:
 
@@ -140,8 +183,8 @@ way the change applies when the settings are saved.
 
 ## Testing NPClient
 
-- `npclient.log`, beside the DLLs, records what each game asked NPClient for
-  and what it got.
+- `npclient.log`, in `%APPDATA%\trackkat`, records what each game asked
+  NPClient for and what it got.
 - `npgame` loads NPClient like a game does (as DCS, game 1003, by default,
   or `npgame <game id>`), unscrambles and checksums what it gets as a game
   must, and prints the pose. Run it while trackkat is running.

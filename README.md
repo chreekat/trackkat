@@ -28,12 +28,17 @@ also restores it.
 
 ## First run
 
-1. Unzip somewhere to keep, and run `trackkat.exe` once from that folder. It
-   tells games to load NPClient from there and writes `trackkat.conf`
-   beside it. After that, games start trackkat themselves.
-2. Face the camera and press **F12** to recenter.
-3. Start the game. The camera's second green light shows when a game is
+1. Unzip it and run `trackkat.exe`. Until builds are signed, Windows may
+   say it protected your PC: click **More info**, then **Run anyway**.
+2. Click **Install trackkat** at the top of its window. It installs for you
+   alone, without admin, in the Start menu, and keeps itself up to date,
+   so Windows doesn't ask again. (Or keep running it from where you
+   unzipped it.) Games start trackkat themselves from then on.
+3. Face the camera and press **F12** to recenter.
+4. Start the game. The camera's second green light shows when a game is
    reading your head.
+
+Uninstall it from Windows' Settings → Apps.
 
 trackkat learns how your camera is tipped and where your neck pivots as you
 look around; there is nothing to calibrate by hand.
@@ -45,27 +50,30 @@ tooltip saying what it does.
 
 ![trackkat's window, numbered](docs/window.png)
 
-1. Your head as games see it.
-2. Each axis: your head, what games see after the curves, and a bar.
-3. Rest the mouse on anything for help.
-4. Camera, clip, games and output: green is good.
-5. The trim: where Trim made the new forward.
-6. Latency and other figures, for bug reports.
-7. **Recenter**: where you face now becomes straight ahead; clears trim.
-8. **Pause**: games see your head held still until you press it again.
-9. **Trim**: where you look becomes forward, say at an MFD, until you recenter.
-10. **Calibrate level**: after moving the camera, turn your head left and right for five seconds.
-11. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
-12. What trackkat has learnt about your camera and neck; **Clear calibration** starts afresh.
-13. Keys and buttons for each action, separated by commas; here a HOTAS button too.
-14. **Add key or button…**: press a key, joystick button, or middle or side mouse button to add it.
-15. Smoothing: steadiness against jitter, responsiveness against lag.
-16. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
-17. Lean relative to where the game's view looks, or to the screen.
-18. Anti-cheat mode, for games such as Arma Reforger that refuse trackkat's NPClient.
-19. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
-20. **Curves as text**, for curves of any shape.
-21. The log; **Copy log** for bug reports.
+1. **Install trackkat**, while it runs from where you unzipped it; **Restart to update** once a new version is ready.
+2. Your head as games see it.
+3. Each axis: your head, what games see after the curves, and a bar.
+4. Rest the mouse on anything for help.
+5. Camera, clip, games and output: green is good.
+6. The trim: where Trim made the new forward.
+7. Latency and other figures, for bug reports.
+8. **Recenter**: where you face now becomes straight ahead; clears trim.
+9. **Pause**: games see your head held still until you press it again.
+10. **Trim**: where you look becomes forward, say at an MFD, until you recenter.
+11. **Calibrate level**: after moving the camera, turn your head left and right for five seconds.
+12. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
+13. What trackkat has learnt about your camera and neck; **Clear calibration** starts afresh.
+14. Keys and buttons for each action, separated by commas; here a HOTAS button too.
+15. **Add key or button…**: press a key, joystick button, or middle or side mouse button to add it.
+16. Smoothing: steadiness against jitter, responsiveness against lag.
+17. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
+18. Lean relative to where the game's view looks, or to the screen.
+19. Anti-cheat mode, for games such as Arma Reforger that refuse trackkat's NPClient.
+20. **Start with Windows**, in the tray: the way to use anti-cheat mode without starting trackkat by hand.
+21. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
+22. **Keep up to date**: an installed trackkat fetches new versions in the background.
+23. **Curves as text**, for curves of any shape.
+24. The log, and trackkat's version; **Copy log** for bug reports.
 
 ## Keys
 
@@ -79,17 +87,17 @@ side mouse buttons.
 ## Settings
 
 Change settings in the window, which saves them as you go, or edit
-`trackkat.conf`, beside `trackkat.exe`, in any text editor; it explains every
-setting, as [`trackkat.conf.example`](trackkat.conf.example) shows. Either way
-they apply at once, while you play.
+`trackkat.conf`, in `%APPDATA%\trackkat`, in any text editor; it explains
+every setting, as [`trackkat.conf.example`](trackkat.conf.example) shows.
+Either way they apply at once, while you play.
 
 ## When something doesn't work
 
 - **No camera?** Check the WinUSB setup above, and that NaturalPoint's
   software isn't running. [`tirprobe`](docs/tirprobe.md) talks to the camera
   directly.
-- **A game doesn't move?** `npclient.log`, beside the DLLs, records what each
-  game asked for and got. `npgame` loads NPClient as a game does and prints
+- **A game doesn't move?** `npclient.log`, in `%APPDATA%\trackkat`, records
+  what each game asked for and got. `npgame` loads NPClient as a game does and prints
   the pose.
 - **Anti-cheat blocks NPClient** (BattlEye, in Arma Reforger)? Set
   `npclient = trackir`; see [anti-cheat](docs/details.md#anti-cheat).
@@ -99,8 +107,8 @@ they apply at once, while you play.
 
   ![trackdemo looking around its cockpit, driven by a scripted pose](docs/trackdemo.gif)
 
-More on trim, calibration, the tray icon and when trackkat quits by itself:
-[docs/details.md](docs/details.md).
+More on installing and updating, trim, calibration, the tray icon and when
+trackkat quits by itself: [docs/details.md](docs/details.md).
 
 ## Building
 
