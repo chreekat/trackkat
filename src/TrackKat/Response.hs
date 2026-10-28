@@ -175,11 +175,13 @@ data Response = Response
 data Axis = Axis !Double !Double
 
 data Shaper = Shaper
-    { shLast :: Maybe (Double, HeadPose)
+    { shLast :: !(Maybe (Double, HeadPose))
     -- ^ time and pose last accepted, before smoothing
     , shRejected :: !Int
     -- ^ frames in a row rejected as impossible jumps
-    , shAxes :: Maybe [Axis]
+    , shAxes :: !(Maybe [Axis])
+    -- ^ all evaluated, so that shaping whose output isn't used, as while
+    -- paused, doesn't hold on to every frame before
     }
 
 newShaper :: Shaper
@@ -206,7 +208,7 @@ shape r forward now pose s = case shLast s of
             (output (shAxes s) previous, s{shRejected = shRejected s + 1})
     _ ->
         let axes = smoothAll (fst <$> shLast s) (shAxes s)
-         in (output (Just axes) pose, Shaper (Just (now, pose)) 0 (Just axes))
+         in (output (Just axes) pose, foldr seq (Shaper (Just (now, pose)) 0 (Just axes)) axes)
   where
     values p = [yaw p, pitch p, roll p, tx p, ty p, tz p]
     jump a b =
