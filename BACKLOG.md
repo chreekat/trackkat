@@ -2,6 +2,9 @@
 
 Roughly in order.
 
+- Once ignoring still lights has proven itself, make it always on and drop
+  the `ignore lights` setting and its checkbox.
+
 ## Low priority
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
