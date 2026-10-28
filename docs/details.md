@@ -22,8 +22,10 @@ installed trackkat looks for a newer build when it starts and every four
 hours, downloads it in the background, checks its SHA-256 and unpacks it
 beside the others. The window then offers **Restart to update**, as does the
 tray menu; otherwise the new version starts the next time trackkat does. If
-it can't reach GitHub, it says so on the console and tries again later.
-**Keep up to date** (`updates = off`) stops this.
+it can't reach GitHub, it says so on the console and tries again later; the
+log says so once, until a look works again. **Keep up to date**
+(`updates = off`) stops this. **Check for updates** looks at once, even with
+it off, and the log says what it found.
 
 A game keeps the NPClient it loaded until it quits, and that DLL starts
 `trackkat.exe` from its own folder, so an older version's folder is kept
