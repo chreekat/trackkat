@@ -29,6 +29,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_KEY_TRIM 0x100
 #define ACT_CLEAR_CALIBRATION 0x200
 #define ACT_OFFER 0x400 /* take up what the banner offers: install, or restart to update */
+#define ACT_CHECK_UPDATES 0x800
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
@@ -79,6 +80,7 @@ static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, L"", L"",
                        L"Changes are saved as you make them.", L"", L"", L"", 0, {{0, 0, 0, 0}}};
 static wchar_t version_text[64] = L"development build"; /* set before the window is made */
+static int updatable; /* whether Check for updates works; set before the window is made */
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
 static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings as the user asked to save them */
@@ -219,6 +221,13 @@ void hts_gui_version(const wchar_t *text)
     copy_text(version_text, 64, text);
 }
 
+/* Whether this copy can update itself, so Check for updates works. Call
+ * before hts_gui_start. */
+void hts_gui_updatable(int can)
+{
+    updatable = can;
+}
+
 static int field_index(const wchar_t *name)
 {
     for (int i = 0; i < F_COUNT; i++)
@@ -307,6 +316,7 @@ enum {
     ID_TRIM,
     ID_ADD_TRIM,
     ID_OFFER,
+    ID_CHECK_UPDATES,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
@@ -1775,25 +1785,30 @@ static void build_window(void)
         L"Start trackkat in the tray when you log in (startup = on). Games start trackkat themselves anyway, but "
         L"in anti-cheat mode they can't: this is the way to use it without starting trackkat by hand.");
     field_ctl[F_LIGHTS] = tip(
-        control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 292, CURVES_TOP + 174, 140, 22,
+        control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 248, CURVES_TOP + 174, 110, 22,
                 ID_FIELD + F_LIGHTS),
         L"Learn bright lights that stay put, such as a lamp or a fire behind you, and ignore them, so they don't "
         L"stop trackkat finding the clip (ignore lights = on). The log says when one is learnt or forgotten.");
     field_ctl[F_UPDATES] = tip(
-        control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 440, CURVES_TOP + 174, 132, 22,
+        control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 370, CURVES_TOP + 174, 102, 22,
                 ID_FIELD + F_UPDATES),
         L"Once installed, look for a newer version when trackkat starts and every few hours, and fetch it in the "
         L"background (updates = on). It is used when you click Restart to update, or when trackkat next starts. "
         L"Your settings and calibration stay.");
+    HWND check_updates = tip(control(L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON, 476, CURVES_TOP + 173,
+                                     116, 24, ID_CHECK_UPDATES),
+                             L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
+                             L"one. The log says what was found. Only for an installed trackkat.");
+    EnableWindow(check_updates, updatable);
 
     settings_text = tip(
-        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 262, 20, 0),
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 218, 20, 0),
         L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
         L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
         L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
         L"not, why.");
-    curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 580, CURVES_TOP + 174,
-                                 120, 22, ID_CURVES_AS_TEXT),
+    curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 604, CURVES_TOP + 174,
+                                 96, 22, ID_CURVES_AS_TEXT),
                          L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "
                          L"trackkat.conf explains how.");
 
@@ -1919,6 +1934,9 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         }
         case ID_OFFER:
             InterlockedOr(&actions, ACT_OFFER);
+            return 0;
+        case ID_CHECK_UPDATES:
+            InterlockedOr(&actions, ACT_CHECK_UPDATES);
             return 0;
         case ID_FIELD + F_SMOOTHING:
             show_field(F_SMOOTHING,
