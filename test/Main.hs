@@ -15,7 +15,7 @@ import Data.Maybe (isNothing)
 import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removePathForcibly)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
-import System.FilePath ((</>))
+import System.FilePath (pathSeparator, (</>))
 import System.IO (readFile')
 
 import Codec.Archive.Zip (addEntryToArchive, emptyArchive, fromArchive, toEntry)
@@ -577,6 +577,8 @@ main = do
     check "digests compare ignoring case" $ sameDigest "ABC" "abc" && not (sameDigest "abc" "abd")
 
     -- Where metadata and zips come from: HTTPS, or for testing a file.
+    tmp <- getTemporaryDirectory
+    check "a full path" $ parseLocation (tmp </> "x.json") == Right (LocalFile (tmp </> "x.json"))
     check "https metadata" $ parseLocation "https://github.com/x.json" == Right (Web "https://github.com/x.json")
     check "plain http refused" $ isLeft (parseLocation "http://github.com/x.json")
     check "relative path refused" $ isLeft (parseLocation "x.json")
@@ -584,16 +586,16 @@ main = do
         releaseLocation (Web "https://a/x.json") "https://b/x.zip" == Right (Web "https://b/x.zip")
             && isLeft (releaseLocation (Web "https://a/x.json") "/etc/passwd")
     check "metadata from a file names a file beside it" $
-        releaseLocation (LocalFile "/tmp/u/x.json") "x.zip" == Right (LocalFile "/tmp/u/x.zip")
-            && isLeft (releaseLocation (LocalFile "/tmp/u/x.json") "https://b/x.zip")
+        releaseLocation (LocalFile (tmp </> "x.json")) "x.zip" == Right (LocalFile (tmp </> "x.zip"))
+            && isLeft (releaseLocation (LocalFile (tmp </> "x.json")) "https://b/x.zip")
 
     -- Installed or not, and what the window offers.
-    let root = "/home/u/Programs/trackkat"
+    let root = tmp </> "Programs" </> "trackkat"
         installedAt v = placement root (root </> v)
         vs = mapM version ["0.1.9", "0.1.10", "0.1.8"]
     check "an installed version's folder" $ fmap Installed v1 == Just (installedAt "0.1.9")
-    check "a trailing separator" $ fmap Installed v1 == Just (placement (root ++ "/") (root </> "0.1.9/"))
-    check "a download is portable" $ placement root "/home/u/Downloads/trackkat-windows" == Portable
+    check "a trailing separator" $ fmap Installed v1 == Just (placement (root ++ [pathSeparator]) (root </> "0.1.9" ++ [pathSeparator]))
+    check "a download is portable" $ placement root (tmp </> "Downloads" </> "trackkat-windows") == Portable
     check "the install root itself is portable" $ placement root root == Portable
     check "an unfinished folder is portable" $ installedAt "0.1.9.partial" == Portable
     check "a development build offers nothing" $ offer Nothing Portable [] == NoOffer
@@ -623,7 +625,6 @@ main = do
     check "no settings beside" $ isNothing (leftover False True) && isNothing (leftover False False)
 
     -- Unpacking a release's zip.
-    tmp <- getTemporaryDirectory
     let work = tmp </> "trackkat-test-unzip"
         zipOf files = fromArchive (foldr (addEntryToArchive . (\(n, b) -> toEntry n 0 (BL.fromStrict (C.pack b)))) emptyArchive files)
         unpack name files = do
