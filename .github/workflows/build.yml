@@ -15,8 +15,22 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      # For signing in to Azure with OIDC: see docs/signing.md.
+      id-token: write
+    env:
+      # Builds of main are signed, once the repository is set up for it.
+      SIGN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AZURE_SIGNING_ACCOUNT != '' }}
+      SIGN_WITH_SECRET: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
     steps:
       - uses: actions/checkout@v4
+
+      # The run number orders builds; trackkat compares versions to update.
+      - name: Version
+        shell: pwsh
+        run: |
+          $v = "0.1.${{ github.run_number }}+$($env:GITHUB_SHA.Substring(0, 7))"
+          "TRACKKAT_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "Building trackkat $v"
 
       - name: Install libusb and C compilers
         id: msys2
@@ -30,8 +44,9 @@ jobs:
             mingw-w64-i686-gcc
 
       # Games load the DLLs, 64- and 32-bit; npgame and trackdemo stand in
-      # for a game. Only trackkat.exe gets the cat icon.
-      - name: Build the icon, NPClient DLLs, npgame and trackdemo
+      # for a game. Only trackkat.exe gets the cat icon. trackkat-tray starts
+      # trackkat at login without a console window.
+      - name: Build the icon, NPClient DLLs, trackkat-tray, npgame and trackdemo
         shell: pwsh
         run: |
           $msys = "${{ steps.msys2.outputs.msys2-location }}"
@@ -46,6 +61,8 @@ jobs:
           & windres -I icons icons/trackkat.rc -O coff -o icons/trackkat-icon.o
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32 -luser32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & gcc -std=c11 -Wall -Wextra -Werror -O2 -s -static -mwindows -municode -o trackkat-tray.exe launcher/trackkat-tray.c
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Compiler messages become annotations, which show without the log.
           $out = & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c `
@@ -75,8 +92,9 @@ jobs:
         run: |
           $usb = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "ucrt64"
           "USB_PREFIX=$usb" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # trackkat.exe links the icon.
-          "package trackkat`n  flags: +icon" | Out-File -FilePath cabal.project.local -Encoding ascii
+          # trackkat.exe links the icon, and knows its version (TrackKat.Build).
+          @('package trackkat', '  flags: +icon', ('  ghc-options: "-DTRACKKAT_VERSION=\"{0}\""' -f $env:TRACKKAT_VERSION)) |
+            Out-File -FilePath cabal.project.local -Encoding ascii
           cabal build all --enable-tests `
             --extra-include-dirs="$usb\include" --extra-lib-dirs="$usb\lib"
 
@@ -96,12 +114,54 @@ jobs:
               --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
             Copy-Item $exe dist\
           }
-          Copy-Item NPClient.dll, NPClient64.dll, npgame.exe, trackdemo.exe dist\
+          Copy-Item NPClient.dll, NPClient64.dll, trackkat-tray.exe, npgame.exe, trackdemo.exe dist\
           Copy-Item "$env:USB_PREFIX\bin\libusb-1.0.dll" dist\
           Copy-Item README.md dist\
           # The icon, for Explorer and trackkat's window.
           $objdump = Join-Path "$env:USB_PREFIX" "bin\objdump.exe"
           if (-not (& $objdump -h dist\trackkat.exe | Select-String '\.rsrc')) { "::error::trackkat.exe has no icon"; exit 1 }
+          # Installing copies, and updates unpack, the files trackkat names.
+          $listed = & dist\trackkat.exe --list-files | Sort-Object
+          $packed = Get-ChildItem dist -Name | Sort-Object
+          $diff = Compare-Object $listed $packed
+          if ($diff) { "::error::dist doesn't hold the files trackkat --list-files names: $($diff | Out-String)"; exit 1 }
+
+      # Sign in to Azure with OIDC, unless a client secret is set instead.
+      - name: Sign in to Azure
+        if: env.SIGN == 'true' && env.SIGN_WITH_SECRET != 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Sign trackkat's own programs and DLLs (not libusb's), before zipping,
+      # so the SHA-256 published is of them signed. To sign another way, such
+      # as with SignPath, replace this step and the one before: see
+      # docs/signing.md.
+      - name: Sign
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          files: |
+            ${{ github.workspace }}\dist\trackkat.exe
+            ${{ github.workspace }}\dist\trackkat-tray.exe
+            ${{ github.workspace }}\dist\tirprobe.exe
+            ${{ github.workspace }}\dist\npgame.exe
+            ${{ github.workspace }}\dist\trackdemo.exe
+            ${{ github.workspace }}\dist\NPClient.dll
+            ${{ github.workspace }}\dist\NPClient64.dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: trackkat
+          description-url: https://github.com/chreekat/trackkat
 
       - uses: actions/upload-artifact@v4
         with:
@@ -109,6 +169,7 @@ jobs:
           path: dist
 
       # Artifacts need a GitHub login to download; release assets don't.
+      # Installed copies of trackkat read trackkat-windows.json to update.
       - name: Publish dev release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
@@ -116,10 +177,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           Compress-Archive -Path dist\* -DestinationPath trackkat-windows.zip
+          $sha = (Get-FileHash trackkat-windows.zip -Algorithm SHA256).Hash.ToLower()
+          [ordered]@{
+            version = $env:TRACKKAT_VERSION
+            url = "https://github.com/${{ github.repository }}/releases/download/dev/trackkat-windows.zip"
+            sha256 = $sha
+          } | ConvertTo-Json | Out-File -FilePath trackkat-windows.json -Encoding ascii
+          Get-Content trackkat-windows.json
           gh release delete dev --yes --cleanup-tag 2>$null
           $global:LASTEXITCODE = 0
-          gh release create dev trackkat-windows.zip --prerelease --target $env:GITHUB_SHA `
-            --title "Development build" `
+          gh release create dev trackkat-windows.zip trackkat-windows.json --prerelease --target $env:GITHUB_SHA `
+            --title "Development build $env:TRACKKAT_VERSION" `
             --notes "Latest build of main ($env:GITHUB_SHA). Download trackkat-windows.zip below."
 
   linux:

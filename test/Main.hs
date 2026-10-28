@@ -7,13 +7,18 @@ import Control.Monad (forM_, unless)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
+import qualified Data.ByteString.Lazy as BL
 import Data.Either (isLeft)
 import Data.IORef
 import Data.List (mapAccumL, sortOn)
 import Data.Maybe (isNothing)
+import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removePathForcibly)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
+import System.FilePath ((</>))
 import System.IO (readFile')
+
+import Codec.Archive.Zip (addEntryToArchive, emptyArchive, fromArchive, toEntry)
 
 import TrackKat.Calibration
 import TrackKat.Config
@@ -22,6 +27,7 @@ import TrackKat.GamePose
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Protocol
+import TrackKat.Release
 import TrackKat.Response
 import TrackKat.Stats
 import TrackKat.Tracker
@@ -542,6 +548,108 @@ main = do
              in check "clip sides are the wearer's" $
                     abs (norm (mTop m ^-^ mLeft m) - 120) < 1e-9 && abs (norm (mTop m ^-^ mRight m) - 100) < 1e-9
         Nothing -> check "asymmetric clip" False
+
+    -- Versions: numbers compared in order, what built them ignored.
+    let version = parseVersion
+        v1 = version "0.1.9"
+        v2 = version "0.1.10+abc1234"
+    check "version read" $ fmap versionNumbers v2 == Just [0, 1, 10]
+    check "versions compare by number" $ ((<) <$> v1 <*> v2) == Just True
+    check "the commit doesn't count" $ version "0.1.10" == v2
+    check "version rendered" $ fmap renderVersion v2 == Just "0.1.10+abc1234"
+    check "version described" $ fmap describeVersion v2 == Just "0.1.10 (abc1234)"
+    check "version folder" $ fmap versionFolder v2 == Just "0.1.10"
+    check "folder names have no commit" $ isNothing (folderVersion "0.1.10+abc") && folderVersion "0.1.10" == v2
+    check "not versions" $ all (isNothing . version) ["", "dev", "0..1", "1.x", "0.1+", "0.1+a b", "-1.2", "1.2.3.partial"]
+
+    -- The metadata published with each release.
+    let sha = replicate 63 'a' ++ "B"
+        meta = "{\"version\": \"0.1.10+abc1234\", \"url\": \"https://example.com/t\\u0072ackkat-windows.zip\",\n \"sha256\": \"" ++ sha ++ "\", \"size\": 123, \"notes\": [true, null]}"
+    case parseRelease meta of
+        Right r -> do
+            check "release version" $ Just (releaseVersion r) == v2
+            check "release url, unescaped" $ releaseUrl r == "https://example.com/trackkat-windows.zip"
+            check "release digest, lower case" $ releaseSha256 r == replicate 63 'a' ++ "b"
+        Left err -> check ("release metadata: " ++ err) False
+    check "metadata missing a field" $ isLeft (parseRelease "{\"version\": \"0.1.2\", \"url\": \"https://x\"}")
+    check "metadata with a bad digest" $ isLeft (parseRelease ("{\"version\": \"0.1.2\", \"url\": \"https://x\", \"sha256\": \"" ++ replicate 64 'g' ++ "\"}"))
+    check "metadata that isn't JSON" $ all (isLeft . parseRelease) ["", "[1]", "{\"version\": }", "{\"a\": 1} x"]
+    check "digests compare ignoring case" $ sameDigest "ABC" "abc" && not (sameDigest "abc" "abd")
+
+    -- Where metadata and zips come from: HTTPS, or for testing a file.
+    check "https metadata" $ parseLocation "https://github.com/x.json" == Right (Web "https://github.com/x.json")
+    check "plain http refused" $ isLeft (parseLocation "http://github.com/x.json")
+    check "relative path refused" $ isLeft (parseLocation "x.json")
+    check "metadata from the web names a zip on the web" $
+        releaseLocation (Web "https://a/x.json") "https://b/x.zip" == Right (Web "https://b/x.zip")
+            && isLeft (releaseLocation (Web "https://a/x.json") "/etc/passwd")
+    check "metadata from a file names a file beside it" $
+        releaseLocation (LocalFile "/tmp/u/x.json") "x.zip" == Right (LocalFile "/tmp/u/x.zip")
+            && isLeft (releaseLocation (LocalFile "/tmp/u/x.json") "https://b/x.zip")
+
+    -- Installed or not, and what the window offers.
+    let root = "/home/u/Programs/trackkat"
+        installedAt v = placement root (root </> v)
+        vs = mapM version ["0.1.9", "0.1.10", "0.1.8"]
+    check "an installed version's folder" $ fmap Installed v1 == Just (installedAt "0.1.9")
+    check "a trailing separator" $ fmap Installed v1 == Just (placement (root ++ "/") (root </> "0.1.9/"))
+    check "a download is portable" $ placement root "/home/u/Downloads/trackkat-windows" == Portable
+    check "the install root itself is portable" $ placement root root == Portable
+    check "an unfinished folder is portable" $ installedAt "0.1.9.partial" == Portable
+    check "a development build offers nothing" $ offer Nothing Portable [] == NoOffer
+    check "portable, nothing installed: install" $ (offer v1 Portable <$> Just []) == fmap OfferInstall v1
+    check "portable, older installed: install" $ (offer v2 Portable <$> mapM version ["0.1.9"]) == fmap OfferInstall v2
+    check "portable, as new installed: switch" $ (offer v1 Portable <$> mapM version ["0.1.9"]) == fmap OfferInstalled v1
+    check "portable, newer installed: switch" $ (offer v1 Portable <$> vs) == fmap OfferInstalled v2
+    check "installed, newest: nothing" $ (offer v2 (installedAt "0.1.10") <$> vs) == Just NoOffer
+    check "installed, newer ready: update" $ (offer v1 (installedAt "0.1.9") <$> vs) == fmap OfferUpdate v2
+    check "a build in a newer version's folder doesn't update to it" $ (offer v1 (installedAt "0.1.10") <$> vs) == Just NoOffer
+    check "an old version hands over to the newest" $ (newerInstalled (installedAt "0.1.8") <$> vs) == Just v2
+    check "the newest doesn't hand over" $ (newerInstalled (installedAt "0.1.10") <$> vs) == Just Nothing
+    check "a portable copy doesn't hand over" $ (newerInstalled Portable <$> vs) == Just Nothing
+
+    -- Cleaning up older versions, games' DLLs first.
+    let names = ["0.1.8", "0.1.9", "0.1.10", "0.1.11", "0.1.11.partial", "notes", "0.1.7+x"]
+    check "stale folders" $ staleFolders (installedAt "0.1.10") names == ["0.1.8", "0.1.9", "0.1.11.partial"]
+    check "portable copies clean nothing" $ null (staleFolders Portable names)
+    check "deletion order" $
+        deletionOrder ["README.md", "trackkat.exe", "NPClient.dll", "libusb-1.0.dll", "NPClient64.dll"]
+            == ["NPClient64.dll", "NPClient.dll", "README.md", "libusb-1.0.dll", "trackkat.exe"]
+    check "every release file has a place" $ length (deletionOrder releaseFiles) == length releaseFiles
+
+    -- Settings files left beside trackkat.exe by older versions.
+    check "settings moved" $ leftover True False == Just MoveToSettings
+    check "settings left when both" $ leftover True True == Just IgnoreBeside
+    check "no settings beside" $ isNothing (leftover False True) && isNothing (leftover False False)
+
+    -- Unpacking a release's zip.
+    tmp <- getTemporaryDirectory
+    let work = tmp </> "trackkat-test-unzip"
+        zipOf files = fromArchive (foldr (addEntryToArchive . (\(n, b) -> toEntry n 0 (BL.fromStrict (C.pack b)))) emptyArchive files)
+        unpack name files = do
+            BL.writeFile (work </> (name ++ ".zip")) (zipOf files)
+            extractRelease (work </> (name ++ ".zip")) (work </> name)
+    removePathForcibly work
+    createDirectory work
+    good <- unpack "good" [("trackkat.exe", "exe"), ("README.md", replicate 5000 'x')]
+    exe <- readFile' (work </> "good" </> "trackkat.exe")
+    readme <- readFile' (work </> "good" </> "README.md")
+    check ("release unpacked " ++ show good) $ good == Right () && exe == "exe" && readme == replicate 5000 'x'
+    for <-
+        mapM
+            (\(n, fs) -> (,) n <$> unpack n fs)
+            [ ("escape", [("trackkat.exe", "x"), ("../evil.exe", "x")])
+            , ("folders", [("trackkat.exe", "x"), ("sub/a.dll", "x")])
+            , ("backslash", [("trackkat.exe", "x"), ("..\\evil.exe", "x")])
+            , ("no-exe", [("README.md", "x")])
+            ]
+    forM_ for $ \(n, r) -> check ("zip refused: " ++ n) (isLeft r)
+    escaped <- doesFileExist (tmp </> "evil.exe")
+    check "nothing written outside" (not escaped)
+    B.writeFile (work </> "junk.zip") (C.pack "not a zip")
+    junk <- extractRelease (work </> "junk.zip") (work </> "junk")
+    check "a file that isn't a zip" (isLeft junk)
+    removeDirectoryRecursive work
 
     -- The example settings file in the repository is the one trackkat
     -- writes when there is none. TRACKKAT_ACCEPT=1 rewrites it.

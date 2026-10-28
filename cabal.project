@@ -1,1 +1,10 @@
 packages: .
+
+-- zip-archive's zlib and digest use zlib's own C sources, from zlib-clib,
+-- rather than a system zlib: there is none to find when building on
+-- Windows, and then no zlib1.dll to ship beside trackkat.exe.
+package zlib
+  flags: +bundled-c-zlib
+
+package digest
+  flags: -pkg-config

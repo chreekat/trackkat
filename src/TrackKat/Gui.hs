@@ -9,6 +9,9 @@ module TrackKat.Gui (
     stopGui,
     quitProcess,
     showRunning,
+    quitRunning,
+    showVersion,
+    showOffer,
     windowOpen,
     Action (..),
     takeActions,
@@ -31,6 +34,7 @@ module TrackKat.Gui (
 ) where
 
 import Data.Bits (shiftR, testBit, (.&.))
+import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
 import Foreign.Marshal.Array (allocaArray)
@@ -44,6 +48,9 @@ foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()
 foreign import ccall unsafe "hts_gui_quit" c_quit :: IO ()
 foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
+foreign import ccall unsafe "hts_gui_quit_running" c_quit_running :: IO CInt
+foreign import ccall unsafe "hts_gui_version" c_version :: CWString -> IO ()
+foreign import ccall unsafe "hts_gui_offer" c_offer :: CWString -> CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_window_open" c_window_open :: IO CInt
 foreign import ccall unsafe "hts_gui_take_actions" c_take_actions :: IO CInt
 foreign import ccall unsafe "hts_gui_chosen_key" c_chosen_key :: CInt -> IO CInt
@@ -85,6 +92,26 @@ quitProcess = c_quit >> error "quitProcess returned"
 showRunning :: IO Bool
 showRunning = (/= 0) <$> c_show_running
 
+-- | Ask a trackkat already running to quit, returning its process ID, if
+-- one is running.
+quitRunning :: IO (Maybe Int)
+quitRunning = (\pid -> if pid == 0 then Nothing else Just (fromIntegral pid)) <$> c_quit_running
+
+-- | The version the window's title and log box show. Call before
+-- 'startGui'.
+showVersion :: String -> IO ()
+showVersion v = withCWString v c_version
+
+-- | Show a banner across the top of the window offering something, with a
+-- button, and perhaps an item in the tray's menu, either of which asks for
+-- it with 'OfferAction'. Nothing hides the banner.
+showOffer :: Maybe (String, String, Maybe String) -> IO ()
+showOffer o = withCWString text $ \t -> withCWString button $ \b -> withCWString tray (c_offer t b)
+  where
+    (text, button, tray) = case o of
+        Just (t, b, m) -> (t, b, fromMaybe "" m)
+        Nothing -> ("", "", "")
+
 -- | Whether the window is open; hidden in the tray doesn't count.
 windowOpen :: IO Bool
 windowOpen = (/= 0) <$> c_window_open
@@ -97,18 +124,20 @@ data Action
     | -- | forget the learnt calibration and track afresh
       ClearCalibrationAction
     | QuitAction
+    | -- | the banner's button, or its item in the tray's menu
+      OfferAction
     | -- | the Save button: read the settings with 'savedSettings'
       SaveAction
     | -- | a key pressed to add to a binding list, if it has a name
       KeyChosen Hotkey (Maybe Binding)
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | What the user asked for since the last call.
 takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
     keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9)], testBit bits b] ++ keys)
+    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10)], testBit bits b] ++ keys)
   where
     chosen k = do
         code <- fromIntegral <$> c_chosen_key (list k)
