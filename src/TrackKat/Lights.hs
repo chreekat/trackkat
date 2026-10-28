@@ -111,10 +111,12 @@ data Region = Region
     -- ^ when something was last seen in it
     }
 
+-- | Its lists are evaluated whole, so as not to hold on to earlier frames
+-- through frames that don't look at them.
 data Lights = Lights
-    { lCandidates :: [Candidate]
-    , lRegions :: [Region]
-    , lClip :: Maybe (Double, [((Double, Double), Double)])
+    { lCandidates :: ![Candidate]
+    , lRegions :: ![Region]
+    , lClip :: !(Maybe (Double, [((Double, Double), Double)]))
     -- ^ when and where the reflectors were last seen
     }
 
@@ -130,10 +132,11 @@ data News = Learnt (Double, Double) | Forgotten (Double, Double)
 -- none if the clip wasn't seen.
 learnLights :: Double -> [((Double, Double), Double)] -> [Blob] -> Lights -> (Lights, [News])
 learnLights now reflectors blobs ls =
-    ( Lights (filter (\c -> not (any (covers (cAt c)) (learnt ++ kept))) waiting) (learnt ++ kept) clip
+    ( Lights (whole (filter (\c -> not (any (covers (cAt c)) (learnt ++ kept))) waiting)) (whole (learnt ++ kept)) clip
     , map (Learnt . rAt) learnt ++ map (Forgotten . rAt) gone
     )
   where
+    whole xs = foldr seq () xs `seq` xs
     clip = if null reflectors then lClip ls else Just (now, reflectors)
     area = case clip of
         Just (t, discs) | now - t <= clipMemorySeconds -> discs
