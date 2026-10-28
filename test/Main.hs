@@ -850,6 +850,7 @@ main = do
             [] -> Nothing
         ignored rows = [p | (_, evs) <- rows, LightIgnored p <- evs]
         forgotten rows = [(t, p) | ((t, _, _, _), evs) <- rows, LightForgotten p <- evs]
+        moved rows = [(t, p) | ((t, _, _, _), evs) <- rows, LightMoved p <- evs]
         nearFire p = distance p fireAt < 10
         coldFrames = withFire fireAt [(t, fidgeting t, allLit, True) | t <- at120 8]
         coldWith masking = trackFramesEventsWith masking clipBent coldFrames
@@ -884,6 +885,7 @@ main = do
         length passIgnored == 1 && all (\p -> distance p passFire < 10) passIgnored
     check ("the head passing in front of the fire " ++ show (summed (after 4 passed), maximum (0 : map seenMissing (seens (after 4 passed))))) $
         lostCount (after 4 passed) == 0 && all ((== 0) . seenMissing) (seens (after 4 passed)) && fst (worstError (after 4 passed)) < 1.5
+    check ("the fire not taken to have moved with the head " ++ show (moved passRows, forgotten passRows)) $ null (moved passRows) && null (forgotten passRows)
 
     -- The fire goes out: it is forgotten after a while.
     let at30 :: Double -> [Double]
@@ -908,6 +910,62 @@ main = do
         stilled = map fst stillRows
     check ("a still head isn't masked " ++ show (summed stilled, ignored stillRows)) $
         lostCount stilled <= 93 && lostCount (after 3.5 stilled) == 0 && map nearFire (ignored stillRows) == [True]
+
+    -- The clip's own reflectors aren't learnt as lights, however long the
+    -- head is held still with some of them out of sight or with the clip
+    -- tracked wrongly: looking down at a phone with only the lower pair or
+    -- one reflector in view, lost and then showing one alone, held still
+    -- while tracked, and held still on the mirror image. Each centroid
+    -- wanders by up to half a pixel. Afterwards, glancing about with all
+    -- three in view, the clip is found and followed.
+    let lookingDown = raised (headSeen bentWorn 5 (-25) 0)
+        glancingAt t = raised (headSeen bentWorn (glance 0 t) 0 0)
+        -- (what is in view, how long it is held, the head and reflectors
+        -- lit meanwhile, whether the clip was tracked before)
+        holds =
+            [ ("lost, then the lower pair in view", 60, \t -> (lookingDown, if t < 5 then (0, 0, 0) else (1, 1, 0)), True)
+            , ("the top reflector in view", 60, \_ -> (lookingDown, (0, 0, 1)), True)
+            , ("lost, then one reflector alone", 60, \t -> (lookingDown, if t < 5 then (0, 0, 0) else (1, 0, 0)), True)
+            , ("all three tracked", 60, \_ -> (fidgeting 0, allLit), True)
+            ]
+        heldScene held holding trackedBefore =
+            [ (t, pose, l)
+            | t <- at30 (held + 6)
+            , let (pose, l)
+                    | trackedBefore && t < 2 = (fidgeting t, allLit)
+                    | t < held + 2 = holding t
+                    | otherwise = (glancingAt (t - held - 2), allLit)
+            ]
+    forM_ holds $ \(name, held, holding, trackedBefore) -> do
+        let (_, heldRows) = trackNoisy clipBent 1 (heldScene held holding trackedBefore)
+            back = after (held + 3) (map fst heldRows)
+        check ("held still for " ++ show (round held :: Int) ++ " s with " ++ name ++ ", no light learnt " ++ show (ignored heldRows, forgotten heldRows)) $
+            null (ignored heldRows)
+        check ("and afterwards followed " ++ show (summed back)) $ lostCount back == 0 && fst (worstError back) < 1.5
+    let (_, mirrorRows) = trackNoisy clipBent 1 [(t, headSeen 60 0 0 0, allLit) | t <- at30 60]
+    check ("held still on the mirror image " ++ show (length (filter isMirrored (map fst mirrorRows))) ++ ", no light learnt " ++ show (ignored mirrorRows)) $
+        null (ignored mirrorRows)
+
+    -- A lamp the size of a reflector is learnt as quickly as a fire while
+    -- the clip is tracked elsewhere with all three reflectors in view.
+    let lamp = ((156, 297), 10)
+        (_, lampRows) = trackFramesEvents clipBent [(t, fidgeting t, renderDiscs (lamp : reflectorDiscs clipBent allLit (fidgeting t))) | t <- at30 8]
+    check ("a lamp the size of a reflector learnt beside the tracked clip " ++ show [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p <- evs]) $
+        case [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p <- evs] of
+            [(t, p)] -> t < 3.5 && nearFire p
+            _ -> False
+
+    -- From a cold start, nothing tells a reflector from a light: the lower
+    -- pair held still in view is learnt. Then the top reflector shows, the
+    -- clip is found in what was learnt, and as the head turns, the lights
+    -- are seen to move with it and are forgotten at once.
+    let coldPair = [(t, pose, l) | t <- at30 40, let (pose, l) = if t < 30 then (fidgeting 0, (1, 1, 0)) else if t < 32 then (fidgeting 0, allLit) else (glancingAt (t - 32), allLit)]
+        (_, coldPairRows) = trackNoisy clipBent 1 coldPair
+        coldPairTracked = map fst coldPairRows
+    check ("the lower pair learnt from a cold start " ++ show (ignored coldPairRows) ++ ", forgotten as it moves " ++ show (moved coldPairRows)) $
+        length (ignored coldPairRows) == 2 && length (moved coldPairRows) == 2 && all (\(t, _) -> t > 32 && t < 33) (moved coldPairRows)
+    check ("the clip found in them and followed " ++ show (summed (after 30.5 coldPairTracked))) $
+        lostCount (after 30.5 coldPairTracked) == 0 && fst (worstError (after 30.5 coldPairTracked)) < 1.5
 
     -- Tracking for hours holds on to no more than tracking for a minute:
     -- the memory in use stays flat from 2000 frames to 20000, with the

@@ -191,6 +191,7 @@ describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
 describeEvent _ Corrected = "# corrected a mirror-image pose"
 describeEvent _ (LightIgnored p) = "# " ++ describeLightIgnored p
 describeEvent _ (LightForgotten p) = "# " ++ describeLightForgotten p
+describeEvent _ (LightMoved p) = "# " ++ describeLightMoved p
 
 showOutcome :: Outcome -> String
 showOutcome (Lost n masked) =
