@@ -193,7 +193,8 @@ and finds it anyway. A clip that sits still for a few seconds while
 trackkat can't find it before it has seen it at all can be learnt as a
 light: it is found anyway, and the light is forgotten as you move. If ignoring lights causes
 trouble, clear **Ignore still lights** in the window, or set
-`ignore lights = off`; tirprobe takes `--no-mask`.
+`ignore lights = off`, which tirprobe follows too; `tirprobe --no-mask` turns
+it off for tirprobe alone.
 
 ## Anti-cheat
 

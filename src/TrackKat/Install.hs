@@ -6,6 +6,7 @@
 module TrackKat.Install (
     Paths (..),
     findPaths,
+    configFile,
     versionExe,
     installedVersions,
     moveSettings,
@@ -81,6 +82,11 @@ findPaths = do
             , settingsDir = roaming </> "trackkat"
             , shortcut = programs </> "trackkat.lnk"
             }
+
+-- | trackkat.conf, where trackkat reads its settings from, whether it is
+-- installed or not.
+configFile :: Paths -> FilePath
+configFile p = settingsDir p </> "trackkat.conf"
 
 knownFolder :: CInt -> IO FilePath
 knownFolder which = allocaArray 1024 $ \buf -> do

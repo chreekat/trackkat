@@ -8,6 +8,7 @@ module TrackKat.Config (
     Startup (..),
     defaultConfig,
     parseConfig,
+    readSettings,
     renderConfig,
     describeChanges,
     retiredSettings,
@@ -32,11 +33,13 @@ module TrackKat.Config (
     bindingFromCodes,
 ) where
 
+import Control.Exception (IOException, displayException, try)
 import Data.Bits ((.&.), (.|.))
 import Data.Char (digitToInt, isDigit, isSpace, toLower)
 import Data.Foldable (traverse_)
 import Data.List (dropWhileEnd, findIndices, intercalate, nub)
 import Data.Maybe (fromMaybe)
+import System.IO (readFile')
 
 import TrackKat.Lights (Masking (..))
 import TrackKat.Number
@@ -206,6 +209,14 @@ setting (c, k@(Knobs on s r)) name value =
             "startup" -> (\st -> (c{startup = st}, k)) <$> parseStartup value
             "ignore lights" -> (\l -> (c{lightMasking = l}, k)) <$> parseMasking value
             _ -> Left ("unknown setting " ++ show name)
+
+-- | Read and parse a settings file, whole so editors can replace it, giving
+-- its text too.
+readSettings :: FilePath -> IO (Either String (String, Config))
+readSettings path =
+    try (readFile' path) >>= \r -> pure $ case r of
+        Left e -> Left (displayException (e :: IOException))
+        Right text -> (\c -> (text, c)) <$> parseConfig text
 
 renderConfig :: Config -> String
 renderConfig c =
