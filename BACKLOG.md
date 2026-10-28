@@ -2,12 +2,6 @@
 
 Roughly in order.
 
-- Bright IR sources behind the user (a lit fireplace makes a big blob that
-  stops NaturalPoint's software entirely). Beyond rejecting blobs that don't
-  match the predicted reflectors, learn sources that stay put while the head
-  moves and mask them, and report them so the user can see what the camera
-  sees. Test when the fire is lit.
-
 ## Low priority
 
 - Tune the RTS only if the status line's latency and GC figures show a need.

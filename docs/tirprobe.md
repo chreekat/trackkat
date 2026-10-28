@@ -32,6 +32,8 @@ carries on through these, and the line ends with a note when it happens:
   this the clip counts as lost.
 - `merged`: two reflectors made one blob, split by its shape. Less accurate.
 - `+1 stray`: a blob that isn't a reflector was ignored.
+- `+2 masked`: blobs where a bright light stays put, such as a lit fire
+  behind you, were ignored; see [still lights](details.md#still-lights).
 
 When the clip is lost the line says how many blobs there were, such as
 `lost: 2 blobs, need 3`.
@@ -48,7 +50,9 @@ When the clip is lost the line says how many blobs there were, such as
 - `--blobs`: show the blobs instead of the pose: each one's centre in
   pixels, how many pixels it lit, and how long it is for its width, like
   `( 303.6,   95.4)  543px 1.6:1`. A single reflector is round (about 1:1);
-  two run together are longer.
+  two run together are longer. Blobs ignored as part of a still light end
+  with `masked`.
+- `--no-mask`: don't learn and ignore bright lights that stay put.
 - `--threshold N` (30–253, default 140), `--ir 5|6|7` (illuminator
   brightness), `--no-status-led`.
 - `--raw`: hex-dump every USB transfer; use this when reporting problems:
