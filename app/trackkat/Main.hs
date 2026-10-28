@@ -830,6 +830,7 @@ describeEvent centre (Refined PivotRefined c) = describePivot centre c
 describeEvent _ Corrected = "Corrected a mirror-image pose."
 describeEvent _ (LightIgnored p) = describeLightIgnored p
 describeEvent _ (LightForgotten p) = describeLightForgotten p
+describeEvent _ (LightMoved p) = describeLightMoved p
 
 -- | A calibration to save.
 learnt :: Event -> [Calibration]
@@ -847,6 +848,7 @@ calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
 calibrationNews _ _ Corrected = Nothing
 calibrationNews _ _ (LightIgnored _) = Nothing
 calibrationNews _ _ (LightForgotten _) = Nothing
+calibrationNews _ _ (LightMoved _) = Nothing
 calibrationNews centre _ e = Just (describeEvent centre e)
 
 -- | The calibration box's account of a calibration.

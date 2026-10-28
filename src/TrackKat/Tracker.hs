@@ -19,6 +19,7 @@ module TrackKat.Tracker (
     describeMasked,
     describeLightIgnored,
     describeLightForgotten,
+    describeLightMoved,
     findBlobs,
     step,
 ) where
@@ -60,6 +61,9 @@ data Event
     | -- | The light ignored at this place hasn't been seen for a while,
       -- and isn't ignored any more.
       LightForgotten (Double, Double)
+    | -- | The light ignored at this place moved off with the clip: it was
+      -- one of the reflectors, and isn't ignored any more.
+      LightMoved (Double, Double)
     deriving (Show)
 
 -- | What a frame showed.
@@ -112,11 +116,12 @@ describeSeen (Seen missing merged strays masked) = case notes of
 describeMasked :: Int -> String
 describeMasked n = "+" ++ show n ++ " masked"
 
--- | Lines for the log on a still light being ignored, and forgotten, at a
--- place in the image.
-describeLightIgnored, describeLightForgotten :: (Double, Double) -> String
+-- | Lines for the log on a still light being ignored, forgotten, and
+-- found to have moved, at a place in the image.
+describeLightIgnored, describeLightForgotten, describeLightMoved :: (Double, Double) -> String
 describeLightIgnored p = "Ignoring a bright light at " ++ describePlace p ++ "."
 describeLightForgotten p = "No longer ignoring the light at " ++ describePlace p ++ ": it has been gone a while."
+describeLightMoved p = "No longer ignoring the light at " ++ describePlace p ++ ": it moved."
 
 describePlace :: (Double, Double) -> String
 describePlace (u, v) = "(" ++ show (round u :: Int) ++ ", " ++ show (round v :: Int) ++ ")"
@@ -291,7 +296,7 @@ step :: Double -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
 step now stripes t =
     case sighting of
         Nothing ->
-            let (learntLights, learntNews) = learnt []
+            let (learntLights, learntNews) = learnt unseen
                 -- Lights just learnt that the clip would be found in are
                 -- the clip, held still: they are forgotten unannounced.
                 newly = [p | LightIgnored p <- learntNews]
@@ -325,7 +330,7 @@ step now stripes t =
                 -- lights that look like the clip. If it was, and the light
                 -- is learnt, it is no longer followed.
                 confirmed = now - since >= confirmSeconds
-                (lights, news) = learnt (if confirmed then reflectorDiscs seenPose sights else [])
+                (lights, news) = learnt (View (toList sights) (if confirmed then reflectorDiscs seenPose sights else []))
                 wasLight = not confirmed && holding [p | LightIgnored p <- news] (toList (project k seenPose <$> modelPoints m)) lights
                 -- See Note [Which pose is the head's] in TrackKat.Branch.
                 others = if allSeen then Just (alternatives k m seenPose) else Nothing
@@ -392,11 +397,11 @@ step now stripes t =
         NoMasking -> noMask
         MaskLights -> activeMask (maybe [] (\r -> toList (project k (recentPose r) <$> modelPoints m)) following) (trLights t)
     (masked, visible) = partition (inMask mask) blobs
-    -- Learning still lights, given discs around where the reflectors are:
-    -- the lights learnt, and the events saying what changed.
-    learnt discs = case trMasking t of
+    -- Learning still lights, given what the frame showed of the clip: the
+    -- lights learnt, and the events saying what changed.
+    learnt view = case trMasking t of
         NoMasking -> (trLights t, [])
-        MaskLights -> map toEvent <$> learnLights now discs blobs (trLights t)
+        MaskLights -> map toEvent <$> learnLights now view blobs (trLights t)
     -- Each blob's role, given where the reflectors were seen: a blob near
     -- one, for its size, is one, or a piece of one.
     roles seen = foldr (\(_, r) rest -> r `seq` rest) assigned assigned
@@ -410,6 +415,7 @@ step now stripes t =
         distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
     toEvent (Learnt p) = LightIgnored p
     toEvent (Forgotten p) = LightForgotten p
+    toEvent (Moved p) = LightMoved p
     -- Where each reflector is, or would be, in the image at a pose, out to
     -- a margin that takes in the pieces of the biggest seen, such as a
     -- reflector broken in two.

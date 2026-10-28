@@ -168,15 +168,21 @@ makes a fourth. So trackkat learns lights that stay within a few pixels for
 three seconds, with any flickering bits around them, and from then on
 ignores blobs there, except where it expects the clip (your head can pass
 in front of the light). It learns them while it has lost the clip too, but
-never from where the clip is or just was. The log says so:
+never from where the clip is or just was. A light no bigger than a
+reflector could be one of the clip's, held still while trackkat can't see
+the others, as when you look down at a phone: unless trackkat is following
+the clip elsewhere, such a light must stay put for five minutes to be
+learnt. The log says so:
 
 ```
 Ignoring a bright light at (156, 297).
 No longer ignoring the light at (156, 297): it has been gone a while.
+No longer ignoring the light at (300, 95): it moved.
 ```
 
 The second line comes once the light has been out of sight for 45
-seconds. The status line notes blobs ignored, such as `+2 masked`, the
+seconds, the third when a light turns out to have been one of the clip's
+reflectors, moving off with it. The status line notes blobs ignored, such as `+2 masked`, the
 corner of the window's head view shows them grey among what the camera
 sees, and `tirprobe --blobs` marks them `masked`.
 
@@ -184,8 +190,8 @@ So with a fire lit, trackkat finds the clip about three seconds after it
 starts, and at once after that. If you hold perfectly still while it
 learns the fire, it learns your clip with it, sees that it was the clip,
 and finds it anyway. A clip that sits still for a few seconds while
-trackkat can't find it for some other reason can be learnt as a light:
-move your head a little and it is found. If ignoring lights causes
+trackkat can't find it before it has seen it at all can be learnt as a
+light: it is found anyway, and the light is forgotten as you move. If ignoring lights causes
 trouble, clear **Ignore still lights** in the window, or set
 `ignore lights = off`; tirprobe takes `--no-mask`.
 
