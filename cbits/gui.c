@@ -44,6 +44,15 @@ static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"tri
                                                     L"npclient", L"updates", L"startup", L"ignore lights"};
 #define LISTS 3 /* binding lists: recenter, pause, trim */
 
+/* A blob as the camera saw it, and what it was taken for. */
+#define BLOBS_MAX 16
+enum { SPOT_REFLECTOR, SPOT_STRAY, SPOT_MASKED };
+typedef struct Spot {
+    float x, y; /* in the camera's image, pixels */
+    float pixels;
+    int role;
+} Spot;
+
 typedef struct State {
     int camera;
     wchar_t camera_text[TEXT_MAX]; /* why the camera is down */
@@ -60,13 +69,15 @@ typedef struct State {
     wchar_t offer[TEXT_MAX];       /* what the banner says, or nothing for no banner */
     wchar_t offer_button[64];      /* its button */
     wchar_t offer_tray[128];       /* the tray menu's item for it, or nothing for none */
+    int spots;                     /* blobs in the last frame, up to BLOBS_MAX */
+    Spot spot[BLOBS_MAX];
 } State;
 
 /* ---- Shared with Haskell, under the lock --------------------------------- */
 
 static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, L"", L"",
-                       L"Changes are saved as you make them.", L"", L"", L""};
+                       L"Changes are saved as you make them.", L"", L"", L"", 0, {{0, 0, 0, 0}}};
 static wchar_t version_text[64] = L"development build"; /* set before the window is made */
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
@@ -129,6 +140,21 @@ void hts_gui_frame(int blobs, float yaw, float pitch, float roll, float x, float
     float h[6] = {yaw, pitch, roll, x, y, z}, v[6] = {vyaw, vpitch, vroll, vx, vy, vz};
     memcpy(shared.head, h, sizeof h);
     memcpy(shared.view, v, sizeof v);
+    ReleaseSRWLockExclusive(&lock);
+}
+
+/* The last frame's blobs: n of them, each as x, y, pixels and role
+ * (SPOT_REFLECTOR and the rest). Skipped, like hts_gui_frame, while the GUI
+ * is copying. */
+void hts_gui_blobs(int n, const float *blobs)
+{
+    if (!TryAcquireSRWLockExclusive(&lock))
+        return;
+    shared.spots = n < BLOBS_MAX ? n : BLOBS_MAX;
+    for (int i = 0; i < shared.spots; i++) {
+        const float *b = blobs + 4 * i;
+        shared.spot[i] = (Spot){b[0], b[1], b[2], (int)b[3]};
+    }
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -504,8 +530,41 @@ static void text_at(HDC dc, HFONT font, COLORREF c, int x, int y, int w, int h, 
     DrawTextW(dc, s, -1, &rc, align | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
 }
 
+/* The camera's image, as frameWidth and frameHeight in src/TrackKat/Frame.hs. */
+#define CAMERA_W 640
+#define CAMERA_H 480
+
+/* What the camera sees, small, with its top left corner at left, top: each
+ * blob a dot at its place, sized by its area but half as big again to be
+ * seen, coloured by what it was taken for. */
+static void draw_camera(HDC dc, int left, int top, int width)
+{
+    int height = width * CAMERA_H / CAMERA_W;
+    fill_rect(dc, left, top, left + width, top + height, C_BACK);
+    HPEN pen = CreatePen(PS_SOLID, 1, C_GRID);
+    HGDIOBJ old_pen = SelectObject(dc, pen), old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, left, top, left + width, top + height);
+    SelectObject(dc, old_pen);
+    SelectObject(dc, old_brush);
+    DeleteObject(pen);
+    double k = (double)width / CAMERA_W;
+    /* Masked lights first, so the clip shows over them. */
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < seen.spots; i++) {
+            const Spot *b = &seen.spot[i];
+            if ((b->role == SPOT_MASKED) != (pass == 0))
+                continue;
+            COLORREF c = b->role == SPOT_REFLECTOR ? C_ACCENT : b->role == SPOT_STRAY ? C_AMBER : C_GREY;
+            int r = (int)lround(1.5 * sqrt(b->pixels / PI) * k);
+            if (r < S(1))
+                r = S(1);
+            disc(dc, c, c, 1, left + (int)lround(b->x * k), top + (int)lround(b->y * k), r);
+        }
+}
+
 /* The head as games see it: a face that turns, tilts and moves with the
- * view, a line out of the nose showing where it looks. */
+ * view, a line out of the nose showing where it looks; and in its corner,
+ * what the camera sees. */
 static void draw_head(HDC dc, int left, int top, int size)
 {
     const float *v = seen.view;
@@ -519,6 +578,9 @@ static void draw_head(HDC dc, int left, int top, int size)
     LineTo(dc, left + size, top + size / 2);
     SelectObject(dc, old);
     DeleteObject(grid);
+    /* Under the head, which can pass over it. */
+    if (seen.camera == CAMERA_TRACKING)
+        draw_camera(dc, left + S(6), top + S(6), S(96));
 
     /* 300 mm from the centre to the edge; nearer is bigger. */
     double k = size / 2.0 / 300.0;
@@ -1530,7 +1592,8 @@ static void live_tips(void)
     int rows = S(26) + 6 * S(20), status = rows + S(6);
     tip_area(live_hwnd, 1, S(8), S(8), S(8) + size, S(8) + size,
              L"Your head as games see it, turned and moved as the game's view will be. The blue line shows where "
-             L"it looks.");
+             L"it looks. In the corner, what the camera sees: the clip's reflectors blue, other bright things "
+             L"(ignored) amber, and still lights ignored grey.");
     tip_area(live_hwnd, 2, x0, 0, x0 + S(130), rows,
              L"Your head as the camera measures it, from the centre you set by recentering: degrees turned, mm "
              L"moved.");
