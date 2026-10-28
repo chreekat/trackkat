@@ -23,6 +23,7 @@ library
     TrackKat.Config
     TrackKat.Frame
     TrackKat.GamePose
+    TrackKat.Lights
     TrackKat.Linear
     TrackKat.Match
     TrackKat.Number
