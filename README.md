@@ -59,7 +59,7 @@ tooltip saying what it does.
 7. Latency and other figures, for bug reports.
 8. **Recenter**: where you face now becomes straight ahead; clears trim.
 9. **Pause**: games see your head held still until you press it again.
-10. **Trim**: where you look becomes forward, say at an MFD, until you recenter.
+10. **Trim**: the view now, where it looks and where it has moved to, becomes forward, until you recenter.
 11. **Calibrate level**: after moving the camera, turn your head left and right for five seconds.
 12. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
 13. What trackkat has learnt about your camera and neck; **Clear calibration** starts afresh.

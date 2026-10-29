@@ -85,24 +85,27 @@ centre.
 
 ## Trim
 
-Trim makes where you look in the game the new forward. In DCS, to work the
-left MFD and the keyboard unit while entering waypoints, look at them and
-press trim: the view now rests there, and you can still glance around from
-it. Presses add up, so you can trim again from a trimmed view, and
-recentering goes back to straight ahead. Only turning left and right and up
-and down are trimmed, not tilting or leaning, and leaning follows the
-trimmed view. trackkat logs the new forward, in degrees as games see them
-(pitch positive down), and when recentering clears it:
+Trim makes the view in the game now the new forward: where it looks, how
+it's tilted, and where it has moved to. In DCS, to work the left MFD and
+the keyboard unit while entering waypoints, look at them and press trim:
+the view now rests there, and you can still glance around from it. Crane
+toward the UH-1's center console and trim, and the view stays craned
+while you sit back. Presses add up, so you can trim again from a trimmed
+view, and recentering goes back to straight ahead. Leaning follows the
+trimmed view, and the trimmed movement stays where it is whichever way you
+then look. trackkat logs the new forward, in degrees and mm as games see
+them (pitch positive down), and when recentering clears it:
 
 ```
-Trimmed: forward is now yaw -42 pitch +18.
+Trimmed: forward is now yaw -42 pitch +18 roll +0, x +0 y -35 z -60 mm.
 Trim cleared.
 ```
 
 The view jumps when you trim: where you look becomes forward, and your
 head, still turned toward it, turns the view on from there; look back
-toward the screen to bring the trimmed view ahead. While paused, trimming
-takes the held view as forward, and games stay held until you resume.
+toward the screen, and sit back, to bring the trimmed view ahead. While
+paused, trimming takes the held view as forward, and games stay held until
+you resume.
 
 ## Calibration
 

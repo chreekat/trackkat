@@ -64,6 +64,7 @@ typedef struct State {
     int games;
     int trimmed;
     float trim[2]; /* yaw and pitch added to the view, in degrees */
+    int trim_moves; /* whether the trim moves the view, or tilts it, too */
     wchar_t stats[TEXT_MAX];
     wchar_t calibration[TEXT_MAX];
     wchar_t settings_message[TEXT_MAX];
@@ -77,7 +78,7 @@ typedef struct State {
 /* ---- Shared with Haskell, under the lock --------------------------------- */
 
 static SRWLOCK lock = SRWLOCK_INIT;
-static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, L"", L"",
+static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, 0, L"", L"",
                        L"Changes are saved as you make them.", L"", L"", L"", 0, {{0, 0, 0, 0}}};
 static wchar_t version_text[64] = L"development build"; /* set before the window is made */
 static int updatable; /* whether Check for updates works; set before the window is made */
@@ -175,12 +176,13 @@ void hts_gui_paused(int paused)
     ReleaseSRWLockExclusive(&lock);
 }
 
-void hts_gui_trim(int trimmed, float yaw, float pitch)
+void hts_gui_trim(int trimmed, float yaw, float pitch, int moves)
 {
     AcquireSRWLockExclusive(&lock);
     shared.trimmed = trimmed;
     shared.trim[0] = yaw;
     shared.trim[1] = pitch;
+    shared.trim_moves = moves;
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -738,7 +740,7 @@ static void paint_live(HDC dc, int width, int height)
     status_line(dc, x0, y, seen.games > 0 ? C_ACCENT : C_GREY, L"Games", seen.games > 0 ? buf : L"None");
     /* The trim shares the games' row, which is short. */
     if (seen.trimmed) {
-        _snwprintf(buf, 64, L"yaw %+.0f° pitch %+.0f°", seen.trim[0], seen.trim[1]);
+        _snwprintf(buf, 64, L"yaw %+.0f° pitch %+.0f°%ls", seen.trim[0], seen.trim[1], seen.trim_moves ? L", moved" : L"");
         buf[63] = 0;
     }
     status_line(dc, x0 + S(180), y, seen.trimmed ? C_ACCENT : C_GREY, L"Trim", seen.trimmed ? buf : L"None");
@@ -1623,8 +1625,8 @@ static void live_tips(void)
              L"Games reading your head through trackkat's NPClient. The camera's second green light shows this "
              L"too.");
     tip_area(live_hwnd, 8, x0 + S(180), status + S(36), right, status + S(54),
-             L"Where Trim made the new forward, in degrees as games see it (pitch positive down). Recenter clears "
-             L"it.");
+             L"Where Trim made the new forward, in degrees as games see it (pitch positive down), and \"moved\" "
+             L"if it also moves or tilts the view. The log has the whole of it. Recenter clears it.");
     tip_area(live_hwnd, 9, x0, status + S(54), right, status + S(72),
              L"Live: games follow your head. Paused: games see your head held still until you press Pause again.");
     tip_area(live_hwnd, 10, x0, status + S(72), right, rc.bottom,
@@ -1668,8 +1670,8 @@ static void build_window(void)
                        L"Freeze the view: games see your head held still until you press it again. Handy for "
                        L"stretching, or looking away from the screen.");
     trim_button = tip(control(L"BUTTON", L"Trim", WS_TABSTOP | BS_PUSHBUTTON, 262, 262, 116, 28, ID_TRIM),
-                      L"Make where you're looking the new forward, handy for staring at an MFD; you can still glance "
-                      L"around from there. Recenter clears it.");
+                      L"Make the view now the new forward, where it looks and where it has moved to, handy for "
+                      L"craning toward a console; you can still glance around from there. Recenter clears it.");
     tip(control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 388, 262, 116, 28, ID_CALIBRATE),
         L"Learn which way is up now: click, then turn your head left and right for five seconds. trackkat learns "
         L"it as you play anyway, so this is for after moving the camera.");

@@ -480,22 +480,31 @@ main = do
         describeChanges defaultConfig withTrackIR == "Settings reloaded: npclient = trackir"
     check "npclient editable" $ editSettings [("npclient", "trackir")] "npclient = trackkat\n" == Right "npclient = trackir\n"
 
-    -- Trimming: where the view looks becomes forward, until recentering.
+    -- Trimming: where the view looks, and where it is, becomes forward,
+    -- until recentering.
     let trimmed t y p = fst (shape plain t 0 HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
         axes hp = [yaw hp, pitch hp, roll hp, tx hp, ty hp, tz hp]
         lookingAt = trimmed NoTrim (-40) 20
         once = trimTo lookingAt
-    check ("trim takes the view " ++ show once) $ once == Trim (-40) 20
-    check "trim adds to the view" $ axes (trimmed once 5 (-5)) == [-35, 15, 3, 4, 5, 6]
+    check ("trim takes the view " ++ show once) $ once == Trim (HeadPose (-40) 20 3 4 5 6)
+    check "trim adds to the view" $ axes (trimmed once 5 (-5)) == [-35, 15, 6, 8, 10, 12]
     let twice = trimTo (trimmed once (-10) 10)
-    check ("trims add up " ++ show twice) $ twice == Trim (-50) 30
+    check ("trims add up " ++ show twice) $ twice == Trim (HeadPose (-50) 30 6 8 10 12)
     check "untrimmed after recentering" $ axes (trimmed NoTrim 5 (-5)) == [5, -5, 3, 4, 5, 6]
-    check "trimmed yaw wraps" $ yaw (trimmed (Trim 170 0) 30 0) == -160 && yaw (trimmed (Trim (-170) 0) (-30) 0) == 160
-    check "trimmed pitch stops straight up or down" $ pitch (trimmed (Trim 0 70) 0 40) == 90 && pitch (trimmed (Trim 0 (-70)) 0 (-40)) == -90
-    check "trim of a view turned past behind" $ trimTo HeadPose{yaw = 200, pitch = 100, roll = 0, tx = 0, ty = 0, tz = 0} == Trim (-160) 90
-    let (trimmedLean, _) = shape viewing (Trim 150 0) 0 HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+    let turnedBy y p = Trim HeadPose{yaw = y, pitch = p, roll = 0, tx = 0, ty = 0, tz = 0}
+    check "trimmed yaw wraps" $ yaw (trimmed (turnedBy 170 0) 30 0) == -160 && yaw (trimmed (turnedBy (-170) 0) (-30) 0) == 160
+    check "trimmed pitch stops straight up or down" $
+        pitch (trimmed (turnedBy 0 70) 0 40) == 90 && pitch (trimmed (turnedBy 0 (-70)) 0 (-40)) == -90
+    check "trimmed roll wraps" $ roll (trimmed (Trim (HeadPose 0 0 179 0 0 0)) 0 0) == -178
+    check "trim of a view turned past behind" $
+        trimTo HeadPose{yaw = 200, pitch = 100, roll = 190, tx = 0, ty = 0, tz = 0} == Trim (HeadPose (-160) 90 (-170) 0 0 0)
+    let (trimmedLean, _) = shape viewing (turnedBy 150 0) 0 HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     check ("lean follows the trimmed yaw " ++ show trimmedLean) $
         abs (yaw trimmedLean - 160) < 1e-9 && abs (tx trimmedLean - 10 * cos (deg 160)) < 1e-9 && abs (tz trimmedLean + 10 * sin (deg 160)) < 1e-9
+    let craned = Trim HeadPose{yaw = 0, pitch = 30, roll = 0, tx = 0, ty = -40, tz = -80}
+        (lookingAway, _) = shape viewing craned 0 HeadPose{yaw = 90 / 6, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0} newShaper
+    check ("trimmed movement stays put as the view turns " ++ show lookingAway) $
+        abs (tx lookingAway) < 1e-9 && abs (ty lookingAway + 40) < 1e-9 && abs (tz lookingAway + 80) < 1e-9
     check "trim unbound by default" $ trimBindings defaultConfig == []
     check "trim bindings" $
         fmap trimBindings (parseConfig "trim = Ctrl+F12, Stick button 3\n") == Right [Key [Ctrl] "F12", JoystickButton (Joystick "Stick" 1) 3]
