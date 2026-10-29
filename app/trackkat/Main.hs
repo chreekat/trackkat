@@ -329,36 +329,53 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
                 _ <- tryTakeMVar (sCheckAsked s)
                 looked <- getMonotonicTime
                 go self (Just looked) logged''
-    look self why logged = do
+    look self why logged = bracket_ (showUpdateCheck CheckRunning) (showUpdateCheck CheckIdle) $ do
         case why of
             Asked -> say "Looking for a newer trackkat."
             Due -> pure ()
         found <- checkForUpdate paths self
         refreshOffer paths place ref
         waiting <- readIORef ref
+        -- Asked, the line beside the settings says what was found, briefly;
+        -- the log has the whole story.
+        let answer short = case why of
+                Asked -> showSettingsMessage short
+                Due -> pure ()
         case (found, waiting) of
             -- Offline, or behind a proxy that won't let it through: the log
             -- says so when asked, and otherwise once until a look works, so
             -- a lasting failure shows; the console every time.
-            (Left err, _) -> do
-                let line = "Can't look for a newer trackkat: " ++ err
+            (Left failure, _) -> do
+                let (line, short) = case failure of
+                        Unavailable err ->
+                            ( "No update information on GitHub just now (a new build may be being published); try again in a few minutes. (" ++ err ++ ")"
+                            , "Nothing on GitHub now; try later."
+                            )
+                        LookFailed err -> ("Can't look for a newer trackkat: " ++ err, "Can't check now: see the log.")
                 case (why, logged) of
                     (Due, FailureLogged) -> putStrLn line
                     _ -> say line
+                answer short
                 pure FailureLogged
-            (Right (Just v), _) -> say (ready v) $> NoFailureLogged
+            (Right (Just v), _) -> do
+                say (ready v)
+                answer (readyShort v)
+                pure NoFailureLogged
             -- Fetched by an earlier look, and waiting for a restart.
             (Right Nothing, OfferUpdate v) -> do
                 case why of
                     Asked -> say (ready v)
                     Due -> pure ()
+                answer (readyShort v)
                 pure NoFailureLogged
             (Right Nothing, _) -> do
                 case why of
                     Asked -> say ("trackkat is up to date (" ++ versionFolder self ++ ").")
                     Due -> pure ()
+                answer ("Up to date (" ++ versionFolder self ++ ").")
                 pure NoFailureLogged
     ready v = "trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time."
+    readyShort v = versionFolder v ++ " is ready: see above."
 
 -- | Report the games that start head tracking through NaturalPoint's
 -- NPClient.

@@ -13,6 +13,8 @@ module TrackKat.Gui (
     showVersion,
     UpdateButton (..),
     showUpdateButton,
+    UpdateCheck (..),
+    showUpdateCheck,
     showOffer,
     windowOpen,
     Action (..),
@@ -57,6 +59,7 @@ foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
 foreign import ccall unsafe "hts_gui_quit_running" c_quit_running :: IO CInt
 foreign import ccall unsafe "hts_gui_version" c_version :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_updatable" c_updatable :: CInt -> IO ()
+foreign import ccall unsafe "hts_gui_checking" c_checking :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_offer" c_offer :: CWString -> CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_window_open" c_window_open :: IO CInt
 foreign import ccall unsafe "hts_gui_take_actions" c_take_actions :: IO CInt
@@ -118,6 +121,15 @@ data UpdateButton = UpdateButtonEnabled | UpdateButtonDisabled
 showUpdateButton :: UpdateButton -> IO ()
 showUpdateButton UpdateButtonEnabled = c_updatable 1
 showUpdateButton UpdateButtonDisabled = c_updatable 0
+
+-- | Whether trackkat is looking for a newer version.
+data UpdateCheck = CheckRunning | CheckIdle
+
+-- | Show a look for a newer version running, on the Check for updates
+-- button, which says so and can't be clicked until it is done.
+showUpdateCheck :: UpdateCheck -> IO ()
+showUpdateCheck CheckRunning = c_checking 1
+showUpdateCheck CheckIdle = c_checking 0
 
 -- | Show a banner across the top of the window offering something, with a
 -- button, and perhaps an item in the tray's menu, either of which asks for
@@ -259,7 +271,8 @@ showCalibration s = withCWString s c_calibration
 showSetting :: String -> String -> IO ()
 showSetting name value = withCWString name $ \n -> withCWString value (c_set_setting n)
 
--- | The line beside the Save button.
+-- | The line beside the settings' switches: whether the last change was
+-- saved, or what Check for updates found.
 showSettingsMessage :: String -> IO ()
 showSettingsMessage s = withCWString s c_settings_message
 

@@ -243,39 +243,42 @@ defaultMetadata = "https://github.com/chreekat/trackkat/releases/download/dev/tr
 -- | Look for a release newer than this version and any installed, and if
 -- there is one, download, check and unpack it into the install root.
 -- Returns the version unpacked, if any.
-checkForUpdate :: Paths -> Version -> IO (Either String (Maybe Version))
+checkForUpdate :: Paths -> Version -> IO (Either LookFailure (Maybe Version))
 checkForUpdate p self = do
     metaUrl <- fromMaybe defaultMetadata <$> lookupEnv "TRACKKAT_UPDATE_URL"
     temp <- getTemporaryDirectory
     let metaFile = temp </> "trackkat-windows.json"
-    either' (parseLocation metaUrl) $ \loc ->
+    either' (failed (parseLocation metaUrl)) $ \loc ->
         fetch loc metaFile `andThen` \() ->
-            readText metaFile `andThen` \text ->
-                either' (parseRelease text) $ \r -> do
+            failing (readText metaFile) `andThen` \text ->
+                either' (failed (parseRelease text)) $ \r -> do
                     installed <- installedVersions p
                     let v = releaseVersion r
                     if v <= self || any (>= v) installed
                         then pure (Right Nothing)
-                        else either' (releaseLocation loc (releaseUrl r)) $ \zipLoc -> do
+                        else either' (failed (releaseLocation loc (releaseUrl r))) $ \zipLoc -> do
                             let zipFile = temp </> ("trackkat-" ++ versionFolder v ++ ".zip")
                                 dest = installRoot p </> versionFolder v
                                 partial = dest ++ partialSuffix
                             result <-
                                 fetch zipLoc zipFile `andThen` \() ->
-                                    sha256 zipFile `andThen` \digest ->
-                                        if not (sameDigest digest (releaseSha256 r))
-                                            then pure (Left ("the download's SHA-256 is " ++ digest ++ ", not " ++ releaseSha256 r))
-                                            else
-                                                io (createDirectoryIfMissing True (installRoot p) >> removePathForcibly partial) `andThen` \() ->
-                                                    extractRelease zipFile partial `andThen` \() ->
-                                                        io (renameDirectory partial dest) `andThen` \() -> pure (Right (Just v))
+                                    failing $
+                                        sha256 zipFile `andThen` \digest ->
+                                            if not (sameDigest digest (releaseSha256 r))
+                                                then pure (Left ("the download's SHA-256 is " ++ digest ++ ", not " ++ releaseSha256 r))
+                                                else
+                                                    io (createDirectoryIfMissing True (installRoot p) >> removePathForcibly partial) `andThen` \() ->
+                                                        extractRelease zipFile partial `andThen` \() ->
+                                                            io (renameDirectory partial dest) `andThen` \() -> pure (Right (Just v))
                             _ <- try (removeFile zipFile) :: IO (Either IOException ())
                             pure result
   where
     either' e k = either (pure . Left) k e
     readText f = io (readFile' f)
+    failed = either (Left . LookFailed) Right
+    failing = fmap failed
 
-andThen :: IO (Either String a) -> (a -> IO (Either String b)) -> IO (Either String b)
+andThen :: IO (Either e a) -> (a -> IO (Either e b)) -> IO (Either e b)
 andThen m k = m >>= either (pure . Left) k
 
 -- | Run an action, catching IO errors.
@@ -283,14 +286,14 @@ io :: IO a -> IO (Either String a)
 io m = either (\e -> Left (show (e :: IOException))) Right <$> try m
 
 -- | Copy what a location holds to a file.
-fetch :: Location -> FilePath -> IO (Either String ())
-fetch (LocalFile f) to = io (copyFile f to)
+fetch :: Location -> FilePath -> IO (Either LookFailure ())
+fetch (LocalFile f) to = either (Left . LookFailed) Right <$> io (copyFile f to)
 fetch (Web url) to = withCWString url $ \u -> withCWString to $ \t ->
     c_download u t >>= \case
         0 -> pure (Right ())
         rc
-            | rc < 0 -> pure (Left (url ++ ": HTTP status " ++ show (negate rc)))
-            | otherwise -> pure (Left (url ++ ": Windows error " ++ show rc))
+            | rc < 0 -> pure (Left (httpFailure url (fromIntegral (negate rc))))
+            | otherwise -> pure (Left (LookFailed (url ++ ": Windows error " ++ show rc)))
 
 sha256 :: FilePath -> IO (Either String String)
 sha256 f = withCWString f $ \path -> allocaBytes 65 $ \out ->
