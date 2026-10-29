@@ -8,10 +8,15 @@ module TrackKat.Pose (
     Intrinsics (..),
     defaultIntrinsics,
     Model (..),
+    Tabs (..),
+    pointReflectors,
     trackClip,
     triangle,
     Pose (..),
     project,
+    Reflector (..),
+    reflectorPoint,
+    seenAt,
     identify,
     solvePose,
     alternatives,
@@ -36,6 +41,7 @@ module TrackKat.Pose (
 ) where
 
 import Data.List (sortOn)
+import Data.Maybe (fromMaybe)
 
 import TrackKat.Linear
 
@@ -59,8 +65,27 @@ data Model = Model
     -- ^ lower reflector that appears on the right
     , mTop :: V3
     -- ^ the raised reflector
+    , mTabs :: Tabs
+    -- ^ what the reflectors' tape is on
     }
     deriving (Show)
+
+-- | The curved tabs that the reflectors' tape is on. See Note [Curved
+-- reflectors].
+data Tabs = Tabs
+    { tabRadius :: Double
+    -- ^ mm
+    , tapeArc :: Double
+    -- ^ mm of the tab's arc that the tape covers
+    , postBend :: Double
+    -- ^ degrees the top tab's axis leans toward the camera from the lower
+    -- tabs'
+    }
+    deriving (Show)
+
+-- | Reflectors that are points, each always seen where its centre is.
+pointReflectors :: Tabs
+pointReflectors = Tabs 0 0 0
 
 -- | NaturalPoint's reflective TrackClip on a cap brim, in mm. Dimensions are
 -- linuxtrack's defaults (Cap-X 67, Cap-Y 54, Cap-Z 96, Head-Y 160, Head-Z 50).
@@ -70,11 +95,13 @@ trackClip =
         { mLeft = V3 (-67) 0 0
         , mRight = V3 67 0 0
         , mTop = V3 0 (-54) 96
+        , mTabs = pointReflectors
         }
 
 -- | A headset clip from the three distances between reflectors, in mm: left
 -- to right, left to top, right to top. The top reflector is on a post that
--- leans back (away from the camera) by @lean@ degrees from vertical.
+-- leans back (away from the camera) by @lean@ degrees from vertical. The
+-- reflectors are points (see 'pointReflectors').
 --
 -- Only the triangle's shape affects the angles, and its size only scales
 -- the distance estimate. The lean doesn't need to be accurate: it picks which
@@ -90,6 +117,7 @@ triangle lean lr lt rt
                 { mLeft = V3 (-a) 0 0
                 , mRight = V3 a 0 0
                 , mTop = V3 x (negate (h * cos theta)) (h * sin theta)
+                , mTabs = pointReflectors
                 }
   where
     a = lr / 2
@@ -105,6 +133,117 @@ project :: Intrinsics -> Pose -> V3 -> (Double, Double)
 project k (Pose r t) p =
     let V3 x y z = mulMV r p ^+^ t
      in (cx k + focal k * x / z, cy k + focal k * y / z)
+
+-- Note [Curved reflectors]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~
+-- On NaturalPoint's TrackClip, each reflector is retroreflective tape on
+-- the convex face of a short tab, a piece of a cylinder about 10 mm in
+-- radius whose axis stands square to the clip where the tab is. The tape
+-- covers about 25 mm of the arc, a little less than its front half, and
+-- faces the camera when the clip is worn.
+--
+-- Tape returns light toward where it came from, and the camera's lights
+-- are beside its lens, so the brightest part of a tab is where its surface
+-- faces the camera, and the tape dims away from there: each part's light
+-- in the image goes with how squarely it is seen (its size seen from the
+-- camera) times about as much again (how much light tape returns at a
+-- slant). So with the camera at an angle psi round the tab's axis from
+-- where the tape faces, measured square to the axis, the part of the tape
+-- at angle phi counts as cos^2 (phi - psi), over the part both on the tape
+-- and on the side facing the camera. The light's centre is the weighted
+-- mean of those parts, which has a closed form, and lies along the arc
+-- toward the camera: as the head turns about a tab's axis, its light
+-- slides round the arc, by a few mm over the turning range, while turning
+-- about other axes hardly moves it. Taking each reflector to be at a fixed
+-- point on the clip would read that slide as turning and moving that the
+-- head didn't do.
+--
+-- So where a reflector appears at a pose, which the solver fits and
+-- matching predicts from, is the centre of its light at that pose. The
+-- point the model gives each reflector is the middle of its tape, where
+-- the tab is measured from.
+--
+-- The tabs on the crossbar stand square to the line between them and to
+-- the line of sight of a camera the clip squarely faces. The top tab is on
+-- the end of the post, which is bent up and back, and stands square to it,
+-- so it leans toward the camera by the bend: its axis is the lower tabs'
+-- turned that far about the line between them. A tab's tape faces the way,
+-- square to its axis, nearest the camera when the clip squarely faces it.
+--
+-- Reflectors that are points ('pointReflectors', of radius 0) are always
+-- seen where they are.
+
+-- | One of the clip's reflectors.
+data Reflector = LeftReflector | RightReflector | TopReflector
+    deriving (Eq, Show)
+
+-- | The middle of a reflector's tape, on the model.
+reflectorPoint :: Model -> Reflector -> V3
+reflectorPoint m LeftReflector = mLeft m
+reflectorPoint m RightReflector = mRight m
+reflectorPoint m TopReflector = mTop m
+
+-- | Where a reflector appears in the image at a pose: the centre of its
+-- light. See Note [Curved reflectors].
+seenAt :: Intrinsics -> Model -> Pose -> Reflector -> (Double, Double)
+seenAt k m pose@(Pose r t) which = project k pose (litCentre (mTabs m) (tab m which) toCamera p)
+  where
+    p = reflectorPoint m which
+    toCamera = mulMV (transpose r) ((-1) *^ (mulMV r p ^+^ t))
+
+-- | A reflector's tab, in the model's axes: its axis, and the way its tape
+-- faces, square to the axis.
+tab :: Model -> Reflector -> (V3, V3)
+tab m which = (axis, normalize (V3 0 0 (-1) ^+^ (z *^ axis)))
+  where
+    crossbar = normalize (mRight m ^-^ mLeft m)
+    upright = normalize (cross (V3 0 0 1) crossbar)
+    bend = postBend (mTabs m) * pi / 180
+    axis@(V3 _ _ z) = case which of
+        TopReflector -> (cos bend *^ upright) ^+^ (sin bend *^ cross crossbar upright)
+        _ -> upright
+
+-- | The centre of the light of tape on a tab (its axis, and the way it
+-- faces) whose middle is at the given point, seen from the given direction
+-- (any length); or the point itself if the tab is a point, or is seen end
+-- on, or faces away.
+litCentre :: Tabs -> (V3, V3) -> V3 -> V3 -> V3
+litCentre (Tabs radius arc _) (axis, facing) view p
+    | radius <= 0 || square <= 0 || hi <= lo = p
+    | otherwise =
+        p
+            ^+^ (radius * ((a * c - b * s) / w - 1))
+            *^ facing
+            ^+^ (radius * (a * s + b * c) / w)
+            *^ across
+  where
+    across = cross axis facing
+    -- The camera's direction square to the axis: at angle psi from where
+    -- the tape faces, with cosine c and sine s.
+    toFacing = dot view facing
+    toAcross = dot view across
+    square = sqrt (toFacing * toFacing + toAcross * toAcross)
+    c = toFacing / square
+    s = toAcross / square
+    psi = atan2 toAcross toFacing
+    half = 0.5 * arc / radius
+    ch = cos half
+    sh = sin half
+    -- The ends of the lit part, as angles from the camera's direction,
+    -- with their sines and cosines: the tape's ends, or where the tab
+    -- turns away from the camera.
+    (lo, sinLo, cosLo)
+        | psi - pi / 2 > negate half = (negate (pi / 2), -1, 0)
+        | otherwise = (negate half - psi, negate (sh * c + ch * s), ch * c - sh * s)
+    (hi, sinHi, cosHi)
+        | psi + pi / 2 < half = (pi / 2, 1, 0)
+        | otherwise = (half - psi, sh * c - ch * s, ch * c + sh * s)
+    -- Integrals of cos^2, cos^3 and cos^2 sin over it: the weights, and
+    -- their moments toward the camera and across.
+    w = (hi - lo) / 2 + (sinHi * cosHi - sinLo * cosLo) / 2
+    a = cubed sinHi - cubed sinLo
+    cubed x = x - x ^ (3 :: Int) / 3
+    b = (cosLo ^ (3 :: Int) - cosHi ^ (3 :: Int)) / 3
 
 -- | Match three blobs, given their centroids, to (left, right, top): the
 -- highest in the image is the top reflector, the other two go by x.
@@ -135,25 +274,35 @@ solvePose k m guess obs@(l, r, _) =
         Just g | Just res@(_, err) <- refine g, err < 1 -> Just res
         _ -> refine (frontal k m l r)
   where
-    pts = [mLeft m, mRight m, mTop m]
-    observed = let (a, b, c) = obs in [a, b, c]
-    residuals pose =
-        concat (zipWith (\p (u, v) -> let (pu, pv) = project k pose p in [pu - u, pv - v]) pts observed)
+    residuals = misfit k m obs
     cost = sum . map (^ (2 :: Int)) . residuals
     rms pose = sqrt (cost pose / 3)
     refine p0 = do
-        p <- levenbergMarquardt residuals p0
+        p <- levenbergMarquardt solverSteps residuals p0
         let V3 _ _ z = poseT p
         if z > 0 then Just (p, rms p) else Nothing
 
--- | The other poses that put the model's three reflectors where the given
--- pose shows them (see 'fitThree'), leaving out the given pose itself and
--- any at half or less, or half as far again or more, its distance.
+-- | How far, in pixels across and down, each reflector appears at a pose
+-- from where it was seen (left, right, top).
+misfit :: Intrinsics -> Model -> ((Double, Double), (Double, Double), (Double, Double)) -> Pose -> [Double]
+misfit k m (l, r, t) pose =
+    concat [let (pu, pv) = seenAt k m pose which in [pu - u, pv - v] | (which, (u, v)) <- [(LeftReflector, l), (RightReflector, r), (TopReflector, t)]]
+
+-- | The other poses that show the model's three reflectors where the given
+-- pose shows them, leaving out the given pose itself and any at half or
+-- less, or half as far again or more, its distance.
+--
+-- They are those that put the reflectors' middles there (see 'fitThree'),
+-- each moved to fit where they appear, which on curved tabs is a little
+-- off their middles (see Note [Curved reflectors]).
 alternatives :: Intrinsics -> Model -> Pose -> [Pose]
-alternatives k m pose@(Pose r t) = case map (project k pose) [mLeft m, mRight m, mTop m] of
-    [a, b, c] -> filter ((> 0.5) . turnBetweenPoses pose) (fitThree k m (0.5 * left, 1.5 * left) (a, b, c))
-    _ -> []
+alternatives k m pose@(Pose r t) =
+    filter apart (map settle (filter apart (fitThree k m (0.5 * left, 1.5 * left) seen)))
   where
+    seen = (seenAt k m pose LeftReflector, seenAt k m pose RightReflector, seenAt k m pose TopReflector)
+    apart = (> 0.5) . turnBetweenPoses pose
+    -- Starting a pixel or so off, a few steps are as good as many.
+    settle q = fromMaybe q (levenbergMarquardt 3 (misfit k m seen) q)
     left = norm (mulMV r (mLeft m) ^+^ t)
 
 -- | Degrees of turning between two poses.
@@ -281,11 +430,11 @@ towardHead m = if z < 0 then (-1) *^ n else n
   where
     n@(V3 _ _ z) = normalize (cross (mRight m ^-^ mLeft m) (mTop m ^-^ mLeft m))
 
--- | A reflector seen in the image: its place on the model, how much its
+-- | A reflector seen in the image: which it is, how much its
 -- position counts (1 for a clearly seen reflector, less for a dim or
 -- uncertain one), and where it was seen.
 data Observation = Observation
-    { obPoint :: V3
+    { obReflector :: Reflector
     , obWeight :: Double
     , obSeen :: (Double, Double)
     }
@@ -299,17 +448,17 @@ data Observation = Observation
 -- turning the head is preferred to sliding it.
 --
 -- Returns the pose and the weighted RMS reprojection error in pixels.
-solveNear :: Intrinsics -> V3 -> Pose -> [Observation] -> Maybe (Pose, Double)
-solveNear k pivot recent@(Pose r0 _) obs
+solveNear :: Intrinsics -> Model -> V3 -> Pose -> [Observation] -> Maybe (Pose, Double)
+solveNear k m pivot recent@(Pose r0 _) obs
     | totalWeight <= 0 = Nothing
     | otherwise = do
-        p <- levenbergMarquardt residuals recent
+        p <- levenbergMarquardt solverSteps residuals recent
         let V3 _ _ z = poseT p
         if z > 0 then Just (p, fit p) else Nothing
   where
     totalWeight = sum [w * w | Observation _ w _ <- obs]
     reprojection pose =
-        concat [let (pu, pv) = project k pose p in [w * (pu - u), w * (pv - v)] | Observation p w (u, v) <- obs]
+        concat [let (pu, pv) = seenAt k m pose which in [w * (pu - u), w * (pv - v)] | Observation which w (u, v) <- obs]
     residuals pose = reprojection pose ++ hold pose
     hold pose@(Pose r _) =
         let V3 a b c = turnBetween r0 r
@@ -353,10 +502,15 @@ frontal k m (lu, lv) (ru, rv) = Pose identity (V3 ((mu - cx k) * z / focal k) ((
     mv = (lv + rv) / 2
     mid = 0.5 *^ (mLeft m ^+^ mRight m)
 
+-- | The most steps the solver takes from a guess.
+solverSteps :: Int
+solverSteps = 50
+
 -- | Damped Gauss-Newton on the six pose parameters, with a numerical
--- Jacobian. Rotation updates are applied as small axis-angle rotations.
-levenbergMarquardt :: (Pose -> [Double]) -> Pose -> Maybe Pose
-levenbergMarquardt residuals = go (50 :: Int) 1e-3
+-- Jacobian, for up to the given number of steps. Rotation updates are
+-- applied as small axis-angle rotations.
+levenbergMarquardt :: Int -> (Pose -> [Double]) -> Pose -> Maybe Pose
+levenbergMarquardt steps residuals = go steps 1e-3
   where
     cost = sum . map (^ (2 :: Int)) . residuals
     step (Pose r t) [a, b, c, x, y, z] = Pose (mulMM (rodrigues (V3 a b c)) r) (t ^+^ V3 x y z)
