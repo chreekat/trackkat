@@ -97,6 +97,8 @@ Either way they apply at once, while you play.
 - **No camera?** Check the WinUSB setup above, and that NaturalPoint's
   software isn't running. [`tirprobe`](docs/tirprobe.md) talks to the camera
   directly.
+- **Tracking goes wrong?** [Record it](docs/tirprobe.md#recording-a-problem)
+  with tirprobe, so it can be replayed exactly.
 - **A game doesn't move?** `npclient.log`, in `%APPDATA%\trackkat`, records
   what each game asked for and got. `npgame` loads NPClient as a game does and prints
   the pose.

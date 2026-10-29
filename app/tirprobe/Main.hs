@@ -13,7 +13,7 @@ import Control.Monad (forM_, unless, when)
 import Data.IORef
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
-import GHC.Clock (getMonotonicTime)
+import GHC.Clock (getMonotonicTime, getMonotonicTimeNSec)
 #if defined(mingw32_HOST_OS)
 import System.Directory (doesFileExist)
 #endif
@@ -23,6 +23,7 @@ import System.IO
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 
+import TrackKat.Build (buildVersion)
 import TrackKat.Calibration
 import TrackKat.Camera
 import TrackKat.Config
@@ -30,8 +31,9 @@ import TrackKat.Frame
 #if defined(mingw32_HOST_OS)
 import TrackKat.Install (configFile, findPaths)
 #endif
-import TrackKat.Number (renderNumber)
+import TrackKat.Number (parseNumber, renderNumber)
 import TrackKat.Pose
+import TrackKat.Recording
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 
@@ -45,6 +47,9 @@ data Options = Options
     , optFocal :: Double
     , optMasking :: Maybe Masking
     -- ^ from @--no-mask@, or else trackkat.conf's
+    , optRecord :: Maybe FilePath
+    , optReplay :: Maybe FilePath
+    , optEveryFrame :: Bool
     }
 
 usage :: String
@@ -52,13 +57,17 @@ usage =
     unlines
         [ "usage: tirprobe [--blobs] [--clip LR,LT,RT] [--focal F] [--threshold N]"
         , "                [--ir 5|6|7] [--no-status-led] [--no-mask] [--raw]"
+        , "                [--record FILE]"
+        , "       tirprobe --replay FILE [--blobs] [--every-frame] [--clip LR,LT,RT]"
+        , "                [--no-mask]"
         , "       tirprobe --list"
         , ""
         , "Shows head pose relative to where you were when you last pressed Enter."
         , "Type c and Enter, then turn your head left and right for a few seconds,"
-        , "to calibrate which way is up. Like trackkat, tirprobe learns which way is"
-        , "up and where your neck pivots, but starts afresh each time: it doesn't"
-        , "read or write trackkat.calibration."
+        , "to calibrate which way is up. Type m and Enter the moment something"
+        , "goes wrong, to mark it in a recording. Like trackkat, tirprobe learns"
+        , "which way is up and where your neck pivots, but starts afresh each"
+        , "time: it doesn't read or write trackkat.calibration."
         , ""
         , "The clip's shape and whether to ignore still lights come from trackkat's"
         , "settings, %APPDATA%\\trackkat\\trackkat.conf, as trackkat uses them,"
@@ -77,6 +86,16 @@ usage =
         , "  --no-mask         don't learn and ignore bright lights that stay put,"
         , "                    whatever trackkat.conf's ignore lights says"
         , "  --raw             also hex-dump every USB transfer"
+        , "  --record FILE     write every frame the camera sends to FILE, with"
+        , "                    the settings used and when Enter, c Enter and"
+        , "                    m Enter were pressed, so the tracking can be"
+        , "                    replayed exactly; about 6 MB a minute"
+        , "  --replay FILE     track a recording instead of the camera, printing"
+        , "                    what tirprobe printed, each line after the time"
+        , "                    in seconds; --clip and --no-mask change what the"
+        , "                    recording used"
+        , "  --every-frame     with --replay, print every frame's line, not ten"
+        , "                    a second"
         , "  --list            list all USB devices and whether we can open them"
         , ""
         , "Press Ctrl-C to stop."
@@ -87,9 +106,12 @@ parseArgs [] o = Right o
 parseArgs ("--raw" : r) o = parseArgs r o{optRaw = True}
 parseArgs ("--list" : r) o = parseArgs r o{optList = True}
 parseArgs ("--blobs" : r) o = parseArgs r o{optBlobs = True}
+parseArgs ("--record" : path : r) o = parseArgs r o{optRecord = Just path}
+parseArgs ("--replay" : path : r) o = parseArgs r o{optReplay = Just path}
+parseArgs ("--every-frame" : r) o = parseArgs r o{optEveryFrame = True}
 parseArgs ("--focal" : n : r) o | Just v <- readMaybe n, v > 0 = parseArgs r o{optFocal = v}
 parseArgs ("--clip" : spec : r) o
-    | [Just lr, Just lt, Just rt] <- map readMaybe (splitOn ',' spec)
+    | [Just lr, Just lt, Just rt] <- map parseNumber (splitOn ',' spec)
     , Just cl <- clipShape lr lt rt =
         parseArgs r o{optClip = Just cl}
     | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
@@ -103,12 +125,15 @@ main :: IO ()
 main = do
     hSetBuffering stdout LineBuffering
     args <- getArgs
-    opts <- case parseArgs args (Options defaultSettings False False False Nothing (focal defaultIntrinsics) Nothing) of
+    opts <- case parseArgs args (Options defaultSettings False False False Nothing (focal defaultIntrinsics) Nothing Nothing Nothing False) of
         Right o -> pure o
         Left err -> hPutStrLn stderr (err ++ "\n\n" ++ usage) >> exitFailure
     let logger = putStrLn . ("# " ++)
     when (optList opts) $ do
         USB.withContext listAll
+        exitSuccess
+    forM_ (optReplay opts) $ \path -> do
+        replayFile opts path
         exitSuccess
     (config, source) <- userConfig
     let clipUsed = fromMaybe (clip config) (optClip opts)
@@ -123,7 +148,8 @@ main = do
     case (optMasking opts, source) of
         (Nothing, FromFile path) | masking == NoMasking -> logger ("not ignoring still lights: ignore lights = off in " ++ path)
         _ -> pure ()
-    (USB.withContext $ \ctx -> withCamera ctx logger (optSettings opts) (run opts (clipModel clipUsed) masking))
+    let used = config{clip = clipUsed, lightMasking = masking}
+    (USB.withContext $ \ctx -> withCamera ctx logger (optSettings opts) (run opts args used))
         `catch` \e -> do
             hPutStrLn stderr (explain e)
             exitFailure
@@ -187,28 +213,62 @@ splitOn c str = case break (== c) str of
     (a, []) -> [a]
     (a, _ : rest) -> a : splitOn c rest
 
--- | Track with the given clip model and still-light masking.
-run :: Options -> Model -> Masking -> Camera -> IO ()
-run opts model masking cam = do
-    putStrLn "# tracking; Enter recenters, c Enter calibrates level, Ctrl-C stops"
+-- | Track with the given settings' clip shape and still-light masking,
+-- recording if asked to.
+run :: Options -> [String] -> Config -> Camera -> IO ()
+run opts args config cam = do
+    clock <- getMonotonicTimeNSec
+    let start =
+            Start
+                { startNotes =
+                    [ "tirprobe " ++ fromMaybe "development build" buildVersion ++ concatMap (' ' :) args
+                    , "camera threshold " ++ show (threshold (optSettings opts)) ++ ", IR " ++ show (irBrightness (optSettings opts))
+                    ]
+                , startIntrinsics = defaultIntrinsics{focal = optFocal opts}
+                , startSettings = settingValues (renderConfig config)
+                , startCalibration = FreshCalibration
+                , startClock = clock
+                }
+    case (optRecord opts, startTracker start) of
+        (_, Left err) -> hPutStrLn stderr ("can't track with these settings: " ++ err) >> exitFailure
+        (Nothing, Right tracker) -> track opts cam notRecording tracker
+        (Just path, Right tracker) -> do
+            putStrLn ("# recording to " ++ path ++ "; m Enter marks when something goes wrong")
+            withRecorder path start (\rec -> track opts cam rec tracker)
+
+-- | Track the camera's frames from the given tracker, recording them.
+track :: Options -> Camera -> Recorder -> Tracker -> IO ()
+track opts cam rec tracker0 = do
+    putStrLn "# tracking; Enter recenters, c Enter calibrates level, m Enter marks, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
-    tracker <- newIORef (newTracker defaultIntrinsics{focal = optFocal opts} model masking defaultCalibration)
-    let console = do
+    tracker <- newIORef tracker0
+    -- What the user did since the last frame, newest first.
+    inputs <- newIORef []
+    marks <- newIORef (0 :: Int)
+    let input i = do
+            now <- getMonotonicTimeNSec
+            atomicModifyIORef' inputs (\is -> ((now, i) : is, ()))
+        console = do
             eof <- isEOF
             unless eof $ do
                 line <- getLine
                 case line of
-                    "" -> modifyIORef' tracker (request Recenter)
-                    "c" -> modifyIORef' tracker (request Calibrate)
-                    _ -> putStrLn "# Enter recenters; c Enter calibrates level"
+                    "" -> input (Press Recenter)
+                    "c" -> input (Press Calibrate)
+                    "m" -> do
+                        n <- atomicModifyIORef' marks (\m -> (m + 1, m + 1))
+                        putStrLn ("# mark " ++ show n)
+                        input (Mark n)
+                    _ -> putStrLn "# Enter recenters; c Enter calibrates level; m Enter marks"
                 console
-    let track stripes = do
-            now <- getMonotonicTime
-            (outcome, events, centre, blobs) <- atomicModifyIORef' tracker $ \t ->
-                let (t', o, evs) = step now stripes t in (t', (o, evs, trackerCentre t', trackerBlobs t'))
-            mapM_ (putStrLn . describeEvent centre) events
-            pure (outcome, blobs)
+    let trackFrame n stripes = do
+            now <- getMonotonicTimeNSec
+            pending <- atomicModifyIORef' inputs (\is -> ([], reverse is))
+            (t', outcome, events) <- trackLive rec pending now n stripes =<< readIORef tracker
+            writeIORef tracker $! t'
+            mapM_ (putStrLn . describeEvent (trackerCentre t')) events
+            pure (outcome, trackerBlobs t')
     let loop lights next = do
             (_, pkts) <- next
             forM_ pkts $ \p -> do
@@ -216,7 +276,7 @@ run opts model masking cam = do
                 case p of
                     Frame n stripes -> do
                         -- Tracking in blobs mode too, to learn still lights.
-                        (tracked, blobs) <- track stripes
+                        (tracked, blobs) <- trackFrame n stripes
                         when (not (optBlobs opts)) $ lights (if isTracked tracked then On else Off) Off
                         modifyIORef' frames (+ 1)
                         now <- getMonotonicTime
@@ -230,10 +290,55 @@ run opts model masking cam = do
                                 if optBlobs opts
                                     then summary n fps blobs
                                     else showOutcome tracked
-                    Corrupt why bytes -> putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
+                    Corrupt why bytes -> do
+                        now <- getMonotonicTimeNSec
+                        record rec (CorruptEntry now why)
+                        putStrLn ("# corrupt packet: " ++ why ++ "\n# " ++ hex bytes)
                     _ -> pure ()
             loop lights next
     withAsync console $ \_ -> withLights cam $ \lights -> withPackets cam (loop lights)
+
+-- | Track a recording, printing what tracking it live printed, each line
+-- after the time in seconds since the recording started.
+replayFile :: Options -> FilePath -> IO ()
+replayFile opts path = do
+    let orFail = either (\err -> hPutStrLn stderr (path ++ ": " ++ err) >> exitFailure) pure
+    recording <- orFail =<< readRecording path
+    let recorded = recStart recording
+    config <- orFail (parseConfig (unlines [n ++ " = " ++ v | (n, v) <- startSettings recorded]))
+    let used = config{clip = fromMaybe (clip config) (optClip opts), lightMasking = fromMaybe (lightMasking config) (optMasking opts)}
+        start = recorded{startSettings = settingValues (renderConfig used)}
+    mapM_ (putStrLn . ("# " ++)) (startNotes recorded)
+    putStrLn $
+        "# clip "
+            ++ describeClip (clip used)
+            ++ maybe " as recorded" (const " from --clip") (optClip opts)
+            ++ case lightMasking used of
+                MaskLights -> ", ignoring still lights"
+                NoMasking -> ", not ignoring still lights"
+    replayed <- orFail (replay recording{recStart = start})
+    let at t line = printf "%10.3f  %s" (secondsSince start t) line :: String
+        -- As live: a frame's line ten times a second, counting the frames
+        -- since the last.
+        go _ [] = pure ()
+        go printed@(lastPrint, frames) (Replayed e result : rest) = case (e, result) of
+            (FrameEntry t n _, Just (tracker, outcome, events)) -> do
+                mapM_ (putStrLn . at t . describeEvent (trackerCentre tracker)) events
+                let now = secondsSince start t
+                    due = optEveryFrame opts || now - lastPrint >= 0.1
+                    fps = fromIntegral (frames + 1) / (now - lastPrint) :: Double
+                when due . putStrLn . at t $
+                    if optBlobs opts
+                        then summary n fps (trackerBlobs tracker)
+                        else showOutcome outcome
+                go (if due then (now, 0) else (lastPrint, frames + 1)) rest
+            (FrameEntry{}, Nothing) -> go printed rest
+            (InputEntry t (Press Recenter), _) -> putStrLn (at t "# Enter pressed") >> go printed rest
+            (InputEntry t (Press Calibrate), _) -> putStrLn (at t "# c Enter pressed") >> go printed rest
+            (InputEntry t (Mark m), _) -> putStrLn (at t ("# mark " ++ show m)) >> go printed rest
+            (CorruptEntry t why, _) -> putStrLn (at t ("# corrupt packet: " ++ why)) >> go printed rest
+            (Unreadable n why, _) -> hPutStrLn stderr (path ++ ": line " ++ show n ++ ": " ++ why ++ "; stopping there")
+    go (-1 / 0, 0 :: Int) replayed
 
 isTracked :: Outcome -> Bool
 isTracked Tracked{} = True
