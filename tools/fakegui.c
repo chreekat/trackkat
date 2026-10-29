@@ -16,7 +16,7 @@ void hts_gui_frame(int blobs, float yaw, float pitch, float roll, float x, float
                    float vpitch, float vroll, float vx, float vy, float vz);
 void hts_gui_camera(int camera, const wchar_t *text);
 void hts_gui_paused(int paused);
-void hts_gui_trim(int trimmed, float yaw, float pitch);
+void hts_gui_trim(int trimmed, float yaw, float pitch, int moves);
 void hts_gui_games(int games);
 void hts_gui_stats(const wchar_t *text);
 void hts_gui_calibration(const wchar_t *text);
@@ -74,8 +74,8 @@ int main(int argc, char **argv)
         }
         /* Trimming looks at the left MFD. */
         if (acts & 0x80) {
-            hts_gui_trim(1, -42, 18);
-            hts_gui_log(L"Trimmed: forward is now yaw -42 pitch +18.");
+            hts_gui_trim(1, -42, 18, 1);
+            hts_gui_log(L"Trimmed: forward is now yaw -42 pitch +18 roll +2, x +35 y -20 z -60 mm.");
         }
         if (acts & 0x10) {
             for (int f = 0; f < (int)(sizeof names / sizeof *names); f++) {

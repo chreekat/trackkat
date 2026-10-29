@@ -652,7 +652,7 @@ recenter s = do
     atomicModifyIORef' (sTracker s) (\t -> (request Recenter t, ()))
     atomicModifyIORef' (sTrim s) (NoTrim,) >>= \case
         NoTrim -> pure ()
-        Trim _ _ -> do
+        Trim _ -> do
             showTrim NoTrim
             say "Trim cleared."
     readIORef (sClip s) >>= \case
@@ -703,7 +703,8 @@ trim s = do
 -- | A trim as the console and log show it.
 describeTrim :: Trim -> String
 describeTrim NoTrim = "straight ahead"
-describeTrim (Trim y p) = printf "yaw %+.0f pitch %+.0f" y p
+describeTrim (Trim t) =
+    printf "yaw %+.0f pitch %+.0f roll %+.0f, x %+.0f y %+.0f z %+.0f mm" (yaw t) (pitch t) (roll t) (tx t) (ty t) (tz t)
 
 console :: Session -> IO ()
 console s = do

@@ -603,7 +603,7 @@ data HeadPose = HeadPose
     , tz :: Double
     -- ^ mm
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | The current pose relative to a reference pose, measured about the given
 -- level axes, with translation taken at the given pivot: the point, in the

@@ -16,7 +16,6 @@ module TrackKat.Response (
     leanWithView,
     Trim (..),
     trimTo,
-    applyTrim,
     Response (..),
     Shaper,
     newShaper,
@@ -138,23 +137,31 @@ leanWithView p = p{tx = tx p * c + tz p * s, tz = tz p * c - tx p * s}
     c = cos (yaw p * pi / 180)
     s = sin (yaw p * pi / 180)
 
--- | Where forward is for the view: an offset added to the view's yaw and
--- pitch, in degrees, after the curves. Roll and movement are never trimmed.
+-- | Where forward is for the view: the view taken as forward, added to the
+-- view after the curves. Its turning is added before leaning follows the
+-- view, so leaning follows the trimmed view; its movement after, so the
+-- view stays where it was moved to, wherever it then looks.
 data Trim
     = NoTrim
-    | Trim Double Double
+    | Trim HeadPose
     deriving (Eq, Show)
 
--- | Trim so that where the view looks now is forward. The view already
--- includes any earlier trim, so trims add up.
+-- | Trim so that the view now is forward. The view already includes any
+-- earlier trim, so trims add up.
 trimTo :: HeadPose -> Trim
-trimTo p = Trim (wrapDegrees (yaw p)) (clampPitch (pitch p))
+trimTo p = Trim p{yaw = wrapDegrees (yaw p), pitch = clampPitch (pitch p), roll = wrapDegrees (roll p)}
 
--- | Turn a view by a trim. A trimmed view's yaw is kept within 180 degrees
--- either side, and its pitch within 90, straight up or down.
-applyTrim :: Trim -> HeadPose -> HeadPose
-applyTrim NoTrim p = p
-applyTrim (Trim y pt) p = p{yaw = wrapDegrees (yaw p + y), pitch = clampPitch (pitch p + pt)}
+-- | Turn a view by a trim. A trimmed view's yaw and roll are kept within
+-- 180 degrees either side, and its pitch within 90, straight up or down.
+turnByTrim :: Trim -> HeadPose -> HeadPose
+turnByTrim NoTrim p = p
+turnByTrim (Trim t) p =
+    p{yaw = wrapDegrees (yaw p + yaw t), pitch = clampPitch (pitch p + pitch t), roll = wrapDegrees (roll p + roll t)}
+
+-- | Move a view by a trim.
+moveByTrim :: Trim -> HeadPose -> HeadPose
+moveByTrim NoTrim p = p
+moveByTrim (Trim t) p = p{tx = tx p + tx t, ty = ty p + ty t, tz = tz p + tz t}
 
 -- | An angle in degrees, from -180 up to 180.
 wrapDegrees :: Double -> Double
@@ -199,8 +206,9 @@ jumpPersistence = 3
 
 -- | Shape a pose seen at the given time in seconds. Impossible jumps are
 -- ignored unless they persist, then each axis is smoothed and put through
--- its curve, the view is trimmed, and leaning follows the view if the
--- response says so. Leaning is turned last, by the yaw the game will show.
+-- its curve, the view is turned by the trim, leaning follows the view if
+-- the response says so, by the yaw the game will show, and the view is moved
+-- by the trim.
 shape :: Response -> Trim -> Double -> HeadPose -> Shaper -> (HeadPose, Shaper)
 shape r forward now pose s = case shLast s of
     Just (_, previous)
@@ -218,7 +226,7 @@ shape r forward now pose s = case shLast s of
         _ -> [Axis v 0 | v <- values pose]
     output axes fallback = case maybe (values fallback) (map (\(Axis v _) -> v)) axes of
         [y, p, ro, x, yy, z] ->
-            leaning . applyTrim forward $
+            moveByTrim forward . leaning . turnByTrim forward $
                 HeadPose
                     { yaw = applyCurve (yawCurve r) y
                     , pitch = applyCurve (pitchCurve r) p

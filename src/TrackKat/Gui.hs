@@ -69,7 +69,7 @@ foreign import ccall unsafe "hts_gui_frame"
     c_frame :: CInt -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
-foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> IO ()
+foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> CInt -> IO ()
 foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_stats" c_stats :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> IO ()
@@ -237,8 +237,11 @@ showOutput Paused = c_paused 1
 
 -- | Where forward is for the view.
 showTrim :: Trim -> IO ()
-showTrim NoTrim = c_trim 0 0 0
-showTrim (Trim y p) = c_trim 1 (realToFrac y) (realToFrac p)
+showTrim NoTrim = c_trim 0 0 0 0
+showTrim (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (if movesToo then 1 else 0)
+  where
+    -- Beyond turning, enough to notice.
+    movesToo = abs (roll t) >= 1 || any ((>= 5) . abs) [tx t, ty t, tz t]
 
 -- | How many games are tracking.
 showGames :: Int -> IO ()
