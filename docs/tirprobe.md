@@ -51,6 +51,41 @@ carries on through these, and the line ends with a note when it happens:
 When the clip is lost the line says how many blobs there were, such as
 `lost: 2 blobs, need 3`.
 
+## Recording a problem
+
+When tracking goes wrong in a way you can make happen again, such as the
+view jumping, flipping or drifting, a recording lets the developer replay
+it exactly, frame by frame, through trackkat's tracking.
+
+1. Quit trackkat (**Quit trackkat** in its window, or from the tray menu):
+   only one program can have the camera.
+2. Open a terminal in the folder with `tirprobe.exe` and run
+   `tirprobe --record problem.txt`.
+3. Wear the clip, face the camera and press **Enter** to recenter.
+4. Do whatever makes it go wrong. The moment it does, type `m` and press
+   **Enter**: tirprobe prints `# mark 1` (then `# mark 2`, and so on) and
+   the recording notes the moment.
+5. Press **Ctrl-C** to stop.
+6. Zip `problem.txt` (right-click it, **Compress to ZIP file**) and attach
+   the zip to your bug report, saying what went wrong at each mark.
+
+A recording takes about 6 MB a minute, a quarter of that zipped, so a few
+minutes is plenty. It holds what tirprobe tracked: the bright spots the
+camera saw, which are not pictures, and the settings it tracked with, from
+trackkat.conf. Recording doesn't slow tracking down.
+
+`tirprobe --replay problem.txt` tracks a recording as tirprobe tracked it
+live, on Windows or Linux, printing the same lines, each after the time in
+seconds, and where Enter, `c` Enter and `m` Enter were pressed:
+
+```
+     12.483  # mark 1
+```
+
+With `--blobs` it shows the blobs instead, `--every-frame` prints every
+frame rather than ten a second, and `--clip` and `--no-mask` track with
+other settings than those recorded.
+
 ## Options
 
 - `--clip LR,LT,RT`: your clip's reflector spacing in mm, centre to centre,
@@ -69,6 +104,9 @@ When the clip is lost the line says how many blobs there were, such as
   trackkat.conf's `ignore lights` says.
 - `--threshold N` (30–253, default 140), `--ir 5|6|7` (illuminator
   brightness), `--no-status-led`.
+- `--record FILE`: record every frame to FILE, to be replayed; see
+  [recording a problem](#recording-a-problem).
+- `--replay FILE`: track a recording instead of the camera.
 - `--raw`: hex-dump every USB transfer; use this when reporting problems:
   `tirprobe --raw > probe.txt`.
 - `--list`: list every USB device and whether it can be opened.
