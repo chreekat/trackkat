@@ -15,7 +15,6 @@ module TrackKat.Pose (
     Pose (..),
     project,
     Reflector (..),
-    reflectorPoint,
     seenAt,
     identify,
     solvePose,
@@ -161,7 +160,9 @@ project k (Pose r t) p =
 -- So where a reflector appears at a pose, which the solver fits and
 -- matching predicts from, is the centre of its light at that pose. The
 -- point the model gives each reflector is the middle of its tape, where
--- the tab is measured from.
+-- the tab is measured from. The other poses that fit what was seen,
+-- among them the mirror image (see 'alternatives'), fit it the same way,
+-- so that telling the two apart compares like with like.
 --
 -- The tabs on the crossbar stand square to the line between them and to
 -- the line of sight of a camera the clip squarely faces. The top tab is on
