@@ -4,6 +4,11 @@ Roughly in order.
 
 - Once ignoring still lights has proven itself, make it always on and drop
   the `ignore lights` setting and its checkbox.
+- Split merged blobs of elongated reflectors: `splitMerged` takes each
+  reflector for a round disc, but tape on a curved tab shows wider than tall.
+  In simulation, looking up 30 degrees while turning, the top reflector runs
+  into a lower one, the split is off, and tracking goes 10-20 degrees wrong
+  and is lost, for points and tabs alike; round blobs pass the same place.
 - Ground truth from a webcam: record it alongside the camera and estimate the
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.
