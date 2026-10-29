@@ -222,6 +222,15 @@ for that software, which the DLL gets the pose from. So:
   Game 3450 is using NaturalPoint's NPClient.
   ```
 
+- NaturalPoint's DLL tells trackkat about a game only then, so trackkat
+  notes the game in `trackkat.game` in `%APPDATA%\trackkat`. Restarted
+  while the game runs, to update or after quitting, trackkat carries on
+  serving it, and says so:
+
+  ```
+  Serving DCS (game 1006) again, which was running before trackkat restarted.
+  ```
+
 Tested: Arma Reforger (game 8310) tracks this way.
 
 If the TrackIR software isn't found, trackkat says so and games load its own

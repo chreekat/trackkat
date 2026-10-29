@@ -15,6 +15,10 @@ module TrackKat.Windows (
     StandInProblem (..),
     startTrackIRStandIn,
     takeTrackIRGame,
+    scrambledGameName,
+    trackIRServed,
+    gameProcess,
+    windowProcess,
     Hotkey (..),
     Watched (..),
     startHotkeys,
@@ -25,8 +29,9 @@ module TrackKat.Windows (
 ) where
 
 import Data.Bits ((.&.))
+import Data.Word (Word64)
 import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
-import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..))
+import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..), CULLong (..), CULong (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr, nullPtr)
@@ -34,6 +39,7 @@ import Foreign.Storable (peek)
 
 import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
 import TrackKat.GamePose
+import TrackKat.ServedGame
 
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
 foreign import ccall unsafe "hts_publish" c_publish :: CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
@@ -43,7 +49,11 @@ foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
 foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
 foreign import ccall unsafe "hts_find_trackir_dir" c_find_trackir_dir :: CWString -> CInt -> IO CInt
-foreign import ccall safe "hts_trackir_start" c_trackir_start :: IO CInt
+foreign import ccall safe "hts_trackir_start" c_trackir_start :: CULong -> CULLong -> CULLong -> CInt -> CInt -> IO CInt
+foreign import ccall unsafe "hts_trackir_served"
+    c_trackir_served :: Ptr CULong -> Ptr CULLong -> Ptr CULLong -> Ptr CInt -> Ptr CInt -> IO CLong
+foreign import ccall unsafe "hts_process_started" c_process_started :: CULong -> Ptr CULLong -> IO CInt
+foreign import ccall unsafe "hts_window_process" c_window_process :: CULLong -> IO CULong
 foreign import ccall unsafe "hts_trackir_take_game" c_trackir_take_game :: IO CInt
 foreign import ccall unsafe "hts_scrambled_game" c_scrambled_game :: CInt -> IO CString
 foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
@@ -102,13 +112,61 @@ data StandInProblem
       StandInFailed Int
 
 -- | Stand in for NaturalPoint's TrackIR software, so that games can load
--- NaturalPoint's NPClient and still get the pose from trackkat.
-startTrackIRStandIn :: IO (Either StandInProblem ())
-startTrackIRStandIn =
-    c_trackir_start >>= \case
+-- NaturalPoint's NPClient and still get the pose from trackkat, serving
+-- again the game given, which a trackkat that ran before was serving.
+startTrackIRStandIn :: Maybe ServedGame -> IO (Either StandInProblem ())
+startTrackIRStandIn served =
+    start >>= \case
         0 -> pure (Right ())
         -1 -> pure (Left TrackIRSoftwareRunning)
         e -> pure (Left (StandInFailed (fromIntegral e)))
+  where
+    start = case served of
+        Nothing -> c_trackir_start 0 0 0 (-1) 0
+        Just g ->
+            c_trackir_start
+                (fromIntegral (servedProcess g))
+                (maybe 0 fromIntegral (servedStarted g))
+                (fromIntegral (servedWindow g))
+                (maybe (-1) fromIntegral (servedProfile g))
+                (case servedTracking g of TrackingStarted -> 1; TrackingStopped -> 0)
+
+-- | The game the stand-in for NaturalPoint's software serves, if any, with
+-- a count that changes whenever it does.
+trackIRServed :: IO (Int, Maybe ServedGame)
+trackIRServed =
+    alloca $ \pid -> alloca $ \started -> alloca $ \window -> alloca $ \profile -> alloca $ \tracking -> do
+        changes <- c_trackir_served pid started window profile tracking
+        p <- peek pid
+        game <-
+            if p == 0
+                then pure Nothing
+                else do
+                    s <- peek started
+                    w <- peek window
+                    i <- peek profile
+                    t <- peek tracking
+                    pure . Just $
+                        ServedGame
+                            { servedProcess = fromIntegral p
+                            , servedStarted = if s == 0 then Nothing else Just (fromIntegral s)
+                            , servedWindow = fromIntegral w
+                            , servedProfile = if i < 0 then Nothing else Just (fromIntegral i)
+                            , servedTracking = if t /= 0 then TrackingStarted else TrackingStopped
+                            }
+        pure (fromIntegral changes, game)
+
+-- | Whether the process with this ID runs, and since when.
+gameProcess :: Int -> IO GameProcess
+gameProcess pid = alloca $ \started ->
+    c_process_started (fromIntegral pid) started >>= \case
+        1 -> ProcessRunning . Just . fromIntegral <$> peek started
+        2 -> pure (ProcessRunning Nothing)
+        _ -> pure ProcessGone
+
+-- | The process a window belongs to, if the window is open.
+windowProcess :: Word64 -> IO (Maybe Int)
+windowProcess window = (\p -> if p == 0 then Nothing else Just (fromIntegral p)) <$> c_window_process (fromIntegral window)
 
 -- | The profile ID a game has given NaturalPoint's NPClient since the last
 -- call, with the game's name if its data is scrambled.
@@ -117,9 +175,13 @@ takeTrackIRGame = do
     game <- c_trackir_take_game
     if game < 0
         then pure Nothing
-        else do
-            name <- c_scrambled_game game
-            Just . (fromIntegral game,) <$> (if name == nullPtr then pure Nothing else Just <$> peekCString name)
+        else Just . (fromIntegral game,) <$> scrambledGameName (fromIntegral game)
+
+-- | The name of the game with this profile ID, if its data is scrambled.
+scrambledGameName :: Int -> IO (Maybe String)
+scrambledGameName game = do
+    name <- c_scrambled_game (fromIntegral game)
+    if name == nullPtr then pure Nothing else Just <$> peekCString name
 
 -- | An action bound to keys and joystick buttons.
 data Hotkey = RecenterKey | PauseKey | TrimKey

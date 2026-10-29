@@ -2,9 +2,10 @@
  * delivers. It unscrambles the data and checks the checksum as a game must,
  * so it shows whether a game would accept it.
  *
- * usage: npgame [game-id] [path\to\NPClient64.dll]
+ * usage: npgame [game-id] [path\to\NPClient64.dll [seconds]]
  * The game ID defaults to 1003, which DCS uses.
- * Without a path, it finds the DLL through the registry, like games do. */
+ * Without a path, it finds the DLL through the registry, like games do.
+ * It reads for two seconds, unless told otherwise. */
 
 #include <windows.h>
 #include <stdio.h>
@@ -140,8 +141,10 @@ int main(int argc, char **argv)
     start();
     recenter();
 
-    int bad = 0;
-    for (int i = 0; i < 40; i++) {
+    int reads = argc > 3 ? atoi(argv[3]) * 20 : 40;
+    int bad = 0, back = 0, seen = 0;
+    short frame = 0;
+    for (int i = 0; i < reads; i++) {
         tir_data_t d;
         int rc = get_data(&d);
         if (key)
@@ -150,6 +153,12 @@ int main(int argc, char **argv)
         d.cksum = 0;
         int ok = cksum((unsigned char *)&d, sizeof d) == want;
         bad += !ok;
+        /* The frame count goes up, wrapping round. */
+        back += ok && seen && (short)(d.frame - frame) < 0;
+        if (ok) {
+            frame = d.frame;
+            seen = 1;
+        }
         if (i % 4 == 0)
             printf("rc %d status %d frame %d checksum %s  yaw %+7.2f pitch %+7.2f roll %+7.2f deg  x %+6.1f y %+6.1f z %+6.1f mm\n",
                    rc, d.status, d.frame, ok ? "ok " : "BAD", d.yaw * 180.0 / NP_AXIS_MAX, d.pitch * 180.0 / NP_AXIS_MAX,
@@ -160,5 +169,6 @@ int main(int argc, char **argv)
     stop();
     unregister_window();
     printf("%d bad checksums\n", bad);
+    printf("the frame count went back %d times\n", back);
     return bad != 0;
 }

@@ -101,6 +101,23 @@ static void scramble(unsigned char buf[], unsigned size, const unsigned char tab
     } while (size != 0);
 }
 
+/* Undo scramble. */
+static void unscramble(unsigned char buf[], unsigned size, const unsigned char table[8])
+{
+    unsigned table_ptr = 0;
+    unsigned char var = 0x88;
+    unsigned char plain;
+
+    do {
+        --size;
+        plain = buf[size] ^ table[table_ptr] ^ var;
+        buf[size] = plain;
+        var += size + plain;
+        if (++table_ptr >= 8)
+            table_ptr = 0;
+    } while (size != 0);
+}
+
 static float clamp_axis(double x)
 {
     return (float)(x > NP_AXIS_MAX ? NP_AXIS_MAX : x < -NP_AXIS_MAX ? -NP_AXIS_MAX : x);
@@ -130,6 +147,17 @@ void np_seal_record(tir_data_t *d, const unsigned char *key)
     d->cksum = cksum((unsigned char *)d, sizeof *d);
     if (key)
         scramble((unsigned char *)d, sizeof *d, key);
+}
+
+int np_unseal_record(tir_data_t *d, const unsigned char *key)
+{
+    if (key)
+        unscramble((unsigned char *)d, sizeof *d, key);
+    unsigned want = d->cksum;
+    d->cksum = 0;
+    int ok = cksum((unsigned char *)d, sizeof *d) == want;
+    d->cksum = want;
+    return ok;
 }
 
 const unsigned char *np_game_key(unsigned short id, const char **name)

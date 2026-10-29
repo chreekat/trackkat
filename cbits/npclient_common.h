@@ -48,6 +48,10 @@ void np_fill_record(tir_data_t *d, const volatile FTData *pose, int fresh);
  * has one. */
 void np_seal_record(tir_data_t *d, const unsigned char *key);
 
+/* Undo np_seal_record with the same key: whether the record's checksum
+ * then checks out. */
+int np_unseal_record(tir_data_t *d, const unsigned char *key);
+
 /* The key a game's data is scrambled with, and the game's name, or NULL for
  * games that take plain data. */
 const unsigned char *np_game_key(unsigned short id, const char **name);
