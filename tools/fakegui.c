@@ -1,6 +1,8 @@
 /* fakegui: drive trackkat's window and tray icon (cbits/gui.c) with a
  * scripted pose and status, for working on the GUI without a camera. Prints
- * what the user asks for. Keys chosen for the bindings are all Ctrl+F7.
+ * what the user asks for. Keys chosen for the bindings are all Ctrl+F7. A
+ * second game, unnamed, comes and goes; Check for updates finds a newer
+ * version the second time, which Restart to update takes back.
  *
  * usage: fakegui [seconds] */
 
@@ -17,12 +19,14 @@ void hts_gui_frame(int blobs, float yaw, float pitch, float roll, float x, float
 void hts_gui_camera(int camera, const wchar_t *text);
 void hts_gui_paused(int paused);
 void hts_gui_trim(int trimmed, float yaw, float pitch, int moves);
-void hts_gui_games(int games);
+void hts_gui_games(int games, const wchar_t *name);
 void hts_gui_stats(const wchar_t *text);
 void hts_gui_calibration(const wchar_t *text);
 void hts_gui_settings_message(const wchar_t *text);
 void hts_gui_updatable(int can);
 void hts_gui_checking(int checking);
+void hts_gui_update_status(int up_to_date, const wchar_t *text);
+void hts_gui_offer(const wchar_t *text, const wchar_t *button, const wchar_t *tray);
 void hts_gui_set_setting(const wchar_t *name, const wchar_t *value);
 int hts_gui_saved_setting(const wchar_t *name, wchar_t *buf, int size);
 int hts_gui_take_actions(void);
@@ -48,19 +52,20 @@ int main(int argc, char **argv)
         hts_gui_set_setting(names[i], values[i]);
     hts_gui_log(L"Games will load NPClient from C:\\Games\\trackkat");
     hts_gui_log(L"Recenter: F12   Pause: Ctrl+F9   Trim: none   (Enter also recenters, c Enter calibrates level)");
+    hts_gui_update_status(1, L"Up to date (0.1.151).");
     hts_gui_log(L"Tracking.");
-    hts_gui_calibration(L"Level learnt: camera tipped 12.4 degrees down and 0.8 to its right, from 1460 degrees of head "
-                        L"turning.\nNeck pivot learnt: 92 mm below the clip, 71 behind it and 3 to its left, from 214 head "
-                        L"turns.");
+    hts_gui_calibration(L"Camera tipped 12.4\u00b0 down and 0.8\u00b0 to its right, from 1460\u00b0 of head turning.\n"
+                        L"Neck pivot 92 mm below the clip, 71 behind it and 3 to your left, from 214 head turns.");
     hts_gui_camera(1, L"");
-    hts_gui_games(1);
-    int paused = 0, checking = 0;
+    int paused = 0, checking = 0, checks = 0;
     for (int i = 0; i < seconds * 60; i++) {
         double t = i / 60.0;
         float yaw = (float)(14 * sin(t * 0.9)), pitch = (float)(-6 + 5 * sin(t * 1.3));
         float roll = (float)(3 * sin(t * 0.7)), x = (float)(10 * sin(t * 0.5));
         float y = (float)(-4 * sin(t * 0.8)), z = (float)(15 * sin(t * 0.4));
         int lost = fmod(t, 12) > 10;
+        if (i % 60 == 0)
+            hts_gui_games(fmod(t, 20) > 15 ? 2 : 1, L"DCS");
         hts_gui_frame(lost ? 2 : -1, yaw, pitch, roll, x, y, z, yaw * 6, pitch * 7, roll * 4, x * 3, y * 4, z * 2.5f);
         if (i % 60 == 0)
             hts_gui_stats(L"latency 0.11 ms (max 0.42)  gap max 9 ms  stripes max 31  GC 3 (max 0.21 ms)");
@@ -97,9 +102,18 @@ int main(int argc, char **argv)
         /* Check for updates takes two seconds, and finds this version. */
         if (acts & 0x800)
             checking = 120;
-        if (checking > 0 && --checking == 0)
-            hts_gui_settings_message(L"Up to date (0.1.151).");
+        if (checking > 0 && --checking == 0) {
+            if (++checks == 1)
+                hts_gui_update_status(1, L"Up to date (0.1.151).");
+            else {
+                hts_gui_update_status(0, L"0.1.152 is ready.");
+                hts_gui_offer(L"0.1.152 is ready. It starts next time trackkat does.", L"Restart to update",
+                              L"Restart to update to 0.1.152");
+            }
+        }
         hts_gui_checking(checking > 0);
+        if (acts & 0x400)
+            hts_gui_offer(L"", L"", L"");
         if (acts & 0x8)
             break;
         Sleep(16);

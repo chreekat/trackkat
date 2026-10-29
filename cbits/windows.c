@@ -112,6 +112,38 @@ int hts_games_tracking(void)
     return n;
 }
 
+/* The name of a game tracking, as its program is named without ".exe",
+ * into buf; 0, leaving buf empty, if no game's program can be read. */
+int hts_tracking_game_name(wchar_t *buf, int size)
+{
+    buf[0] = 0;
+    for (int i = 0; i < TRACKKAT_MAX_GAMES; i++) {
+        long pid = InterlockedCompareExchange(&control->games[i], 0, 0);
+        if (pid == 0)
+            continue;
+        /* Anti-cheat may refuse this. */
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+        if (!p)
+            continue;
+        wchar_t path[MAX_PATH];
+        DWORD n = MAX_PATH;
+        BOOL ok = QueryFullProcessImageNameW(p, 0, path, &n);
+        CloseHandle(p);
+        if (!ok)
+            continue;
+        wchar_t *name = wcsrchr(path, L'\\');
+        name = name ? name + 1 : path;
+        size_t len = wcslen(name);
+        if (len > 4 && _wcsicmp(name + len - 4, L".exe") == 0)
+            name[len - 4] = 0;
+        if (!name[0])
+            continue;
+        lstrcpynW(buf, name, size);
+        return 1;
+    }
+    return 0;
+}
+
 /* ---- Single instance ---------------------------------------------------- */
 
 /* Nonzero if this process now holds the trackkat instance mutex, which our

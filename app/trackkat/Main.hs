@@ -257,7 +257,7 @@ refreshOffer paths place ref = do
             Just ("trackkat " ++ versionFolder v ++ " is installed; this copy, in " ++ exeDir paths ++ ", isn't.", "Use installed trackkat", Nothing)
         OfferUpdate v ->
             Just
-                ( "trackkat " ++ versionFolder v ++ " is ready. It starts next time trackkat does, or restart now."
+                ( versionFolder v ++ " is ready. It starts next time trackkat does."
                 , "Restart to update"
                 , Just ("Restart to update to " ++ versionFolder v)
                 )
@@ -336,11 +336,9 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
         found <- checkForUpdate paths self
         refreshOffer paths place ref
         waiting <- readIORef ref
-        -- Asked, the line beside the settings says what was found, briefly;
-        -- the log has the whole story.
-        let answer short = case why of
-                Asked -> showSettingsMessage short
-                Due -> pure ()
+        -- The strip across the top of the window says what was found,
+        -- briefly; the log has the whole story.
+        let answer = showUpdateStatus
         case (found, waiting) of
             -- Offline, or behind a proxy that won't let it through: the log
             -- says so when asked, and otherwise once until a look works, so
@@ -355,27 +353,27 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
                 case (why, logged) of
                     (Due, FailureLogged) -> putStrLn line
                     _ -> say line
-                answer short
+                answer (UpdateNote short)
                 pure FailureLogged
             (Right (Just v), _) -> do
                 say (ready v)
-                answer (readyShort v)
+                answer (UpdateNote (readyShort v))
                 pure NoFailureLogged
             -- Fetched by an earlier look, and waiting for a restart.
             (Right Nothing, OfferUpdate v) -> do
                 case why of
                     Asked -> say (ready v)
                     Due -> pure ()
-                answer (readyShort v)
+                answer (UpdateNote (readyShort v))
                 pure NoFailureLogged
             (Right Nothing, _) -> do
                 case why of
                     Asked -> say ("trackkat is up to date (" ++ versionFolder self ++ ").")
                     Due -> pure ()
-                answer ("Up to date (" ++ versionFolder self ++ ").")
+                answer (UpToDate ("Up to date (" ++ versionFolder self ++ ")."))
                 pure NoFailureLogged
     ready v = "trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time."
-    readyShort v = versionFolder v ++ " is ready: see above."
+    readyShort v = versionFolder v ++ " is ready."
 
 -- | Report the games that start head tracking through NaturalPoint's
 -- NPClient.
@@ -467,7 +465,8 @@ controls start path s takeUp = go 0 Nothing
             | now - checked < 0.5 -> go checked idleSince
             | otherwise -> do
                 games <- gamesTracking
-                showGames games
+                name <- if games > 0 then trackingGameName else pure Nothing
+                showGames games name
                 open <- windowOpen
                 case (start, games > 0 || open, idleSince) of
                     (ByHand, _, _) -> go now Nothing
@@ -898,7 +897,9 @@ learnt _ = []
 -- at the centre and the calibration so far.
 calibrationNews :: Maybe Pose -> Calibration -> Event -> Maybe String
 calibrationNews centre c Recentered = Just (describeCalibration centre c)
-calibrationNews centre _ (Calibrated c) = Just (describeEvent centre (Calibrated c) ++ "\n" ++ describePivot centre c)
+calibrationNews centre _ (Calibrated c) =
+    let (down, right) = cameraTilt (estimatedLevel c)
+     in Just (printf "Calibrated: camera tipped %.1f° down and %.1f° to its right." down right ++ "\n" ++ describePivotBriefly centre c)
 calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
 calibrationNews _ _ Corrected = Nothing
 calibrationNews _ _ (LightIgnored _) = Nothing
@@ -906,9 +907,9 @@ calibrationNews _ _ (LightForgotten _) = Nothing
 calibrationNews _ _ (LightMoved _) = Nothing
 calibrationNews centre _ e = Just (describeEvent centre e)
 
--- | The calibration box's account of a calibration.
+-- | The window's account of a calibration, on two lines.
 describeCalibration :: Maybe Pose -> Calibration -> String
-describeCalibration centre c = describeLevel c ++ "\n" ++ describePivot centre c
+describeCalibration centre c = describeLevelBriefly c ++ "\n" ++ describePivotBriefly centre c
 
 status :: Outcome -> Maybe HeadPose -> Bool -> String
 status outcome paused gameConnected =
