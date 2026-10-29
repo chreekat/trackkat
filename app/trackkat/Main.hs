@@ -16,7 +16,7 @@ import Data.Maybe (fromMaybe)
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
 import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
-import System.Directory (doesFileExist, getModificationTime, renameFile)
+import System.Directory (doesFileExist, getModificationTime, removePathForcibly, renameFile)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath ((</>))
@@ -35,6 +35,7 @@ import TrackKat.Install
 import TrackKat.Pose
 import TrackKat.Release
 import TrackKat.Response
+import TrackKat.ServedGame
 import TrackKat.Stats
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
@@ -173,8 +174,10 @@ run start window after = do
         let settingsFile = configFile paths
         (config, stamp) <- loadConfig settingsFile
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
-        startTrackIRStandIn >>= \case
-            Right () -> pure ()
+        let gameFile = settingsDir paths </> "trackkat.game"
+        before <- servedBefore gameFile
+        startTrackIRStandIn before >>= \case
+            Right () -> mapM_ (say <=< servedAgain) before
             Left TrackIRSoftwareRunning ->
                 say "NaturalPoint's TrackIR software is running: quit it, or games loading its NPClient get their pose from it, not trackkat."
             Left (StandInFailed e) -> say ("Can't stand in for NaturalPoint's software (error " ++ show e ++ ").")
@@ -204,19 +207,20 @@ run start window after = do
             withAsync (watchSettings paths settingsFile session stamp config) $ \_ ->
                 withAsync (joysticks session) $ \_ ->
                     withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
-                        withAsync (maintain paths place session offered) $ \_ ->
-                            withAsync (cameraLoop session) $ \camera -> do
-                                link camera
-                                controls start settingsFile session (takeOffer paths start offered)
-                                -- Let the camera go, turning its lights off, but
-                                -- not for long: after sleep a USB read may never
-                                -- return.
-                                _ <- timeout 3000000 (cancel camera)
-                                -- Reading the console can't be interrupted on
-                                -- Windows, so rather than wait for the console
-                                -- thread, leave at once.
-                                hFlush stdout
-                                quitProcess
+                        withAsync (rememberServedGame gameFile) $ \_ ->
+                            withAsync (maintain paths place session offered) $ \_ ->
+                                withAsync (cameraLoop session) $ \camera -> do
+                                    link camera
+                                    controls start settingsFile session (takeOffer paths start offered)
+                                    -- Let the camera go, turning its lights off, but
+                                    -- not for long: after sleep a USB read may never
+                                    -- return.
+                                    _ <- timeout 3000000 (cancel camera)
+                                    -- Reading the console can't be interrupted on
+                                    -- Windows, so rather than wait for the console
+                                    -- thread, leave at once.
+                                    hFlush stdout
+                                    quitProcess
 
 -- | Tell games to load the NPClient chosen, trackkat's from its own folder,
 -- falling back to that if NaturalPoint's isn't installed.
@@ -363,6 +367,47 @@ reportTrackIRGames = takeTrackIRGame >>= mapM_ (say . describe)
   where
     describe (game, Just name) = printf "Game %d (%s) is using NaturalPoint's NPClient; scrambling its data." game name
     describe (game, Nothing) = printf "Game %d is using NaturalPoint's NPClient." game
+
+-- | The game a trackkat that ran before was serving through NaturalPoint's
+-- NPClient, as the file says, if it still runs; the file is deleted
+-- otherwise.
+servedBefore :: FilePath -> IO (Maybe ServedGame)
+servedBefore path = do
+    found <- (Just <$> readFile' path) `catch` \e -> const (pure Nothing) (e :: IOException)
+    case parseServedGame <$> found of
+        Nothing -> pure Nothing
+        Just (Left err) -> say (path ++ ": " ++ err) >> forget
+        Just (Right g) -> do
+            running <- stillServed g <$> gameProcess (servedProcess g) <*> windowProcess (servedWindow g)
+            maybe forget (pure . Just) running
+  where
+    forget = removePathForcibly path $> Nothing
+
+-- | The log's line for a game served again.
+servedAgain :: ServedGame -> IO String
+servedAgain g = do
+    name <- maybe (pure Nothing) scrambledGameName (servedProfile g)
+    let game = case (servedProfile g, name) of
+            (Just i, Just n) -> printf "%s (game %d)" n i
+            (Just i, Nothing) -> "game " ++ show i
+            (Nothing, _) -> "the game in process " ++ show (servedProcess g)
+    pure ("Serving " ++ game ++ " again, which was running before trackkat restarted.")
+
+-- | Keep the file naming the game served through NaturalPoint's NPClient
+-- up to date, deleting it while there is none, for 'servedBefore'. It is
+-- replaced whole, so never read half written.
+rememberServedGame :: FilePath -> IO ()
+rememberServedGame path = go 0
+  where
+    go seen = do
+        threadDelay 50000
+        (changes, game) <- trackIRServed
+        when (changes /= seen) $
+            save game `catch` \e -> say ("Can't note the game served: " ++ displayException (e :: IOException))
+        go changes
+    save Nothing = removePathForcibly path
+    save (Just g) = writeFile new (renderServedGame g) >> renameFile new path
+    new = path ++ ".new"
 
 -- | Print a line, and add it to the log in trackkat's window.
 say :: String -> IO ()

@@ -72,6 +72,13 @@ jobs:
           if ($rc -ne 0) { exit $rc }
           $env:PATH = $path
 
+      # NPClient and trackkat's stand-in for NaturalPoint's software, with a
+      # stand-in for trackkat and one for a game, including trackkat
+      # restarting while the game plays on.
+      - name: Test NPClient
+        shell: msys2 {0}
+        run: sh tools/test-npclient.sh
+
       # These match what the runner image has installed, so this is quick.
       - uses: haskell-actions/setup@v2
         id: haskell
