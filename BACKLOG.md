@@ -4,6 +4,16 @@ Roughly in order.
 
 - Once ignoring still lights has proven itself, make it always on and drop
   the `ignore lights` setting and its checkbox.
+- Model the reflectors as what they are: tape on short cylinder segments
+  (about 20 mm across, axis normal to the clip), whose lit spot slides a few
+  mm with the viewing angle. In simulation this alone puts tracking 4-10
+  degrees off.
+- `tirprobe --record FILE`: every frame's blobs, plus a mark key for "the view
+  just went wrong", so a real problem can be replayed through the tracker in
+  a test.
+- Ground truth from a webcam: record it alongside the camera and estimate the
+  head pose from the face, to check poses, the learnt pivot and level, and the
+  reflectors' shift.
 
 ## Low priority
 
