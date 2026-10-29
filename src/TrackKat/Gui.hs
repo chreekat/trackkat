@@ -15,6 +15,8 @@ module TrackKat.Gui (
     showUpdateButton,
     UpdateCheck (..),
     showUpdateCheck,
+    UpdateStatus (..),
+    showUpdateStatus,
     showOffer,
     windowOpen,
     Action (..),
@@ -60,6 +62,7 @@ foreign import ccall unsafe "hts_gui_quit_running" c_quit_running :: IO CInt
 foreign import ccall unsafe "hts_gui_version" c_version :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_updatable" c_updatable :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_checking" c_checking :: CInt -> IO ()
+foreign import ccall unsafe "hts_gui_update_status" c_update_status :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_offer" c_offer :: CWString -> CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_window_open" c_window_open :: IO CInt
 foreign import ccall unsafe "hts_gui_take_actions" c_take_actions :: IO CInt
@@ -73,7 +76,7 @@ foreign import ccall unsafe "hts_gui_frame"
 foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> CInt -> IO ()
-foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> IO ()
+foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_stats" c_stats :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_settings_message" c_settings_message :: CWString -> IO ()
@@ -108,8 +111,8 @@ showRunning = (/= 0) <$> c_show_running
 quitRunning :: IO (Maybe Int)
 quitRunning = (\pid -> if pid == 0 then Nothing else Just (fromIntegral pid)) <$> c_quit_running
 
--- | The version the window's title and log box show. Call before
--- 'startGui'.
+-- | The version the window's title, its strip across the top and the log
+-- window show. Call before 'startGui'.
 showVersion :: String -> IO ()
 showVersion v = withCWString v c_version
 
@@ -131,9 +134,22 @@ showUpdateCheck :: UpdateCheck -> IO ()
 showUpdateCheck CheckRunning = c_checking 1
 showUpdateCheck CheckIdle = c_checking 0
 
--- | Show a banner across the top of the window offering something, with a
--- button, and perhaps an item in the tray's menu, either of which asks for
--- it with 'OfferAction'. Nothing hides the banner.
+-- | What the last look for a newer version found, in a few words.
+data UpdateStatus
+    = -- | none is newer, as the words say; shown with a tick
+      UpToDate String
+    | -- | anything else, such as that it couldn't look
+      UpdateNote String
+
+-- | Show what the last look for a newer version found, in the strip across
+-- the top of the window, beside the Check for updates button.
+showUpdateStatus :: UpdateStatus -> IO ()
+showUpdateStatus (UpToDate s) = withCWString s (c_update_status 1)
+showUpdateStatus (UpdateNote s) = withCWString s (c_update_status 0)
+
+-- | Offer something in the strip across the top of the window, which turns
+-- amber, with a button, and perhaps an item in the tray's menu, either of
+-- which asks for it with 'OfferAction'. Nothing takes the offer back.
 showOffer :: Maybe (String, String, Maybe String) -> IO ()
 showOffer o = withCWString text $ \t -> withCWString button $ \b -> withCWString tray (c_offer t b)
   where
@@ -141,7 +157,8 @@ showOffer o = withCWString text $ \t -> withCWString button $ \b -> withCWString
         Just (t, b, m) -> (t, b, fromMaybe "" m)
         Nothing -> ("", "", "")
 
--- | Whether the window is open; hidden in the tray doesn't count.
+-- | Whether the window or the log's own window is open; hidden in the tray
+-- doesn't count.
 windowOpen :: IO Bool
 windowOpen = (/= 0) <$> c_window_open
 
@@ -153,7 +170,7 @@ data Action
     | -- | forget the learnt calibration and track afresh
       ClearCalibrationAction
     | QuitAction
-    | -- | the banner's button, or its item in the tray's menu
+    | -- | the strip's button, or its item in the tray's menu
       OfferAction
     | -- | look for a newer version now
       CheckForUpdatesAction
@@ -255,15 +272,15 @@ showTrim (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (if mov
     -- Beyond turning, enough to notice.
     movesToo = abs (roll t) >= 1 || any ((>= 5) . abs) [tx t, ty t, tz t]
 
--- | How many games are tracking.
-showGames :: Int -> IO ()
-showGames = c_games . fromIntegral
+-- | How many games are tracking, and the name of one of them, if known.
+showGames :: Int -> Maybe String -> IO ()
+showGames n name = withCWString (fromMaybe "" name) (c_games (fromIntegral n))
 
 -- | The performance figures of the status line.
 showStats :: String -> IO ()
 showStats s = withCWString s c_stats
 
--- | What the calibration box says, perhaps over several lines.
+-- | What the window says of the calibration, on a line or two.
 showCalibration :: String -> IO ()
 showCalibration s = withCWString s c_calibration
 
@@ -271,8 +288,8 @@ showCalibration s = withCWString s c_calibration
 showSetting :: String -> String -> IO ()
 showSetting name value = withCWString name $ \n -> withCWString value (c_set_setting n)
 
--- | The line beside the settings' switches: whether the last change was
--- saved, or what Check for updates found.
+-- | The line beside the response's heading: whether the last change was
+-- saved, and if not, why.
 showSettingsMessage :: String -> IO ()
 showSettingsMessage s = withCWString s c_settings_message
 

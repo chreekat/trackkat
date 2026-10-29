@@ -416,6 +416,15 @@ main = do
         check ("nothing learnt described " ++ show centre) $
             [describeLevel defaultCalibration, describePivot centre defaultCalibration]
                 == ["Level: not learnt yet; turn your head left and right.", "Neck pivot: not learnt yet; turn your head left and right."]
+    -- The window's shorter lines say the same, and fit its width.
+    check ("level described briefly " ++ describeLevelBriefly c) $
+        take 14 (describeLevelBriefly c) == "Camera tipped " && length (describeLevelBriefly c) <= 90
+    check ("pivot described briefly " ++ describePivotBriefly (Just straight) c) $
+        take 11 (describePivotBriefly (Just straight) c) == "Neck pivot " && length (describePivotBriefly (Just straight) c) <= 95
+    forM_ [Nothing, Just straight] $ \centre ->
+        check ("nothing learnt described briefly " ++ show centre) $
+            [describeLevelBriefly defaultCalibration, describePivotBriefly centre defaultCalibration]
+                == [describeLevel defaultCalibration, describePivot centre defaultCalibration]
     -- A clip worn rolled 15 degrees sees a pivot square below and behind the
     -- head off to one side in its own axes; described at the centre, it is
     -- square again.

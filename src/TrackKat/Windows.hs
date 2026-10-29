@@ -9,6 +9,7 @@ module TrackKat.Windows (
     recenterCount,
     gameReads,
     gamesTracking,
+    trackingGameName,
     singleInstance,
     setNPClientPath,
     findTrackIRFolder,
@@ -46,6 +47,7 @@ foreign import ccall unsafe "hts_publish" c_publish :: CFloat -> CFloat -> CFloa
 foreign import ccall unsafe "hts_recenter_count" c_recenter_count :: IO CLong
 foreign import ccall unsafe "hts_game_reads" c_game_reads :: IO CLong
 foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
+foreign import ccall unsafe "hts_tracking_game_name" c_tracking_game_name :: CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
 foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
 foreign import ccall unsafe "hts_find_trackir_dir" c_find_trackir_dir :: CWString -> CInt -> IO CInt
@@ -83,6 +85,15 @@ gameReads = fromIntegral <$> c_game_reads
 -- | Games that have started head tracking and are still running.
 gamesTracking :: IO Int
 gamesTracking = fromIntegral <$> c_games_tracking
+
+-- | The name of one of the games tracking, as its program is named without
+-- @.exe@, such as DCS; Nothing if there is none, or none can be read.
+trackingGameName :: IO (Maybe String)
+trackingGameName = allocaArray size $ \buf -> do
+    found <- c_tracking_game_name buf (fromIntegral size)
+    if found /= 0 then Just <$> peekCWString buf else pure Nothing
+  where
+    size = 64
 
 -- | Claim the right to be the one running trackkat; False if another is.
 singleInstance :: IO Bool

@@ -25,6 +25,8 @@ module TrackKat.Calibration (
     pivotTurns,
     describeLevel,
     describePivot,
+    describeLevelBriefly,
+    describePivotBriefly,
     plausiblePivot,
     plausibleCalibration,
     screenCalibration,
@@ -146,6 +148,32 @@ describePivot Nothing c =
 describePivot (Just centre) c =
     printf
         "Neck pivot learnt: %.0f mm %s the clip, %.0f %s it and %.0f to your %s, from %.0f head turns."
+        (abs y)
+        (if y >= 0 then "below" else "above" :: String)
+        (abs z)
+        (if z >= 0 then "behind" else "in front of" :: String)
+        (abs x)
+        (if x >= 0 then "left" else "right" :: String)
+        (pivotTurns c)
+  where
+    V3 x y z = inLevelAxes (estimatedLevel c) centre (estimatedPivot c)
+
+-- | The learnt level as the window shows it, shorter than 'describeLevel'.
+describeLevelBriefly :: Calibration -> String
+describeLevelBriefly c
+    | levelTurning c <= 0 = "Level: " ++ notLearnt
+    | otherwise =
+        let (down, right) = cameraTilt (estimatedLevel c)
+         in printf "Camera tipped %.1f° down and %.1f° to its right, from %.0f° of head turning." down right (levelTurning c)
+
+-- | The learnt pivot as the window shows it, shorter than 'describePivot'.
+describePivotBriefly :: Maybe Pose -> Calibration -> String
+describePivotBriefly _ c | pivotTurns c <= 0 = "Neck pivot: " ++ notLearnt
+describePivotBriefly Nothing c =
+    printf "Neck pivot %.0f mm from the clip, from %.0f head turns." (norm (estimatedPivot c)) (pivotTurns c)
+describePivotBriefly (Just centre) c =
+    printf
+        "Neck pivot %.0f mm %s the clip, %.0f %s it and %.0f to your %s, from %.0f head turns."
         (abs y)
         (if y >= 0 then "below" else "above" :: String)
         (abs z)

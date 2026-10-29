@@ -28,7 +28,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_TRIM 0x80
 #define ACT_KEY_TRIM 0x100
 #define ACT_CLEAR_CALIBRATION 0x200
-#define ACT_OFFER 0x400 /* take up what the banner offers: install, or restart to update */
+#define ACT_OFFER 0x400 /* take up what the strip offers: install, or restart to update */
 #define ACT_CHECK_UPDATES 0x800
 
 /* The camera's state, as hts_gui_camera takes it. */
@@ -62,16 +62,19 @@ typedef struct State {
     float view[6];                 /* the same, as games see it */
     int paused;
     int games;
+    wchar_t game_name[64]; /* one of the games, or nothing if unknown */
     int trimmed;
     float trim[2]; /* yaw and pitch added to the view, in degrees */
     int trim_moves; /* whether the trim moves the view, or tilts it, too */
     wchar_t stats[TEXT_MAX];
     wchar_t calibration[TEXT_MAX];
     wchar_t settings_message[TEXT_MAX];
-    wchar_t offer[TEXT_MAX];       /* what the banner says, or nothing for no banner */
+    wchar_t offer[TEXT_MAX];       /* what the strip offers, or nothing */
     wchar_t offer_button[64];      /* its button */
     wchar_t offer_tray[128];       /* the tray menu's item for it, or nothing for none */
     int checking;                  /* whether trackkat is looking for a newer version */
+    wchar_t update_status[TEXT_MAX]; /* what the last look found, in a few words */
+    int up_to_date;                /* whether that is that none is newer */
     int spots;                     /* blobs in the last frame, up to BLOBS_MAX */
     Spot spot[BLOBS_MAX];
 } State;
@@ -79,8 +82,7 @@ typedef struct State {
 /* ---- Shared with Haskell, under the lock --------------------------------- */
 
 static SRWLOCK lock = SRWLOCK_INIT;
-static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, 0, L"", L"",
-                       L"Changes are saved as you make them.", L"", L"", L"", 0, 0, {{0, 0, 0, 0}}};
+static State shared = {.camera = CAMERA_SEARCHING, .settings_message = L"Changes save as you make them."};
 static wchar_t version_text[64] = L"development build"; /* set before the window is made */
 static int updatable; /* whether Check for updates works; set before the window is made */
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
@@ -187,10 +189,13 @@ void hts_gui_trim(int trimmed, float yaw, float pitch, int moves)
     ReleaseSRWLockExclusive(&lock);
 }
 
-void hts_gui_games(int games)
+/* How many games are tracking, and the name of one of them, or an empty
+ * name if it isn't known. */
+void hts_gui_games(int games, const wchar_t *name)
 {
     AcquireSRWLockExclusive(&lock);
     shared.games = games;
+    copy_text(shared.game_name, 64, name);
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -205,15 +210,25 @@ void hts_gui_stats(const wchar_t *text) { set_text(shared.stats, text); }
 void hts_gui_calibration(const wchar_t *text) { set_text(shared.calibration, text); }
 void hts_gui_settings_message(const wchar_t *text) { set_text(shared.settings_message, text); }
 
-/* Show a banner across the top of the window, with a button that takes up
- * what it offers and a tray menu item that does the same; an empty text
- * hides the banner, an empty tray item leaves it out of the menu. */
+/* Offer something in the strip across the top of the window, with a button
+ * that takes it up and a tray menu item that does the same; an empty text
+ * takes the offer back, an empty tray item leaves it out of the menu. */
 void hts_gui_offer(const wchar_t *text, const wchar_t *button, const wchar_t *tray)
 {
     AcquireSRWLockExclusive(&lock);
     copy_text(shared.offer, TEXT_MAX, text);
     copy_text(shared.offer_button, 64, button);
     copy_text(shared.offer_tray, 128, tray);
+    ReleaseSRWLockExclusive(&lock);
+}
+
+/* What the last look for a newer version found, in a few words, for the
+ * strip across the top; up_to_date if that is that none is newer. */
+void hts_gui_update_status(int up_to_date, const wchar_t *text)
+{
+    AcquireSRWLockExclusive(&lock);
+    shared.up_to_date = up_to_date;
+    copy_text(shared.update_status, TEXT_MAX, text);
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -226,7 +241,7 @@ void hts_gui_checking(int checking)
     ReleaseSRWLockExclusive(&lock);
 }
 
-/* The version shown in the title and beside the log. Call before
+/* The version shown in the title, the strip and the log window. Call before
  * hts_gui_start. */
 void hts_gui_version(const wchar_t *text)
 {
@@ -314,6 +329,7 @@ void hts_gui_add_binding(int which, const wchar_t *binding)
 #define WM_APP_QUIT (WM_APP + 4)          /* from another trackkat, uninstalling */
 #define TIMER_ID 1
 #define TIMER_MS 33
+#define COVER_AWAY_MS 4000 /* the calibration cover closes once the mouse has been away from it this long */
 
 enum {
     ID_RECENTER = 100,
@@ -329,6 +345,9 @@ enum {
     ID_ADD_TRIM,
     ID_OFFER,
     ID_CHECK_UPDATES,
+    ID_COVER,
+    ID_OPEN_LOG,
+    ID_CLOSE_LOG,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
@@ -343,12 +362,17 @@ enum {
 };
 
 static HINSTANCE inst;
-static HWND tray_hwnd, main_hwnd, live_hwnd;
-static HWND recenter_button, pause_button, trim_button, calibration_text, settings_text, log_box;
-static HWND log_group, copy_button, log_hint, version_label;
-static HWND banner, offer_button; /* shown with an offer, above the rest */
-static HWND check_updates;
-static int banner_shown;
+static HWND tray_hwnd, main_hwnd, live_hwnd, strip_hwnd, log_hwnd;
+/* The lit switches in the live view, in the order of the binding lists. */
+static HWND switch_ctl[LISTS];
+static HWND calibration_text, settings_text, log_box, log_line, aids_label;
+static HWND offer_button, check_updates; /* in the strip, one at a time */
+static HWND log_hint, log_version, log_copy, log_close; /* in the log window */
+/* The cover over Calibrate now and Clear calibration, and what it covers. */
+static HWND cover, cover_buttons[2], cover_frame;
+static int cover_lifted, cover_by_keyboard;
+static ULONGLONG cover_near; /* when the mouse was last near the lifted cover */
+static HWND list_heading[LISTS];
 static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
 static wchar_t field_text[F_COUNT][FIELD_MAX]; /* values of the checkbox and sliders */
@@ -358,18 +382,19 @@ static HWND add_button[LISTS];
 static HWND curve_plot[6], multiplier_edit[6], multiplier_step[6], precision_slider[6], precision_value[6];
 static HWND curve_note[6], curve_extra[6][2]; /* the labels shown only with the controls */
 static HWND curves_as_text;
-static WNDPROC button_proc;
+static WNDPROC button_proc, edit_proc;
 static int swallow_key_up; /* the key that was captured is still to come up */
 static State seen; /* the last snapshot */
 static int dpi = 96;
 static HFONT ui_font, mono_font, small_font, bold_font;
-static HBRUSH log_brush;
+static HBRUSH white_brush;
 static UINT taskbar_created;
 static int tray_added;
 static NOTIFYICONDATAW nid;
 static int icon_shown = -1;
 static wchar_t tip_shown[128];
 static unsigned long long log_shown; /* log characters put in the log box, counting all ever logged */
+static int scroll_pos; /* how far the window's content is scrolled up, in pixels */
 
 static volatile LONG gui_status; /* 0 starting, 1 running, 2 failed */
 static volatile LONG gui_error;
@@ -676,37 +701,51 @@ static void format_axis(wchar_t *buf, size_t size, int axis, float value)
     buf[size - 1] = 0;
 }
 
-static void status_line(HDC dc, int x, int y, COLORREF dot, const wchar_t *label, const wchar_t *value)
+/* A light with its label and what it says, in a row of the given width. */
+static void status_light(HDC dc, int x, int y, int width, COLORREF dot, const wchar_t *label, const wchar_t *value)
 {
     disc(dc, dot, dot, 1, x + S(5), y + S(9), S(4));
-    text_at(dc, small_font, C_DIM, x + S(16), y, S(64), S(18), DT_LEFT, label);
-    text_at(dc, ui_font, C_TEXT, x + S(80), y, S(360), S(18), DT_LEFT, value);
+    text_at(dc, small_font, C_DIM, x + S(16), y, S(48), S(18), DT_LEFT, label);
+    text_at(dc, ui_font, C_TEXT, x + S(64), y, width - S(64), S(18), DT_LEFT, value);
 }
+
+/* The live view's layout, in pixels at 96 dpi: the head, the axes beside it,
+ * then across the whole width the lights, the switches and the figures. */
+#define PANEL_W 700
+#define PANEL_H 296
+#define HEAD_SIZE 176
+#define ROW_H 24
+#define LIGHTS_Y 192
+#define SWITCH_Y 216
+#define SWITCH_H 52
+#define SWITCH_W ((PANEL_W - 16 - 20) / 3)
+#define STATS_Y 274
+#define TABLE_X (8 + HEAD_SIZE + 16)
+#define LIGHT_W ((PANEL_W - 16) / 3)
 
 static void paint_live(HDC dc, int width, int height)
 {
     fill_rect(dc, 0, 0, width, height, C_BACK);
     SetBkMode(dc, TRANSPARENT);
-    int size = height - S(16);
-    draw_head(dc, S(8), S(8), size);
+    draw_head(dc, S(8), S(8), S(HEAD_SIZE));
 
-    int x0 = S(8) + size + S(16);
+    int x0 = S(TABLE_X);
     int tracking = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
     text_at(dc, small_font, C_DIM, x0 + S(50), S(6), S(80), S(18), DT_RIGHT, L"head");
     text_at(dc, small_font, C_DIM, x0 + S(130), S(6), S(80), S(18), DT_RIGHT, L"games see");
     int bar_l = x0 + S(226), bar_r = width - S(10);
     text_at(dc, small_font, C_DIM, bar_l, S(6), bar_r - bar_l, S(18), DT_RIGHT, L"Rest the mouse on anything for help");
     for (int i = 0; i < 6; i++) {
-        int y = S(26) + i * S(20);
+        int y = S(26) + i * S(ROW_H);
         wchar_t buf[32];
-        text_at(dc, ui_font, C_TEXT, x0, y, S(50), S(20), DT_LEFT, axis_names[i]);
+        text_at(dc, ui_font, C_TEXT, x0, y, S(50), S(ROW_H), DT_LEFT, axis_names[i]);
         format_axis(buf, 32, i, seen.head[i]);
-        text_at(dc, mono_font, tracking ? C_TEXT : C_DIM, x0 + S(50), y, S(80), S(20), DT_RIGHT, buf);
+        text_at(dc, mono_font, tracking ? C_TEXT : C_DIM, x0 + S(50), y, S(80), S(ROW_H), DT_RIGHT, buf);
         format_axis(buf, 32, i, seen.view[i]);
-        text_at(dc, mono_font, tracking || seen.paused ? C_ACCENT : C_DIM, x0 + S(130), y, S(80), S(20), DT_RIGHT,
+        text_at(dc, mono_font, tracking || seen.paused ? C_ACCENT : C_DIM, x0 + S(130), y, S(80), S(ROW_H), DT_RIGHT,
                 buf);
 
-        int top = y + S(3), bottom = y + S(16), mid = (bar_l + bar_r) / 2, half = (bar_r - bar_l) / 2;
+        int top = y + S(5), bottom = y + S(18), mid = (bar_l + bar_r) / 2, half = (bar_r - bar_l) / 2;
         fill_rect(dc, bar_l, top, bar_r, bottom, C_BOX);
         double f = seen.view[i] / axis_range[i];
         f = f < -1 ? -1 : f > 1 ? 1 : f;
@@ -721,47 +760,151 @@ static void paint_live(HDC dc, int width, int height)
         text_at(dc, small_font, C_DIM, bar_r - S(54), top, S(50), bottom - top, DT_RIGHT, axis_plus[i]);
     }
 
-    int y = S(26) + 6 * S(20) + S(6);
+    int x = S(8), y = S(LIGHTS_Y), w = S(LIGHT_W);
     wchar_t buf[TEXT_MAX + 64];
     switch (seen.camera) {
     case CAMERA_TRACKING:
-        status_line(dc, x0, y, C_GREEN, L"Camera", L"Connected");
+        status_light(dc, x, y, w, C_GREEN, L"Camera", L"Connected");
         break;
     case CAMERA_SEARCHING:
-        status_line(dc, x0, y, C_GREY, L"Camera", L"Looking for it…");
+        status_light(dc, x, y, w, C_GREY, L"Camera", L"Looking for it…");
         break;
     default:
-        status_line(dc, x0, y, C_RED, L"Camera", seen.camera_text[0] ? seen.camera_text : L"Not found");
+        status_light(dc, x, y, w, C_RED, L"Camera", seen.camera_text[0] ? seen.camera_text : L"Not found");
     }
-    y += S(18);
+    x += w;
     if (seen.camera != CAMERA_TRACKING)
-        status_line(dc, x0, y, C_GREY, L"Clip", L"—");
+        status_light(dc, x, y, w, C_GREY, L"Clip", L"—");
     else if (seen.blobs < 0)
-        status_line(dc, x0, y, C_GREEN, L"Clip", L"In sight");
+        status_light(dc, x, y, w, C_GREEN, L"Clip", L"In sight");
     else {
-        _snwprintf(buf, 64, L"Out of sight (%d of 3 reflectors)", seen.blobs);
+        _snwprintf(buf, 64, L"Out of sight (%d of 3)", seen.blobs);
         buf[63] = 0;
-        status_line(dc, x0, y, C_AMBER, L"Clip", buf);
+        status_light(dc, x, y, w, C_AMBER, L"Clip", buf);
     }
-    y += S(18);
-    if (seen.games > 0) {
-        _snwprintf(buf, 64, seen.games == 1 ? L"1 connected" : L"%d connected", seen.games);
-        buf[63] = 0;
-    }
-    status_line(dc, x0, y, seen.games > 0 ? C_ACCENT : C_GREY, L"Games", seen.games > 0 ? buf : L"None");
-    /* The trim shares the games' row, which is short. */
-    if (seen.trimmed) {
-        _snwprintf(buf, 64, L"yaw %+.0f° pitch %+.0f°%ls", seen.trim[0], seen.trim[1], seen.trim_moves ? L", moved" : L"");
-        buf[63] = 0;
-    }
-    status_line(dc, x0 + S(180), y, seen.trimmed ? C_ACCENT : C_GREY, L"Trim", seen.trimmed ? buf : L"None");
-    y += S(18);
-    status_line(dc, x0, y, seen.paused ? C_AMBER : C_GREEN, L"Output",
-                seen.paused ? L"Paused: games see your head held still" : L"Live");
-    y += S(18);
+    x += w;
+    /* A game by its name when it is known, and how many more. */
+    if (seen.games > 0 && seen.game_name[0])
+        _snwprintf(buf, 128, seen.games == 1 ? L"%ls" : L"%ls and %d more", seen.game_name, seen.games - 1);
+    else
+        _snwprintf(buf, 128, seen.games == 1 ? L"1 connected" : L"%d connected", seen.games);
+    buf[127] = 0;
+    status_light(dc, x, y, w, seen.games > 0 ? C_ACCENT : C_GREY, L"Games", seen.games > 0 ? buf : L"None");
 
     if (seen.camera == CAMERA_TRACKING && seen.stats[0])
-        text_at(dc, small_font, C_DIM, x0, y, width - x0 - S(10), S(18), DT_LEFT, seen.stats);
+        text_at(dc, small_font, C_DIM, S(8), S(STATS_Y), width - S(18), S(18), DT_LEFT, seen.stats);
+}
+
+/* ---- The lit switches ----------------------------------------------------- */
+
+/* A switch's colours: unlit, or lit amber or blue like an annunciator. */
+typedef struct {
+    COLORREF back, edge, name, line;
+} Lamp;
+static const Lamp lamp_off = {RGB(42, 47, 57), RGB(69, 76, 89), RGB(230, 233, 239), RGB(138, 146, 161)};
+static const Lamp lamp_amber = {RGB(74, 54, 18), RGB(240, 180, 69), RGB(255, 210, 122), RGB(231, 194, 120)};
+static const Lamp lamp_blue = {RGB(20, 42, 69), RGB(90, 169, 255), RGB(185, 220, 255), RGB(156, 200, 245)};
+
+static COLORREF mix(COLORREF a, COLORREF b, int percent_b)
+{
+    int p = percent_b, q = 100 - percent_b;
+    return RGB((GetRValue(a) * q + GetRValue(b) * p) / 100, (GetGValue(a) * q + GetGValue(b) * p) / 100,
+               (GetBValue(a) * q + GetBValue(b) * p) / 100);
+}
+
+/* A whole number of degrees with its sign, minus as a true minus. */
+static void signed_degrees(wchar_t *buf, size_t size, float x)
+{
+    long n = lround(x);
+    _snwprintf(buf, size, n < 0 ? L"−%ld" : L"+%ld", n < 0 ? -n : n);
+    buf[size - 1] = 0;
+}
+
+/* What a switch says: its name, bold, and below it its state; and how it
+ * is lit. */
+static void switch_words(int which, const wchar_t **name, wchar_t *line, size_t size, const Lamp **lamp)
+{
+    *lamp = &lamp_off;
+    if (which == 0) {
+        *name = L"RECENTER";
+        copy_text(line, size, L"clears trim");
+    } else if (which == 1) {
+        *name = seen.paused ? L"PAUSED" : L"PAUSE";
+        copy_text(line, size, seen.paused ? L"games see the view held" : L"output live");
+        if (seen.paused)
+            *lamp = &lamp_amber;
+    } else {
+        *name = L"TRIM";
+        if (seen.trimmed) {
+            wchar_t y[16], p[16];
+            signed_degrees(y, 16, seen.trim[0]);
+            signed_degrees(p, 16, seen.trim[1]);
+            _snwprintf(line, size, L"yaw %ls pitch %ls%ls", y, p, seen.trim_moves ? L" · moved" : L"");
+            line[size - 1] = 0;
+            *lamp = &lamp_blue;
+        } else
+            copy_text(line, size, L"off");
+    }
+}
+
+/* Name a switch as it stands, for screen readers, and redraw it. */
+static void name_switch(int which)
+{
+    static const wchar_t *const action[LISTS] = {L"Recenter", L"Pause", L"Trim"};
+    const wchar_t *name;
+    const Lamp *lamp;
+    wchar_t line[64], text[96];
+    switch_words(which, &name, line, 64, &lamp);
+    _snwprintf(text, 96, L"%ls: %ls", which == 1 && seen.paused ? L"Paused" : action[which], line);
+    text[95] = 0;
+    SetWindowTextW(switch_ctl[which], text);
+    InvalidateRect(switch_ctl[which], NULL, FALSE);
+}
+
+static void draw_switch(const DRAWITEMSTRUCT *d)
+{
+    int which = d->hwndItem == switch_ctl[1] ? 1 : d->hwndItem == switch_ctl[2] ? 2 : 0;
+    const wchar_t *name;
+    const Lamp *lamp;
+    wchar_t line[64];
+    switch_words(which, &name, line, 64, &lamp);
+    HDC dc = d->hDC;
+    RECT r = d->rcItem;
+    int pressed = (d->itemState & ODS_SELECTED) != 0;
+    fill_rect(dc, r.left, r.top, r.right, r.bottom, C_BACK);
+    COLORREF back = pressed ? mix(lamp->back, RGB(0, 0, 0), 25) : lamp->back;
+    /* A rounded face, and when lit a glow inside its edge. */
+    int round = S(8);
+    HBRUSH brush = CreateSolidBrush(back);
+    HPEN pen = CreatePen(PS_SOLID, 1, lamp->edge);
+    HGDIOBJ ob = SelectObject(dc, brush), op = SelectObject(dc, pen);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, round, round);
+    SelectObject(dc, GetStockObject(NULL_BRUSH));
+    if (lamp != &lamp_off)
+        for (int i = 1; i <= S(5); i++) {
+            HPEN glow = CreatePen(PS_SOLID, 1, mix(back, lamp->edge, 50 - 45 * i / (S(5) + 1)));
+            SelectObject(dc, glow);
+            RoundRect(dc, r.left + i, r.top + i, r.right - i, r.bottom - i, round, round);
+            SelectObject(dc, pen);
+            DeleteObject(glow);
+        }
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(brush);
+    DeleteObject(pen);
+    SetBkMode(dc, TRANSPARENT);
+    int shift = pressed ? S(1) : 0, h = r.bottom - r.top, w = r.right - r.left;
+    SetTextCharacterExtra(dc, S(2));
+    text_at(dc, bold_font, lamp->name, r.left + shift, r.top + h / 2 - S(19) + shift, w, S(20), DT_CENTER, name);
+    SetTextCharacterExtra(dc, 0);
+    text_at(dc, small_font, lamp->line, r.left + S(4) + shift, r.top + h / 2 + shift, w - S(8), S(18), DT_CENTER,
+            line);
+    if (d->itemState & ODS_FOCUS && !(d->itemState & ODS_NOFOCUSRECT)) {
+        RECT f = {r.left + S(4), r.top + S(4), r.right - S(4), r.bottom - S(4)};
+        SetTextColor(dc, RGB(0, 0, 0));
+        SetBkColor(dc, RGB(255, 255, 255));
+        DrawFocusRect(dc, &f);
+    }
 }
 
 static LRESULT CALLBACK live_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
@@ -786,39 +929,127 @@ static LRESULT CALLBACK live_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         EndPaint(w, &ps);
         return 0;
     }
+    case WM_DRAWITEM:
+        draw_switch((const DRAWITEMSTRUCT *)lp);
+        return TRUE;
+    case WM_COMMAND:
+        /* The switches' clicks are the window's to act on. */
+        return SendMessageW(main_hwnd, msg, wp, lp);
     }
     return DefWindowProcW(w, msg, wp, lp);
 }
 
-/* ---- The banner ----------------------------------------------------------- */
+/* ---- The strip across the top --------------------------------------------- */
 
-/* What the banner offers, in the live view's colours, a bar of the accent
- * on its left. */
-static LRESULT CALLBACK banner_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+#define STRIP_H 40
+#define STRIP_BUTTON_W 150 /* the widest of its buttons */
+#define C_STRIP RGB(228, 228, 228)
+#define C_STRIP_EDGE RGB(207, 207, 207)
+#define C_OFFER RGB(255, 244, 214)
+#define C_OFFER_EDGE RGB(230, 207, 138)
+#define C_OFFER_TEXT RGB(106, 75, 0)
+#define C_GOOD RGB(46, 107, 52)
+
+/* Draw text on one line, centred in a row of height h; returns its width. */
+static int text_run(HDC dc, HFONT font, COLORREF c, int x, int h, const wchar_t *s)
 {
+    SelectObject(dc, font);
+    RECT m = {0, 0, 0, 0};
+    DrawTextW(dc, s, -1, &m, DT_SINGLELINE | DT_NOPREFIX | DT_CALCRECT);
+    text_at(dc, font, c, x, 0, m.right, h, DT_LEFT, s);
+    return m.right;
+}
+
+/* trackkat, its version and whether it is up to date; or, with an offer,
+ * the offer, on amber. The button at the right is a child of its own. */
+static void paint_strip(HDC dc, int w, int h)
+{
+    int offer = seen.offer[0] != 0;
+    fill_rect(dc, 0, 0, w, h, offer ? C_OFFER : C_STRIP);
+    fill_rect(dc, 0, h - 1, w, h, offer ? C_OFFER_EDGE : C_STRIP_EDGE);
+    SetBkMode(dc, TRANSPARENT);
+    int size = S(16), x = S(10);
+    DrawIconEx(dc, x, (h - size) / 2, resource_icon(PROGRAM_ICON, size), size, size, 0, NULL, DI_NORMAL);
+    x += size + S(8);
+    x += text_run(dc, bold_font, RGB(27, 27, 27), x, h, L"trackkat") + S(8);
+    /* The build's number; its commit is in the title and the log window. */
+    wchar_t version[64];
+    copy_text(version, 64, version_text);
+    wchar_t *paren = wcsstr(version, L" (");
+    if (paren)
+        *paren = 0;
+    x += text_run(dc, ui_font, RGB(85, 85, 85), x, h, version) + S(12);
+    int right = w - S(STRIP_BUTTON_W + 20);
+    if (right <= x)
+        return;
+    if (offer) {
+        /* On one line or two, in the smaller font if it needs more. */
+        RECT text = {x, 0, right, h}, measure = text;
+        HFONT font = ui_font;
+        SelectObject(dc, font);
+        DrawTextW(dc, seen.offer, -1, &measure, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        if (measure.bottom - measure.top > h - S(8)) {
+            font = small_font;
+            SelectObject(dc, font);
+            measure = text;
+            DrawTextW(dc, seen.offer, -1, &measure, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        }
+        int th = measure.bottom - measure.top;
+        if (th > h - S(4))
+            th = h - S(4);
+        text.top = (h - th) / 2;
+        text.bottom = text.top + th;
+        SetTextColor(dc, C_OFFER_TEXT);
+        DrawTextW(dc, seen.offer, -1, &text, DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX | DT_END_ELLIPSIS);
+        return;
+    }
+    const wchar_t *status = seen.checking ? L"Checking…" : seen.update_status;
+    int good = !seen.checking && seen.up_to_date;
+    if (!status[0])
+        return;
+    if (good) {
+        int cy = h / 2;
+        POINT tick[3] = {{x + S(1), cy}, {x + S(4), cy + S(3)}, {x + S(10), cy - S(4)}};
+        HPEN pen = CreatePen(PS_SOLID, S(2), C_GOOD);
+        HGDIOBJ old = SelectObject(dc, pen);
+        Polyline(dc, tick, 3);
+        SelectObject(dc, old);
+        DeleteObject(pen);
+        x += S(15);
+    }
+    text_at(dc, ui_font, good ? C_GOOD : RGB(85, 85, 85), x, 0, right - x, h, DT_LEFT, status);
+}
+
+static LRESULT CALLBACK strip_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+{
+    static HBRUSH quiet, offering;
     switch (msg) {
     case WM_ERASEBKGND:
         return 1;
+    case WM_PRINTCLIENT: {
+        /* Behind the button's rounded corners. */
+        RECT rc;
+        GetClientRect(w, &rc);
+        paint_strip((HDC)wp, rc.right, rc.bottom);
+        return 0;
+    }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(w, &ps);
         RECT rc;
         GetClientRect(w, &rc);
-        fill_rect(dc, 0, 0, rc.right, rc.bottom, C_BACK);
-        fill_rect(dc, 0, 0, S(4), rc.bottom, C_ACCENT);
-        SetBkMode(dc, TRANSPARENT);
-        SelectObject(dc, ui_font);
-        SetTextColor(dc, C_TEXT);
-        /* Centred, on one line or two. */
-        RECT text = {S(14), 0, rc.right - S(8), rc.bottom};
-        RECT measure = text;
-        DrawTextW(dc, seen.offer, -1, &measure, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
-        int h = measure.bottom - measure.top;
-        text.top = (rc.bottom - h) / 2;
-        DrawTextW(dc, seen.offer, -1, &text, DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS);
+        paint_strip(dc, rc.right, rc.bottom);
         EndPaint(w, &ps);
         return 0;
     }
+    case WM_CTLCOLORBTN:
+        if (!quiet) {
+            quiet = CreateSolidBrush(C_STRIP);
+            offering = CreateSolidBrush(C_OFFER);
+        }
+        return (LRESULT)(seen.offer[0] ? offering : quiet);
+    case WM_COMMAND:
+        return SendMessageW(main_hwnd, msg, wp, lp);
     }
     return DefWindowProcW(w, msg, wp, lp);
 }
@@ -1136,7 +1367,7 @@ static void end_capture(void)
 {
     LONG which = InterlockedExchange(&capturing, -1);
     if (which >= 0) {
-        SetWindowTextW(add_button[which], L"Add key or button…");
+        SetWindowTextW(add_button[which], L"Add…");
         if (GetCapture() == add_button[which])
             ReleaseCapture();
     }
@@ -1234,79 +1465,91 @@ static void save_soon(UINT ms)
     SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL);
 }
 
-/* Add a binding to a list's text, unless it is there already. */
+/* A binding list as trackkat.conf writes it, separated by commas, from its
+ * box, which has one to a line; commas typed there separate them too. */
+static void list_from_box(int field, wchar_t *out, size_t size)
+{
+    wchar_t text[FIELD_MAX * 2];
+    GetWindowTextW(field_ctl[field], text, FIELD_MAX * 2);
+    size_t n = 0;
+    out[0] = 0;
+    for (const wchar_t *p = text; *p;) {
+        while (*p == L' ' || *p == L'\t' || *p == L',' || *p == L'\r' || *p == L'\n')
+            p++;
+        const wchar_t *end = p;
+        while (*end && *end != L',' && *end != L'\r' && *end != L'\n')
+            end++;
+        const wchar_t *last = end;
+        while (last > p && (last[-1] == L' ' || last[-1] == L'\t'))
+            last--;
+        if (last > p) {
+            int k = _snwprintf(out + n, size - n, n ? L", %.*ls" : L"%.*ls", (int)(last - p), p);
+            if (k < 0) {
+                out[size - 1] = 0;
+                return;
+            }
+            n += (size_t)k;
+        }
+        p = end;
+    }
+}
+
+/* Show a binding list, as trackkat.conf writes it, one to a line. */
+static void list_to_box(int field, const wchar_t *list)
+{
+    wchar_t text[FIELD_MAX * 2];
+    size_t n = 0;
+    for (const wchar_t *p = list; *p && n + 3 < FIELD_MAX * 2;)
+        if (*p == L',') {
+            text[n++] = L'\r';
+            text[n++] = L'\n';
+            for (p++; *p == L' '; p++)
+                ;
+        } else
+            text[n++] = *p++;
+    text[n] = 0;
+    SetWindowTextW(field_ctl[field], text);
+}
+
+/* Add a binding to a list, unless it is there already. */
 static void add_binding(int field, const wchar_t *binding)
 {
     wchar_t text[FIELD_MAX];
-    GetWindowTextW(field_ctl[field], text, FIELD_MAX);
-    const wchar_t *p = text;
+    list_from_box(field, text, FIELD_MAX);
     size_t blen = wcslen(binding);
-    int empty = 1;
-    while (*p) {
+    for (const wchar_t *p = text; *p;) {
         while (*p == L' ' || *p == L',')
             p++;
         const wchar_t *end = p;
         while (*end && *end != L',')
             end++;
-        const wchar_t *last = end;
-        while (last > p && last[-1] == L' ')
-            last--;
-        if (last > p)
-            empty = 0;
-        if ((size_t)(last - p) == blen && _wcsnicmp(p, binding, blen) == 0)
+        if ((size_t)(end - p) == blen && _wcsnicmp(p, binding, blen) == 0)
             return;
         p = end;
     }
     wchar_t joined[FIELD_MAX];
-    if (empty)
+    if (!text[0])
         copy_text(joined, FIELD_MAX, binding);
     else {
         _snwprintf(joined, FIELD_MAX, L"%ls, %ls", text, binding);
         joined[FIELD_MAX - 1] = 0;
     }
-    SetWindowTextW(field_ctl[field], joined);
+    list_to_box(field, joined);
     save_soon(1);
 }
 
-/* Whether a label fits on a button, in the button's font. */
-static int label_fits(HWND button, const wchar_t *label)
+/* A binding list's box takes Enter for a new line, but leaves Tab and Esc to
+ * the window. */
+static LRESULT CALLBACK list_box_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
-    RECT r;
-    GetClientRect(button, &r);
-    HDC dc = GetDC(button);
-    HGDIOBJ old = SelectObject(dc, (HFONT)SendMessageW(button, WM_GETFONT, 0, 0));
-    SIZE extent;
-    GetTextExtentPoint32W(dc, label, (int)wcslen(label), &extent);
-    SelectObject(dc, old);
-    ReleaseDC(button, dc);
-    return extent.cx <= r.right - r.left - S(12);
-}
-
-/* A label for a button, naming the first of its bindings that fits on it,
- * or only that it has some if none fits. */
-static void binding_label(HWND button, wchar_t *label, size_t size, const wchar_t *action, const wchar_t *bindings)
-{
-    wchar_t list[FIELD_MAX];
-    copy_text(list, FIELD_MAX, bindings);
-    int several = wcschr(list, L',') != NULL;
-    for (wchar_t *b = list; *b;) {
-        wchar_t *end = wcschr(b, L',');
-        if (end)
-            *end = 0;
-        while (*b == L' ')
-            b++;
-        if (*b) {
-            _snwprintf(label, size, several ? L"%ls (%ls, …)" : L"%ls (%ls)", action, b);
-            label[size - 1] = 0;
-            if (label_fits(button, label))
-                return;
-        }
-        if (!end)
-            break;
-        b = end + 1;
+    if (msg == WM_GETDLGCODE) {
+        LRESULT code = CallWindowProcW(edit_proc, w, msg, wp, lp) & ~(DLGC_WANTALLKEYS | DLGC_WANTTAB);
+        const MSG *m = (const MSG *)lp;
+        if (m && m->message == WM_KEYDOWN && m->wParam == VK_RETURN)
+            code |= DLGC_WANTMESSAGE;
+        return code;
     }
-    _snwprintf(label, size, list[0] ? L"%ls (…)" : L"%ls", action);
-    label[size - 1] = 0;
+    return CallWindowProcW(edit_proc, w, msg, wp, lp);
 }
 
 static int slider_field(int i) { return i == F_STEADINESS || i == F_RESPONSIVENESS; }
@@ -1334,15 +1577,8 @@ static void show_field(int i, const wchar_t *value)
         SetWindowTextW(field_ctl[i], value);
         syncing--;
         sync_curve(i - F_YAW, FROM_TEXT);
-    } else
-        SetWindowTextW(field_ctl[i], value);
-    if (i == F_RECENTER || i == F_PAUSE || i == F_TRIM) {
-        HWND button = i == F_RECENTER ? recenter_button : i == F_TRIM ? trim_button : pause_button;
-        wchar_t label[FIELD_MAX + 32];
-        binding_label(button, label, FIELD_MAX + 32,
-                      i == F_RECENTER ? L"Recenter" : i == F_TRIM ? L"Trim" : seen.paused ? L"Resume" : L"Pause", value);
-        SetWindowTextW(button, label);
-    }
+    } else /* a binding list */
+        list_to_box(i, value);
 }
 
 static void save_settings(void)
@@ -1352,6 +1588,8 @@ static void save_settings(void)
         if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS ||
             slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
+        else if (i < F_RECENTER + LISTS)
+            list_from_box(i, values[i], FIELD_MAX);
         else
             GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
     AcquireSRWLockExclusive(&lock);
@@ -1428,6 +1666,15 @@ static void drain_log(void)
     log_shown += n;
     chunk[n] = 0;
     append_log(chunk);
+    /* The last line, on the window's line for the log. */
+    size_t end = n;
+    while (end > 0 && (chunk[end - 1] == L'\n' || chunk[end - 1] == L'\r'))
+        end--;
+    size_t start = end;
+    while (start > 0 && chunk[start - 1] != L'\n')
+        start--;
+    chunk[end] = 0;
+    SetWindowTextW(log_line, chunk + start);
 }
 
 static void copy_log(void)
@@ -1451,114 +1698,196 @@ static void copy_log(void)
 
 /* ---- The window ----------------------------------------------------------- */
 
-/* Layout, in pixels at 96 dpi. The log box takes what height is left. */
+/* Layout, in pixels at 96 dpi, top to bottom: the strip, the live view, the
+ * bindings, the response, the calibration, the log's line and the program's
+ * switches. Taller than the screen, the window scrolls. */
 #define CLIENT_W 720
-#define CURVES_TOP 506
-#define LOG_TOP (CURVES_TOP + 216)
-#define CLIENT_H (LOG_TOP + 172)
-#define BANNER_H 44 /* the banner's height, with the gap below it */
+#define PANEL_Y (STRIP_H + 10)
+#define BIND_Y (PANEL_Y + PANEL_H + 8)
+#define BIND_H 130
+#define RESP_Y (BIND_Y + BIND_H + 8)
+#define CURVES_Y (RESP_Y + 22)
+#define AIDS_Y (RESP_Y + 172)
+#define RESP_H 230
+#define CAL_Y (RESP_Y + RESP_H + 8)
+#define COVER_X 470
+#define COVER_W 230
+#define LOG_Y (CAL_Y + 58)
+#define MODES_Y (LOG_Y + 46)
+#define CLIENT_H (MODES_Y + 46)
 
-static void layout(int width, int height);
+/* A binding list's column, under its switch. */
+static int column_x(int i) { return 10 + 8 + 4 + i * (SWITCH_W + 10); }
 
-/* Show the banner or hide it, as the offer says, moving everything else
- * down or up to make room, and the window's bottom with it. */
-static void show_banner(void)
+/* Move a control to a place in the layout, wherever the window is scrolled. */
+static void place(HWND c, int x, int y, int w, int h)
 {
-    SetWindowTextW(offer_button, seen.offer_button);
-    InvalidateRect(banner, NULL, FALSE);
-    int show = seen.offer[0] != 0;
-    if (show == banner_shown)
+    MoveWindow(c, S(x), S(y) - scroll_pos, S(w), S(h), TRUE);
+}
+
+/* ---- Scrolling ------------------------------------------------------------ */
+
+static void scroll_to(int pos)
+{
+    RECT rc;
+    GetClientRect(main_hwnd, &rc);
+    int most = S(CLIENT_H) - rc.bottom;
+    pos = pos > most ? most : pos;
+    pos = pos < 0 ? 0 : pos;
+    if (pos == scroll_pos)
         return;
-    banner_shown = show;
-    int dy = show ? S(BANNER_H) : -S(BANNER_H);
-    for (HWND c = GetWindow(main_hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
-        if (c == banner || c == offer_button)
-            continue;
-        RECT r;
-        GetWindowRect(c, &r);
-        MapWindowPoints(NULL, main_hwnd, (POINT *)&r, 2);
-        SetWindowPos(c, NULL, r.left, r.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-    ShowWindow(banner, show ? SW_SHOWNA : SW_HIDE);
-    ShowWindow(offer_button, show ? SW_SHOWNA : SW_HIDE);
-    RECT client;
-    GetClientRect(main_hwnd, &client);
-    if (IsZoomed(main_hwnd))
-        layout(client.right, client.bottom);
-    else {
-        RECT r;
-        GetWindowRect(main_hwnd, &r);
-        SetWindowPos(main_hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top + dy,
+    ScrollWindowEx(main_hwnd, 0, scroll_pos - pos, NULL, NULL, NULL, NULL, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+    scroll_pos = pos;
+    SetScrollPos(main_hwnd, SB_VERT, pos, TRUE);
+}
+
+/* Show a scroll bar if the window is shorter than its content, keeping the
+ * content's width beside it. */
+static void fit_scroll(void)
+{
+    static int fitting;
+    if (fitting)
+        return;
+    fitting = 1;
+    RECT rc;
+    GetClientRect(main_hwnd, &rc);
+    SCROLLINFO si;
+    memset(&si, 0, sizeof si);
+    si.cbSize = sizeof si;
+    si.fMask = SIF_RANGE | SIF_PAGE;
+    si.nMax = S(CLIENT_H) - 1;
+    si.nPage = (UINT)rc.bottom;
+    SetScrollInfo(main_hwnd, SB_VERT, &si, TRUE);
+    scroll_to(scroll_pos);
+    GetClientRect(main_hwnd, &rc);
+    if (rc.right != S(CLIENT_W)) {
+        RECT wr;
+        GetWindowRect(main_hwnd, &wr);
+        SetWindowPos(main_hwnd, NULL, 0, 0, wr.right - wr.left + S(CLIENT_W) - rc.right, wr.bottom - wr.top,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    fitting = 0;
 }
 
-static void refresh(void)
-{
-    State st;
-    unsigned fields, lists;
-    wchar_t values[F_COUNT][FIELD_MAX], additions[LISTS][FIELD_MAX];
-    AcquireSRWLockExclusive(&lock);
-    st = shared;
-    fields = pushed_fields;
-    pushed_fields = 0;
-    for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
-            copy_text(values[i], FIELD_MAX, pushed[i]);
-    lists = added_lists;
-    added_lists = 0;
-    memcpy(additions, added, sizeof added);
-    ReleaseSRWLockExclusive(&lock);
+/* ---- The calibration cover ------------------------------------------------ */
 
-    for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
-            show_field(i, values[i]);
-    for (int i = 0; i < LISTS; i++)
-        if (lists & 1u << i) {
-            add_binding(F_RECENTER + i, additions[i]);
-            if (InterlockedCompareExchange(&capturing, 0, 0) == i)
-                end_capture();
-        }
-    if (wcscmp(st.calibration, seen.calibration) != 0)
-        SetWindowTextW(calibration_text, st.calibration);
-    if (wcscmp(st.settings_message, seen.settings_message) != 0)
-        SetWindowTextW(settings_text, st.settings_message);
-    if (st.checking != seen.checking) {
-        SetWindowTextW(check_updates, st.checking ? L"Checking…" : L"Check for updates");
-        EnableWindow(check_updates, updatable && !st.checking);
-    }
-    int offer_changed = wcscmp(st.offer, seen.offer) != 0 || wcscmp(st.offer_button, seen.offer_button) != 0;
-    if (st.paused != seen.paused || fields & (1u << F_PAUSE)) {
-        wchar_t label[FIELD_MAX + 32];
-        binding_label(pause_button, label, FIELD_MAX + 32, st.paused ? L"Resume" : L"Pause", field_text[F_PAUSE]);
-        SetWindowTextW(pause_button, label);
-    }
-    seen = st;
-    if (offer_changed)
-        show_banner();
-    drain_log();
-    update_tray(0);
-    if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd)) {
-        InvalidateRect(live_hwnd, NULL, FALSE);
-        for (int i = 0; i < 6; i++)
-            InvalidateRect(curve_plot[i], NULL, FALSE);
+/* Lift the cover over Calibrate now and Clear calibration, leaving a strip
+ * to close it by, or close it again. */
+static void lift_cover(int lift)
+{
+    HWND focus = GetFocus();
+    cover_lifted = lift;
+    cover_near = GetTickCount64();
+    if (lift)
+        place(cover, COVER_X, CAL_Y, COVER_W, 16);
+    else
+        place(cover, COVER_X, CAL_Y + 6, COVER_W, 38);
+    for (int i = 0; i < 2; i++)
+        ShowWindow(cover_buttons[i], lift ? SW_SHOWNA : SW_HIDE);
+    ShowWindow(cover_frame, lift ? SW_SHOWNA : SW_HIDE);
+    SetWindowTextW(cover, lift ? L"Close the cover" : L"Lift the cover over Calibrate now and Clear calibration");
+    if (!lift && (focus == cover_buttons[0] || focus == cover_buttons[1]))
+        SetFocus(cover);
+    InvalidateRect(cover, NULL, FALSE);
+}
+
+/* Close the lifted cover once the mouse has been away from it for a while;
+ * lifted from the keyboard, it stays while the focus is on it. */
+static void watch_cover(void)
+{
+    if (!cover_lifted)
+        return;
+    RECT area, hinge;
+    GetWindowRect(cover_frame, &area);
+    GetWindowRect(cover, &hinge);
+    UnionRect(&area, &area, &hinge);
+    InflateRect(&area, S(8), S(8));
+    POINT p;
+    int close_by = GetCursorPos(&p) && PtInRect(&area, p) && IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd);
+    HWND focus = GetFocus();
+    if (cover_by_keyboard && (focus == cover || focus == cover_buttons[0] || focus == cover_buttons[1]))
+        close_by = 1;
+    ULONGLONG now = GetTickCount64();
+    if (close_by)
+        cover_near = now;
+    else if (now - cover_near >= COVER_AWAY_MS)
+        lift_cover(0);
+}
+
+/* The cover: grey, hatched, hinged at its heavier edge, and labelled with
+ * what it covers; lifted, a strip to close it by. */
+static void draw_cover(const DRAWITEMSTRUCT *d)
+{
+    HDC dc = d->hDC;
+    RECT r = d->rcItem;
+    COLORREF face = RGB(226, 226, 226);
+    fill_rect(dc, r.left, r.top, r.right, r.bottom, face);
+    HBRUSH hatch = CreateHatchBrush(HS_BDIAGONAL, RGB(204, 204, 204));
+    SetBkMode(dc, TRANSPARENT);
+    FillRect(dc, &r, hatch);
+    DeleteObject(hatch);
+    HBRUSH edge = CreateSolidBrush(RGB(180, 180, 180));
+    FrameRect(dc, &r, edge);
+    DeleteObject(edge);
+    if (cover_lifted)
+        fill_rect(dc, r.left, r.bottom - S(3), r.right, r.bottom, RGB(160, 160, 160));
+    else
+        fill_rect(dc, r.left, r.top, r.right, r.top + S(3), RGB(160, 160, 160));
+
+    const wchar_t *text = cover_lifted ? L"close" : L"Calibrate · Clear";
+    SelectObject(dc, small_font);
+    RECT m = {0, 0, 0, 0};
+    DrawTextW(dc, text, -1, &m, DT_SINGLELINE | DT_NOPREFIX | DT_CALCRECT);
+    int shift = d->itemState & ODS_SELECTED ? S(1) : 0;
+    int chevron = S(8), gap = S(5), total = chevron + gap + m.right;
+    int x = (r.left + r.right - total) / 2 + shift, cy = (r.top + r.bottom) / 2 + (cover_lifted ? -S(1) : S(1)) + shift;
+    /* A patch of the face behind the label, so the hatching doesn't cross it. */
+    fill_rect(dc, x - S(4), cy - m.bottom / 2, x + total + S(4), cy - m.bottom / 2 + m.bottom, face);
+    int up = cover_lifted ? -1 : 1;
+    POINT v[3] = {{x, cy + up * S(2)}, {x + chevron / 2, cy - up * S(2)}, {x + chevron, cy + up * S(2)}};
+    HPEN pen = CreatePen(PS_SOLID, S(3) / 2 > 0 ? S(3) / 2 : 1, RGB(102, 102, 102));
+    HGDIOBJ old = SelectObject(dc, pen);
+    Polyline(dc, v, 3);
+    SelectObject(dc, old);
+    DeleteObject(pen);
+    text_at(dc, small_font, RGB(85, 85, 85), x + chevron + gap, cy - m.bottom / 2, m.right + S(2), m.bottom, DT_LEFT,
+            text);
+    if (d->itemState & ODS_FOCUS && !(d->itemState & ODS_NOFOCUSRECT)) {
+        RECT f = r;
+        InflateRect(&f, -S(2), -S(2));
+        if (cover_lifted)
+            f.bottom -= S(2);
+        else
+            f.top += S(2);
+        SetTextColor(dc, RGB(0, 0, 0));
+        SetBkColor(dc, RGB(255, 255, 255));
+        DrawFocusRect(dc, &f);
     }
 }
 
-static HWND control(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id)
-{
-    DWORD ex = wcscmp(cls, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0;
-    HWND c = CreateWindowExW(ex, cls, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, S(x), S(y), S(w), S(h),
-                             main_hwnd, (HMENU)(INT_PTR)id, inst, NULL);
-    SendMessageW(c, WM_SETFONT, (WPARAM)ui_font, FALSE);
-    return c;
-}
+/* ---- Headings ------------------------------------------------------------- */
 
-static HWND label(const wchar_t *text, int x, int y, int w) { return control(L"STATIC", text, SS_LEFT, x, y + 3, w, 20, 0); }
+static HWND calibration_title;
 
-static HWND edit(int field, int x, int y, int w)
+/* A binding list's heading, in spaced bold capitals over a thin rule; or the
+ * calibration's, bold then plain. */
+static void draw_heading(const DRAWITEMSTRUCT *d)
 {
-    return control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, x, y, w, 23, ID_FIELD + field);
+    HDC dc = d->hDC;
+    RECT r = d->rcItem;
+    FillRect(dc, &r, GetSysColorBrush(COLOR_BTNFACE));
+    SetBkMode(dc, TRANSPARENT);
+    if (d->hwndItem == calibration_title) {
+        int x = text_run(dc, bold_font, RGB(74, 74, 74), 0, r.bottom, L"Calibration");
+        text_run(dc, ui_font, RGB(95, 95, 95), x, r.bottom, L" · learnt as you play");
+        return;
+    }
+    wchar_t text[32];
+    GetWindowTextW(d->hwndItem, text, 32);
+    SetTextCharacterExtra(dc, S(1));
+    text_at(dc, bold_font, RGB(27, 27, 27), 0, 0, r.right, r.bottom - S(3), DT_LEFT, text);
+    SetTextCharacterExtra(dc, 0);
+    fill_rect(dc, 0, r.bottom - 1, r.right, r.bottom, RGB(200, 200, 200));
 }
 
 /* ---- Help ----------------------------------------------------------------- */
@@ -1597,6 +1926,19 @@ static HWND tip(HWND ctl, const wchar_t *text)
     return ctl;
 }
 
+/* Change a control's help. */
+static void retip(HWND ctl, const wchar_t *text)
+{
+    TTTOOLINFOW ti;
+    memset(&ti, 0, sizeof ti);
+    ti.cbSize = TTTOOLINFOW_V2_SIZE;
+    ti.uFlags = TTF_IDISHWND;
+    ti.hwnd = main_hwnd;
+    ti.uId = (UINT_PTR)ctl;
+    ti.lpszText = (wchar_t *)text;
+    SendMessageW(tips, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+}
+
 /* Show help when the mouse rests on part of a window trackkat draws: its
  * left, top, right and bottom in pixels. */
 static void tip_area(HWND w, UINT_PTR id, int l, int t, int r, int b, const wchar_t *text)
@@ -1610,14 +1952,13 @@ static void tip_area(HWND w, UINT_PTR id, int l, int t, int r, int b, const wcha
     add_tip(&ti, text);
 }
 
-/* Help for the parts of the live view, where paint_live draws them. */
+/* Help for the parts of the live view, where paint_live draws them; the
+ * switches have their own. */
 static void live_tips(void)
 {
-    RECT rc;
-    GetClientRect(live_hwnd, &rc);
-    int size = rc.bottom - S(16), x0 = S(8) + size + S(16), bar_l = x0 + S(226), right = rc.right - S(10);
-    int rows = S(26) + 6 * S(20), status = rows + S(6);
-    tip_area(live_hwnd, 1, S(8), S(8), S(8) + size, S(8) + size,
+    int x0 = S(TABLE_X), bar_l = x0 + S(226), right = S(PANEL_W - 10);
+    int rows = S(26) + 6 * S(ROW_H), lights = S(LIGHTS_Y), w = S(LIGHT_W);
+    tip_area(live_hwnd, 1, S(8), S(8), S(8 + HEAD_SIZE), S(8 + HEAD_SIZE),
              L"Your head as games see it, turned and moved as the game's view will be. The blue line shows where "
              L"it looks. In the corner, what the camera sees: the clip's reflectors blue, other bright things "
              L"(ignored) amber, and still lights ignored grey.");
@@ -1630,112 +1971,257 @@ static void live_tips(void)
     tip_area(live_hwnd, 4, bar_l, 0, right, rows,
              L"Blue: where games see each axis, out to the end of its range (behind you, straight up, 300 mm). "
              L"Yellow tick: your head.");
-    tip_area(live_hwnd, 5, x0, status, right, status + S(18),
+    tip_area(live_hwnd, 5, S(8), lights, S(8) + w, lights + S(18),
              L"Green when trackkat has the camera; grey while it looks for it; red, with the reason, when it can't "
              L"use it. trackkat picks it up again after unplugging or sleep.");
-    tip_area(live_hwnd, 6, x0, status + S(18), right, status + S(36),
+    tip_area(live_hwnd, 6, S(8) + w, lights, S(8) + 2 * w, lights + S(18),
              L"Whether the camera sees all three reflectors on the TrackClip. Out of sight, games see your head "
              L"held where it was until it comes back.");
-    tip_area(live_hwnd, 7, x0, status + S(36), x0 + S(180), status + S(54),
-             L"Games reading your head through trackkat's NPClient. The camera's second green light shows this "
-             L"too.");
-    tip_area(live_hwnd, 8, x0 + S(180), status + S(36), right, status + S(54),
-             L"Where Trim made the new forward, in degrees as games see it (pitch positive down), and \"moved\" "
-             L"if it also moves or tilts the view. The log has the whole of it. Recenter clears it.");
-    tip_area(live_hwnd, 9, x0, status + S(54), right, status + S(72),
-             L"Live: games follow your head. Paused: games see your head held still until you press Pause again.");
-    tip_area(live_hwnd, 10, x0, status + S(72), right, rc.bottom,
+    tip_area(live_hwnd, 7, S(8) + 2 * w, lights, right, lights + S(18),
+             L"Games reading your head through trackkat's NPClient, by the name of the game's program when trackkat "
+             L"can read it. The camera's second green light shows this too.");
+    tip_area(live_hwnd, 8, S(8), S(STATS_Y), right, S(PANEL_H),
              L"Over the last second: how long trackkat took from a camera frame to games having the pose (average "
              L"and worst), the longest wait between frames, the most stripes in a frame and garbage collections. "
              L"For bug reports.");
 }
 
-/* What a binding list's label, field and button say. */
+/* What the strip's help says: about the offer, when it makes one. */
+static void tip_strip(void)
+{
+    static const wchar_t quiet[] =
+        L"trackkat's version, and what the last look for a newer version found. An installed trackkat looks when "
+        L"it starts and every few hours while Keep up to date is on; the log says more.";
+    static const wchar_t install[] =
+        L"trackkat runs from wherever you unzipped it until you install it. Installed, it lives in your user's "
+        L"programs folder (no admin needed), starts from the Start menu, keeps itself up to date, and can be "
+        L"uninstalled from Settings' apps. Settings stay where they are.";
+    static const wchar_t update[] =
+        L"The newer version is fetched already: Restart to update switches to it now, or it starts the next time "
+        L"trackkat does. Your settings and calibration stay.";
+    static wchar_t text[TEXT_MAX + 512];
+    if (seen.offer[0])
+        _snwprintf(text, TEXT_MAX + 512, L"%ls\n\n%ls", seen.offer, seen.offer_tray[0] ? update : install);
+    else
+        copy_text(text, TEXT_MAX + 512, quiet);
+    text[TEXT_MAX + 511] = 0;
+    retip(strip_hwnd, text);
+}
+
+/* What a binding list's heading, box and button say. */
 static const wchar_t *const list_tips[LISTS] = {
-    L"Keys and buttons that recenter, separated by commas, such as F12, Ctrl+Mouse4 or Throttle - HOTAS Warthog "
-    L"button 23. They work from anywhere, even inside a game.",
-    L"Keys and buttons that pause, separated by commas, such as F9, Mouse5 or Joystick - HOTAS Warthog button 5. "
-    L"They work from anywhere, even inside a game.",
-    L"Keys and buttons that trim, separated by commas, such as Ctrl+F12 or Throttle - HOTAS Warthog button 24. "
-    L"Empty, as it starts, trim has no key."};
+    L"Keys and buttons that recenter, one to a line, such as F12, Ctrl+Mouse4 or Throttle - HOTAS Warthog button "
+    L"23. They work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one.",
+    L"Keys and buttons that pause, one to a line, such as F9, Mouse5 or Joystick - HOTAS Warthog button 5. They "
+    L"work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one.",
+    L"Keys and buttons that trim, one to a line, such as Ctrl+F12 or Throttle - HOTAS Warthog button 24. Empty, as "
+    L"it starts, trim has no key. Click the list to edit it; delete a line to remove one."};
 static const wchar_t *const add_button_tip =
     L"Click, then press the key, joystick button, or middle or side mouse button (over this window) to add. Click "
     L"again to stop waiting.";
 
+/* ---- The window's parts --------------------------------------------------- */
+
+/* Show the strip's offer, or its button to check for updates. */
+static void show_offer(void)
+{
+    int offer = seen.offer[0] != 0;
+    HWND focus = GetFocus();
+    SetWindowTextW(offer_button, seen.offer_button);
+    ShowWindow(offer_button, offer ? SW_SHOWNA : SW_HIDE);
+    ShowWindow(check_updates, offer ? SW_HIDE : SW_SHOWNA);
+    if (focus == (offer ? check_updates : offer_button))
+        SetFocus(offer ? offer_button : check_updates);
+    tip_strip();
+}
+
+static void show_log(void)
+{
+    if (IsIconic(log_hwnd))
+        ShowWindow(log_hwnd, SW_RESTORE);
+    else
+        ShowWindow(log_hwnd, SW_SHOW);
+    SetForegroundWindow(log_hwnd);
+}
+
+static void refresh(void)
+{
+    State st;
+    unsigned fields, lists;
+    wchar_t values[F_COUNT][FIELD_MAX], additions[LISTS][FIELD_MAX];
+    AcquireSRWLockExclusive(&lock);
+    st = shared;
+    fields = pushed_fields;
+    pushed_fields = 0;
+    for (int i = 0; i < F_COUNT; i++)
+        if (fields & 1u << i)
+            copy_text(values[i], FIELD_MAX, pushed[i]);
+    lists = added_lists;
+    added_lists = 0;
+    memcpy(additions, added, sizeof added);
+    ReleaseSRWLockExclusive(&lock);
+
+    for (int i = 0; i < F_COUNT; i++)
+        if (fields & 1u << i)
+            show_field(i, values[i]);
+    for (int i = 0; i < LISTS; i++)
+        if (lists & 1u << i) {
+            add_binding(F_RECENTER + i, additions[i]);
+            if (InterlockedCompareExchange(&capturing, 0, 0) == i)
+                end_capture();
+        }
+    if (wcscmp(st.calibration, seen.calibration) != 0)
+        SetWindowTextW(calibration_text, st.calibration);
+    if (wcscmp(st.settings_message, seen.settings_message) != 0)
+        SetWindowTextW(settings_text, st.settings_message);
+    if (st.checking != seen.checking) {
+        SetWindowTextW(check_updates, st.checking ? L"Checking…" : L"Check for updates");
+        EnableWindow(check_updates, updatable && !st.checking);
+    }
+    int offer_changed = wcscmp(st.offer, seen.offer) != 0 || wcscmp(st.offer_button, seen.offer_button) != 0 ||
+                        wcscmp(st.offer_tray, seen.offer_tray) != 0;
+    int strip_changed = offer_changed || st.checking != seen.checking || st.up_to_date != seen.up_to_date ||
+                        wcscmp(st.update_status, seen.update_status) != 0;
+    int paused_changed = st.paused != seen.paused;
+    int trim_changed = st.trimmed != seen.trimmed || st.trim[0] != seen.trim[0] || st.trim[1] != seen.trim[1] ||
+                       st.trim_moves != seen.trim_moves;
+    seen = st;
+    if (paused_changed)
+        name_switch(1);
+    if (trim_changed)
+        name_switch(2);
+    if (offer_changed)
+        show_offer();
+    if (strip_changed)
+        InvalidateRect(strip_hwnd, NULL, FALSE);
+    drain_log();
+    update_tray(0);
+    watch_cover();
+    if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd)) {
+        InvalidateRect(live_hwnd, NULL, FALSE);
+        for (int i = 0; i < 6; i++)
+            InvalidateRect(curve_plot[i], NULL, FALSE);
+    }
+}
+
+static HWND control_in(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h,
+                       int id)
+{
+    DWORD ex = wcscmp(cls, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0;
+    HWND c = CreateWindowExW(ex, cls, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, S(x), S(y), S(w), S(h),
+                             parent, (HMENU)(INT_PTR)id, inst, NULL);
+    SendMessageW(c, WM_SETFONT, (WPARAM)ui_font, FALSE);
+    return c;
+}
+
+static HWND control(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id)
+{
+    return control_in(main_hwnd, cls, text, style, x, y, w, h, id);
+}
+
+static HWND label(const wchar_t *text, int x, int y, int w) { return control(L"STATIC", text, SS_LEFT, x, y + 3, w, 20, 0); }
+
+static HWND edit(int field, int x, int y, int w)
+{
+    return control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, x, y, w, 23, ID_FIELD + field);
+}
+
+/* The width of some text in a font, in pixels at 96 dpi. */
+static int text_width(HFONT font, const wchar_t *text)
+{
+    HDC dc = GetDC(main_hwnd);
+    HGDIOBJ old = SelectObject(dc, font);
+    SIZE extent;
+    GetTextExtentPoint32W(dc, text, (int)wcslen(text), &extent);
+    SelectObject(dc, old);
+    ReleaseDC(main_hwnd, dc);
+    return MulDiv(extent.cx, 96, dpi);
+}
+
+/* A group box, bold-captioned if it has a caption. */
+static HWND group(const wchar_t *caption, int x, int y, int w, int h)
+{
+    HWND g = control(L"BUTTON", caption, BS_GROUPBOX, x, y, w, h, 0);
+    SendMessageW(g, WM_SETFONT, (WPARAM)bold_font, FALSE);
+    return g;
+}
+
 static void build_window(void)
 {
     make_tips();
-    banner = tip(CreateWindowExW(0, L"trackkat_banner", L"", WS_CHILD, S(10), S(8), S(540), S(36), main_hwnd, NULL,
-                                 inst, NULL),
-                 L"trackkat runs from wherever you unzipped it until you install it. Installed, it lives in your "
-                 L"user's programs folder (no admin needed), starts from the Start menu, keeps itself up to date, "
-                 L"and can be uninstalled from Settings' apps. Settings stay where they are.");
-    offer_button = tip(control(L"BUTTON", L"", WS_TABSTOP | BS_PUSHBUTTON, 560, 12, 150, 28, ID_OFFER),
+
+    /* The strip across the top, and its buttons. */
+    strip_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_strip", L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                 0, 0, S(CLIENT_W), S(STRIP_H), main_hwnd, NULL, inst, NULL);
+    tip(strip_hwnd, L"");
+    check_updates = tip(control_in(strip_hwnd, L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON,
+                                   CLIENT_W - 10 - 130, 8, 130, 24, ID_CHECK_UPDATES),
+                        L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
+                        L"one. Beside it, what was found; the log says more. Only for an installed trackkat.");
+    EnableWindow(check_updates, updatable);
+    offer_button = tip(control_in(strip_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                  CLIENT_W - 10 - STRIP_BUTTON_W, 7, STRIP_BUTTON_W, 26, ID_OFFER),
                        L"Install trackkat and switch to the installed copy, or switch to the newer version now. "
                        L"trackkat restarts in a moment; games keep their head tracking.");
     ShowWindow(offer_button, SW_HIDE);
-    live_hwnd = CreateWindowExW(0, L"trackkat_live", L"", WS_CHILD | WS_VISIBLE, S(10), S(10), S(700), S(242),
-                                main_hwnd, NULL, inst, NULL);
+    tip_strip();
+
+    /* The live view, with the switches in it. */
+    live_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_live", L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                S(10), S(PANEL_Y), S(PANEL_W), S(PANEL_H), main_hwnd, NULL, inst, NULL);
     live_tips();
-
-    recenter_button = tip(control(L"BUTTON", L"Recenter", WS_TABSTOP | BS_PUSHBUTTON, 10, 262, 116, 28, ID_RECENTER),
-                          L"Make the way you face now straight ahead, and clear any trim. Its keys, or a game's own "
-                          L"recenter binding, do the same from anywhere.");
-    pause_button = tip(control(L"BUTTON", L"Pause", WS_TABSTOP | BS_PUSHBUTTON, 136, 262, 116, 28, ID_PAUSE),
-                       L"Freeze the view: games see your head held still until you press it again. Handy for "
-                       L"stretching, or looking away from the screen.");
-    trim_button = tip(control(L"BUTTON", L"Trim", WS_TABSTOP | BS_PUSHBUTTON, 262, 262, 116, 28, ID_TRIM),
-                      L"Make the view now the new forward, where it looks and where it has moved to, handy for "
-                      L"craning toward a console; you can still glance around from there. Recenter clears it.");
-    tip(control(L"BUTTON", L"Calibrate level", WS_TABSTOP | BS_PUSHBUTTON, 388, 262, 116, 28, ID_CALIBRATE),
-        L"Learn which way is up now: click, then turn your head left and right for five seconds. trackkat learns "
-        L"it as you play anyway, so this is for after moving the camera.");
-    tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 514, 262, 116, 28, ID_QUIT),
-        L"Stop tracking and quit: the camera's lights go off and trackkat leaves the tray. Closing this window "
-        L"instead keeps trackkat running in the tray.");
-
-    calibration_text = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, 318, 540, 52, 0),
-                           L"What trackkat has learnt from how you turn your head: how the camera is tipped, and "
-                           L"where your neck pivots. It keeps learning as you play, and keeps it in "
-                           L"trackkat.calibration.");
-    tip(control(L"BUTTON", L"Clear calibration", WS_TABSTOP | BS_PUSHBUTTON, 572, 318, 126, 28, ID_CLEAR_CALIBRATION),
-        L"Forget what trackkat has learnt and start tracking afresh: it learns again as you turn your head. Use it "
-        L"after moving the camera or bending the clip, or if turning your head turns the view the wrong way.");
-
-    static const wchar_t *const list_labels[LISTS] = {L"Recenter", L"Pause", L"Trim"};
-    static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM};
+    static const int switch_ids[LISTS] = {ID_RECENTER, ID_PAUSE, ID_TRIM};
+    static const wchar_t *const switch_tips[LISTS] = {
+        L"Make the way you face now straight ahead, and clear any trim. Its keys and buttons, below, or a game's "
+        L"own recenter binding, do the same from anywhere.",
+        L"Freeze the view: games see your head held still until you press it again, handy for stretching or "
+        L"looking away from the screen. Lit amber while paused.",
+        L"Make the view now the new forward, where it looks and where it has moved to, handy for craning toward a "
+        L"console; you can still glance around from there. Lit blue while trimmed, with where Trim made the new "
+        L"forward, in degrees as games see it (pitch positive down), and \"moved\" if it also moves or tilts the "
+        L"view; the log has the whole of it. Recenter clears it."};
     for (int i = 0; i < LISTS; i++) {
-        int y = 402 + i * 26;
-        tip(label(list_labels[i], 22, y, 80), list_tips[i]);
-        field_ctl[F_RECENTER + i] = tip(edit(F_RECENTER + i, 104, y, 470), list_tips[i]);
-        add_button[i] = tip(control(L"BUTTON", L"Add key or button…", WS_TABSTOP | BS_PUSHBUTTON, 580, y - 1, 120,
-                                    25, add_ids[i]),
+        switch_ctl[i] = tip(control_in(live_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 8 + i * (SWITCH_W + 10),
+                                       SWITCH_Y, SWITCH_W, SWITCH_H, switch_ids[i]),
+                            switch_tips[i]);
+        name_switch(i);
+    }
+
+    /* Each binding list in a column under its switch. */
+    static const wchar_t *const headings[LISTS] = {L"RECENTER", L"PAUSE", L"TRIM"};
+    static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM};
+    int column_w = SWITCH_W - 8;
+    for (int i = 0; i < LISTS; i++) {
+        int x = column_x(i);
+        list_heading[i] = tip(control(L"STATIC", headings[i], SS_OWNERDRAW, x, BIND_Y + 20, column_w, 20, 0),
+                              list_tips[i]);
+        HWND box = CreateWindowExW(0, L"EDIT", L"",
+                                   WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_MULTILINE |
+                                       ES_AUTOVSCROLL | ES_WANTRETURN,
+                                   S(x), S(BIND_Y + 44), S(column_w), S(48), main_hwnd,
+                                   (HMENU)(INT_PTR)(ID_FIELD + F_RECENTER + i), inst, NULL);
+        SendMessageW(box, WM_SETFONT, (WPARAM)ui_font, FALSE);
+        edit_proc = (WNDPROC)SetWindowLongPtrW(box, GWLP_WNDPROC, (LONG_PTR)list_box_proc);
+        field_ctl[F_RECENTER + i] = tip(box, list_tips[i]);
+        add_button[i] = tip(control(L"BUTTON", L"Add…", WS_TABSTOP | BS_PUSHBUTTON, x, BIND_Y + 96, 100, 24, add_ids[i]),
                             add_button_tip);
         button_proc = (WNDPROC)SetWindowLongPtrW(add_button[i], GWLP_WNDPROC, (LONG_PTR)add_button_proc);
     }
 
-    static const wchar_t steadiness_tip[] = L"How still the view stays while your head is still. Raise it if the "
-                                            L"view jitters; lower it if it feels floaty or drifts into place.";
-    static const wchar_t responsiveness_tip[] = L"How closely the view keeps up when you move. Raise it if the view "
-                                                L"lags behind your head; lower it if it jitters as you move slowly.";
-    field_ctl[F_SMOOTHING] =
-        tip(control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 22, 481, 92, 22, ID_FIELD + F_SMOOTHING),
-            L"Calm the view while your head is still, at the cost of a little lag when you move. Off, games get "
-            L"every tremor.");
-    tip(label(L"Steadiness", 120, 481, 70), steadiness_tip);
-    field_ctl[F_STEADINESS] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 188, 477, 140,
-                                          26, ID_FIELD + F_STEADINESS),
-                                  steadiness_tip);
-    slider_value[0] = tip(label(L"", 330, 481, 40), steadiness_tip);
-    tip(label(L"Responsiveness", 380, 481, 96), responsiveness_tip);
-    field_ctl[F_RESPONSIVENESS] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 476, 477,
-                                              140, 26, ID_FIELD + F_RESPONSIVENESS),
-                                      responsiveness_tip);
-    slider_value[1] = tip(label(L"", 618, 481, 40), responsiveness_tip);
-    for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++) {
-        SendMessageW(field_ctl[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
-        SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
-    }
+    /* The response: whether changes saved, and the curves, on the box's
+     * top edge beside its caption. */
+    int caption = text_width(bold_font, L"Response");
+    settings_text = tip(
+        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 18 + caption + 10, RESP_Y - 4, 330, 16, 0),
+        L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
+        L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
+        L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
+        L"not, why.");
+    SendMessageW(settings_text, WM_SETFONT, (WPARAM)small_font, FALSE);
+    curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 592, RESP_Y - 8, 104,
+                                 20, ID_CURVES_AS_TEXT),
+                         L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "
+                         L"trackkat.conf explains how.");
 
     static const wchar_t plot_tip[] =
         L"The curve: across, your head; up, the game's view. The dot is your head now; with a precision, the "
@@ -1753,7 +2239,7 @@ static void build_window(void)
         L"The curve as trackkat.conf writes it: a multiplier such as 1:6, perhaps with a precision as in 1:6, "
         L"precision 40, or input:output points such as 10:10 45:120, joined by straight lines from 0:0.";
     for (int i = 0; i < 6; i++) {
-        int x = 22 + (i % 3) * 226, y = CURVES_TOP + (i / 3) * 70, right = x + 72;
+        int x = 22 + (i % 3) * 226, y = CURVES_Y + (i / 3) * 72, right = x + 72;
         curve_plot[i] = tip(CreateWindowExW(0, L"trackkat_curve", L"", WS_CHILD | WS_VISIBLE, S(x), S(y), S(64),
                                             S(64), main_hwnd, NULL, inst, NULL),
                             plot_tip);
@@ -1784,90 +2270,192 @@ static void build_window(void)
             control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, right, y + 49, 142, 16, 0), note_tip);
         SendMessageW(curve_note[i], WM_SETFONT, (WPARAM)small_font, FALSE);
     }
+    control(L"STATIC", L"", SS_ETCHEDHORZ, 22, AIDS_Y - 8, 676, 2, 0);
 
-    field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean relative to the view (lean = view)",
-                                    WS_TABSTOP | BS_AUTOCHECKBOX, 22, CURVES_TOP + 140, 262, 22, ID_FIELD + F_LEAN),
-                            L"On, leaning follows the view: looking behind you, leaning left leans out of the "
-                            L"cockpit's right side. Off, leaning moves you the same way whichever way you look.");
-    field_ctl[F_NPCLIENT] = tip(
-        control(L"BUTTON", L"Anti-cheat mode (npclient = trackir)", WS_TABSTOP | BS_AUTOCHECKBOX, 292, CURVES_TOP + 140,
-                248, 22, ID_FIELD + F_NPCLIENT),
-        L"For games whose anti-cheat blocks trackkat's NPClient, such as Arma Reforger: games load the NPClient of "
-        L"NaturalPoint's TrackIR software instead, which must be installed but not running. Games can't start "
-        L"trackkat then, so start it first, or have it start with Windows. Applies to games started after you "
-        L"change it.");
-    field_ctl[F_STARTUP] = tip(
-        control(L"BUTTON", L"Start with Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 548, CURVES_TOP + 140, 152, 22,
-                ID_FIELD + F_STARTUP),
-        L"Start trackkat in the tray when you log in (startup = on). Games start trackkat themselves anyway, but "
-        L"in anti-cheat mode they can't: this is the way to use it without starting trackkat by hand.");
+    /* Aids to the response. */
+    static const wchar_t smoothing_tip[] = L"Calm the view while your head is still, at the cost of a little lag when "
+                                           L"you move. Off, games get every tremor.";
+    static const wchar_t steadiness_tip[] = L"How still the view stays while your head is still. Raise it if the "
+                                            L"view jitters; lower it if it feels floaty or drifts into place.";
+    static const wchar_t responsiveness_tip[] = L"How closely the view keeps up when you move. Raise it if the view "
+                                                L"lags behind your head; lower it if it jitters as you move slowly.";
+    aids_label = tip(label(L"Aids", 22, AIDS_Y, 44), smoothing_tip);
+    field_ctl[F_SMOOTHING] = tip(
+        control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 70, AIDS_Y, 90, 22, ID_FIELD + F_SMOOTHING),
+        smoothing_tip);
+    tip(label(L"Steadiness", 170, AIDS_Y, 66), steadiness_tip);
+    field_ctl[F_STEADINESS] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 236, AIDS_Y - 4,
+                                          120, 26, ID_FIELD + F_STEADINESS),
+                                  steadiness_tip);
+    slider_value[0] = tip(label(L"", 358, AIDS_Y, 30), steadiness_tip);
+    tip(label(L"Responsiveness", 396, AIDS_Y, 94), responsiveness_tip);
+    field_ctl[F_RESPONSIVENESS] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, 490,
+                                              AIDS_Y - 4, 120, 26, ID_FIELD + F_RESPONSIVENESS),
+                                      responsiveness_tip);
+    slider_value[1] = tip(label(L"", 612, AIDS_Y, 30), responsiveness_tip);
+    for (int i = F_STEADINESS; i <= F_RESPONSIVENESS; i++) {
+        SendMessageW(field_ctl[i], TBM_SETRANGE, FALSE, MAKELPARAM(0, 100));
+        SendMessageW(field_ctl[i], TBM_SETPAGESIZE, 0, 5);
+    }
+    field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean follows the view", WS_TABSTOP | BS_AUTOCHECKBOX, 70,
+                                    AIDS_Y + 26, 160, 22, ID_FIELD + F_LEAN),
+                            L"On, leaning follows the view (lean = view): looking behind you, leaning left leans out "
+                            L"of the cockpit's right side. Off, leaning moves you the same way whichever way you "
+                            L"look.");
     field_ctl[F_LIGHTS] = tip(
-        control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 248, CURVES_TOP + 174, 110, 22,
+        control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 246, AIDS_Y + 26, 140, 22,
                 ID_FIELD + F_LIGHTS),
         L"Learn bright lights that stay put, such as a lamp or a fire behind you, and ignore them, so they don't "
         L"stop trackkat finding the clip (ignore lights = on). The log says when one is learnt or forgotten.");
+
+    /* The calibration, and under its cover the two buttons that change it. */
+    static const wchar_t calibration_tip[] =
+        L"What trackkat has learnt from how you turn your head: how the camera is tipped, and where your neck "
+        L"pivots. It keeps learning as you play, and keeps it in trackkat.calibration.";
+    calibration_title = tip(control(L"STATIC", L"Calibration · learnt as you play", SS_OWNERDRAW, 22, CAL_Y + 2,
+                                    COVER_X - 34, 18, 0),
+                            calibration_tip);
+    calibration_text = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, CAL_Y + 21, COVER_X - 34, 32, 0),
+                           calibration_tip);
+    SendMessageW(calibration_text, WM_SETFONT, (WPARAM)small_font, FALSE);
+    cover = tip(control(L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, COVER_X, CAL_Y + 6, COVER_W, 38, ID_COVER),
+                L"A cover over Calibrate now and Clear calibration, so they aren't clicked by mistake. Click it, or "
+                L"press Space, to lift it. It closes again when you click close, after you use one of them, or once "
+                L"the mouse has been away from it for a few seconds.");
+    cover_buttons[0] =
+        tip(control(L"BUTTON", L"Calibrate now", WS_TABSTOP | BS_PUSHBUTTON, COVER_X + 8, CAL_Y + 22, 104, 26,
+                    ID_CALIBRATE),
+            L"Learn which way is up, the camera's level, now: click, then turn your head left and right for five "
+            L"seconds. trackkat learns it as you play anyway, so this is mainly for after moving the camera.");
+    cover_buttons[1] = tip(control(L"BUTTON", L"Clear calibration", WS_TABSTOP | BS_PUSHBUTTON, COVER_X + 116,
+                                   CAL_Y + 22, 106, 26, ID_CLEAR_CALIBRATION),
+                           L"Forget what trackkat has learnt and start tracking afresh: it learns again as you turn "
+                           L"your head. Use it after moving the camera or bending the clip, or if turning your head "
+                           L"turns the view the wrong way.");
+    cover_frame = control(L"STATIC", L"", SS_ETCHEDFRAME, COVER_X, CAL_Y + 14, COVER_W, 40, 0);
+    lift_cover(0);
+
+    /* The log: its latest line, and the rest in a window of its own. */
+    tip(control(L"STATIC", L"Log", SS_LEFT, 20, LOG_Y + 10, 30, 18, 0), L"The log: what trackkat reports.");
+    log_line = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 54, LOG_Y + 10, 450, 18, 0),
+                   L"The latest line of the log. Open log shows the whole of it.");
+    SendMessageW(log_line, WM_SETFONT, (WPARAM)mono_font, FALSE);
+    tip(control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 512, LOG_Y + 6, 90, 24, ID_COPY_LOG),
+        L"Copy the whole log, to paste into a bug report.");
+    tip(control(L"BUTTON", L"Open log", WS_TABSTOP | BS_PUSHBUTTON, 610, LOG_Y + 6, 90, 24, ID_OPEN_LOG),
+        L"Open the log in a window of its own: what trackkat reports, such as recentering, trim, calibration, "
+        L"joysticks and the buttons pressed on them, settings reloads, and errors.");
+
+    /* How trackkat runs, and the way out. */
+    control(L"STATIC", L"", SS_ETCHEDHORZ, 0, MODES_Y, CLIENT_W, 2, 0);
+    field_ctl[F_STARTUP] = tip(
+        control(L"BUTTON", L"Start with Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 14, MODES_Y + 12, 130, 22,
+                ID_FIELD + F_STARTUP),
+        L"Start trackkat in the tray when you log in (startup = on). Games start trackkat themselves anyway, but "
+        L"in anti-cheat mode they can't: this is the way to use it without starting trackkat by hand.");
     field_ctl[F_UPDATES] = tip(
-        control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 370, CURVES_TOP + 174, 102, 22,
+        control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 156, MODES_Y + 12, 116, 22,
                 ID_FIELD + F_UPDATES),
         L"Once installed, look for a newer version when trackkat starts and every few hours, and fetch it in the "
-        L"background (updates = on). It is used when you click Restart to update, or when trackkat next starts. "
-        L"Your settings and calibration stay.");
-    check_updates = tip(control(L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON, 476, CURVES_TOP + 173,
-                                116, 24, ID_CHECK_UPDATES),
-                        L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
-                        L"one. The start of this row says what was found, and the log says more. Only for an "
-                        L"installed trackkat.");
-    EnableWindow(check_updates, updatable);
+        L"background (updates = on). It is used when you click Restart to update, at the top, or when trackkat "
+        L"next starts. Your settings and calibration stay.");
+    field_ctl[F_NPCLIENT] = tip(
+        control(L"BUTTON", L"Anti-cheat mode", WS_TABSTOP | BS_AUTOCHECKBOX, 284, MODES_Y + 12, 120, 22,
+                ID_FIELD + F_NPCLIENT),
+        L"For games whose anti-cheat blocks trackkat's NPClient, such as Arma Reforger (npclient = trackir): games "
+        L"load the NPClient of NaturalPoint's TrackIR software instead, which must be installed but not running. "
+        L"Games can't start trackkat then, so start it first, or have it start with Windows. Applies to games "
+        L"started after you change it.");
+    tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 590, MODES_Y + 10, 116, 26, ID_QUIT),
+        L"Stop tracking and quit: the camera's lights go off and trackkat leaves the tray. Closing this window "
+        L"instead keeps trackkat running in the tray.");
 
-    settings_text = tip(
-        control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 22, CURVES_TOP + 176, 218, 20, 0),
-        L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
-        L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
-        L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
-        L"not, why, or what Check for updates found.");
-    curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 604, CURVES_TOP + 174,
-                                 96, 22, ID_CURVES_AS_TEXT),
-                         L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "
-                         L"trackkat.conf explains how.");
+    /* Boxes last, beneath the controls they frame. */
+    group(L"Control bindings", 10, BIND_Y, 700, BIND_H);
+    group(L"Response", 10, RESP_Y - 6, 700, RESP_H + 6);
+    control(L"STATIC", L"", SS_ETCHEDFRAME, 10, LOG_Y, 700, 36, 0);
+}
 
-    log_hint = control(L"STATIC", L"What trackkat reports, but not the status shown above. Copy it into bug reports.", SS_LEFT, 22, LOG_TOP + 22,
-                       420, 20, 0);
-    SendMessageW(log_hint, WM_SETFONT, (WPARAM)small_font, FALSE);
-    wchar_t version[96];
-    _snwprintf(version, 96, L"trackkat %ls", version_text);
-    version[95] = 0;
-    version_label = tip(control(L"STATIC", version, SS_RIGHT | SS_NOPREFIX, 446, LOG_TOP + 22, 146, 20, 0),
-                        L"The version of trackkat running, as bug reports should say; the log says it too.");
-    SendMessageW(version_label, WM_SETFONT, (WPARAM)small_font, FALSE);
-    copy_button = tip(
-        control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 600, LOG_TOP + 18, 100, 24, ID_COPY_LOG),
-        L"Copy the whole log, to paste into a bug report.");
-    log_box = tip(control(L"EDIT", L"", WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 20, LOG_TOP + 48,
-                          680, CLIENT_H - LOG_TOP - 68, 0),
+/* ---- The log window ------------------------------------------------------- */
+
+#define LOG_W 680
+#define LOG_H 460
+
+static void layout_log(int w, int h)
+{
+    MoveWindow(log_hint, S(12), S(10), w - S(24), S(18), TRUE);
+    MoveWindow(log_box, S(12), S(32), w - S(24), h - S(32) - S(48), TRUE);
+    MoveWindow(log_version, S(12), h - S(33), w - S(240), S(18), TRUE);
+    MoveWindow(log_copy, w - S(212), h - S(38), S(96), S(26), TRUE);
+    MoveWindow(log_close, w - S(108), h - S(38), S(96), S(26), TRUE);
+}
+
+static void build_log_window(void)
+{
+    log_hint = control_in(log_hwnd, L"STATIC", L"What trackkat reports; copy it into bug reports.",
+                          SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, 0);
+    log_box = tip(control_in(log_hwnd, L"EDIT", L"", WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 0, 0, 0,
+                             0, 0),
                   L"What trackkat reports: recentering, trim, calibration, joysticks and the buttons pressed on them, "
                   L"settings reloads, and errors.");
     SendMessageW(log_box, WM_SETFONT, (WPARAM)mono_font, FALSE);
     SendMessageW(log_box, EM_SETLIMITTEXT, LOG_MAX * 2, 0);
-
-    /* Group boxes last, beneath the controls they frame. */
-    control(L"BUTTON", L"Calibration", BS_GROUPBOX, 10, 298, 700, 78, 0);
-    control(L"BUTTON", L"Settings", BS_GROUPBOX, 10, 384, 700, LOG_TOP - 394, 0);
-    log_group = control(L"BUTTON", L"Log", BS_GROUPBOX, 10, LOG_TOP, 700, CLIENT_H - LOG_TOP - 10, 0);
+    wchar_t version[96];
+    _snwprintf(version, 96, L"trackkat %ls", version_text);
+    version[95] = 0;
+    log_version = tip(control_in(log_hwnd, L"STATIC", version, SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, 0),
+                      L"The version of trackkat running, as bug reports should say; the log says it too.");
+    SendMessageW(log_version, WM_SETFONT, (WPARAM)small_font, FALSE);
+    log_copy = tip(control_in(log_hwnd, L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, ID_COPY_LOG),
+                   L"Copy the whole log, to paste into a bug report.");
+    log_close = tip(control_in(log_hwnd, L"BUTTON", L"Close", WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, ID_CLOSE_LOG),
+                    L"Close the log window. trackkat keeps running, and the log keeps growing.");
+    RECT rc;
+    GetClientRect(log_hwnd, &rc);
+    layout_log(rc.right, rc.bottom);
 }
 
-static void layout(int width, int height)
+static LRESULT CALLBACK log_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
-    int top = banner_shown ? S(BANNER_H) : 0;
-    int log_h = height - S(LOG_TOP) - top - S(10);
-    if (log_h < S(100))
-        log_h = S(100);
-    MoveWindow(banner, S(10), S(8), width - S(180), S(36), TRUE);
-    MoveWindow(offer_button, width - S(160), S(12), S(150), S(28), TRUE);
-    MoveWindow(log_group, S(10), S(LOG_TOP) + top, width - S(20), log_h, TRUE);
-    MoveWindow(version_label, width - S(274), S(LOG_TOP + 22) + top, S(146), S(20), TRUE);
-    MoveWindow(copy_button, width - S(120), S(LOG_TOP + 18) + top, S(100), S(24), TRUE);
-    MoveWindow(log_box, S(20), S(LOG_TOP + 48) + top, width - S(40), log_h - S(58), TRUE);
+    switch (msg) {
+    case WM_COMMAND:
+        switch (LOWORD(wp)) {
+        case ID_COPY_LOG:
+            copy_log();
+            return 0;
+        case ID_CLOSE_LOG:
+        case IDCANCEL:
+            ShowWindow(w, SW_HIDE);
+            return 0;
+        }
+        break;
+    case WM_CTLCOLORSTATIC:
+        /* Read-only, but it takes selections, so it looks like it. */
+        if ((HWND)lp == log_box) {
+            SetBkColor((HDC)wp, RGB(255, 255, 255));
+            return (LRESULT)white_brush;
+        }
+        break;
+    case WM_SIZE:
+        if (log_box)
+            layout_log(LOWORD(lp), HIWORD(lp));
+        return 0;
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO *mm = (MINMAXINFO *)lp;
+        mm->ptMinTrackSize.x = S(400);
+        mm->ptMinTrackSize.y = S(220);
+        return 0;
+    }
+    case WM_CLOSE:
+        ShowWindow(w, SW_HIDE);
+        return 0;
+    }
+    return DefWindowProcW(w, msg, wp, lp);
 }
+
+/* ---- The main window's messages ------------------------------------------- */
+
+static int is_switch(HWND c) { return c && (c == switch_ctl[0] || c == switch_ctl[1] || c == switch_ctl[2]); }
 
 static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -1875,6 +2463,9 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND: {
         int id = LOWORD(wp), code = HIWORD(wp);
         if (id >= ID_FIELD + F_RECENTER && id < ID_FIELD + F_RECENTER + LISTS) {
+            /* White while edited; otherwise the list reads as plain text. */
+            if (code == EN_SETFOCUS || code == EN_KILLFOCUS)
+                InvalidateRect((HWND)lp, NULL, TRUE);
             if (code == EN_KILLFOCUS)
                 save_soon(1);
             return 0;
@@ -1897,6 +2488,9 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             }
             return 0;
         }
+        /* Drawn buttons report a quick second click as a double click. */
+        if (code != BN_CLICKED && code != BN_DOUBLECLICKED)
+            break;
         switch (id) {
         case ID_CURVES_AS_TEXT:
             show_curves_as_text(SendMessageW(curves_as_text, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -1910,14 +2504,25 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_TRIM:
             InterlockedOr(&actions, ACT_TRIM);
             return 0;
+        case ID_COVER: {
+            /* Lifted without the mouse over it, it was from the keyboard. */
+            RECT r;
+            POINT p;
+            GetWindowRect(cover, &r);
+            cover_by_keyboard = !(GetCursorPos(&p) && PtInRect(&r, p));
+            lift_cover(!cover_lifted);
+            return 0;
+        }
         case ID_CLEAR_CALIBRATION:
             InterlockedOr(&actions, ACT_CLEAR_CALIBRATION);
-            return 0;
-        case ID_QUIT:
-            InterlockedOr(&actions, ACT_QUIT);
+            lift_cover(0);
             return 0;
         case ID_CALIBRATE:
             InterlockedOr(&actions, ACT_CALIBRATE);
+            lift_cover(0);
+            return 0;
+        case ID_QUIT:
+            InterlockedOr(&actions, ACT_QUIT);
             return 0;
         case ID_ADD_RECENTER:
             start_capture(0);
@@ -1930,6 +2535,9 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_COPY_LOG:
             copy_log();
+            return 0;
+        case ID_OPEN_LOG:
+            show_log();
             return 0;
         case ID_FIELD + F_LEAN:
             copy_text(field_text[F_LEAN], FIELD_MAX,
@@ -1961,9 +2569,15 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                        SendMessageW(field_ctl[F_SMOOTHING], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
             save_soon(1);
             return 0;
-        case IDOK:
-            save_settings();
+        case IDOK: {
+            /* Enter on a drawn button presses it, as on any other. */
+            HWND focus = GetFocus();
+            if (focus == cover || is_switch(focus))
+                SendMessageW(w, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(focus), BN_CLICKED), (LPARAM)focus);
+            else
+                save_settings();
             return 0;
+        }
         case IDCANCEL:
             ShowWindow(w, SW_HIDE);
             return 0;
@@ -1994,6 +2608,46 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             }
         save_soon(500);
         return 0;
+    case WM_VSCROLL: {
+        /* The multipliers' arrows send it too. */
+        if (lp)
+            break;
+        SCROLLINFO si;
+        memset(&si, 0, sizeof si);
+        si.cbSize = sizeof si;
+        si.fMask = SIF_ALL;
+        GetScrollInfo(w, SB_VERT, &si);
+        int pos = scroll_pos;
+        switch (LOWORD(wp)) {
+        case SB_LINEUP:
+            pos -= S(24);
+            break;
+        case SB_LINEDOWN:
+            pos += S(24);
+            break;
+        case SB_PAGEUP:
+            pos -= (int)si.nPage;
+            break;
+        case SB_PAGEDOWN:
+            pos += (int)si.nPage;
+            break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION:
+            pos = si.nTrackPos;
+            break;
+        case SB_TOP:
+            pos = 0;
+            break;
+        case SB_BOTTOM:
+            pos = S(CLIENT_H);
+            break;
+        }
+        scroll_to(pos);
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+        scroll_to(scroll_pos - GET_WHEEL_DELTA_WPARAM(wp) * S(72) / WHEEL_DELTA);
+        return 0;
     case WM_TIMER:
         if (wp == ID_AUTOSAVE) {
             KillTimer(w, ID_AUTOSAVE);
@@ -2001,22 +2655,42 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         break;
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT *d = (const DRAWITEMSTRUCT *)lp;
+        if (d->CtlType == ODT_BUTTON)
+            draw_cover(d);
+        else
+            draw_heading(d);
+        return TRUE;
+    }
     case WM_CTLCOLORSTATIC:
-        /* Read-only, but it takes selections, so it looks like it. */
-        if ((HWND)lp == log_box) {
-            SetBkColor((HDC)wp, RGB(255, 255, 255));
-            return (LRESULT)log_brush;
+        /* The calibration and the save line, quieter than the rest. */
+        if ((HWND)lp == calibration_text || (HWND)lp == settings_text || (HWND)lp == aids_label) {
+            SetTextColor((HDC)wp, (HWND)lp == calibration_text ? RGB(95, 95, 95) : RGB(107, 107, 107));
+            SetBkColor((HDC)wp, GetSysColor(COLOR_BTNFACE));
+            return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
         }
         break;
+    case WM_CTLCOLOREDIT:
+        for (int i = 0; i < LISTS; i++)
+            if ((HWND)lp == field_ctl[F_RECENTER + i] && GetFocus() != (HWND)lp) {
+                SetBkColor((HDC)wp, GetSysColor(COLOR_BTNFACE));
+                return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
+            }
+        break;
     case WM_SIZE:
-        layout(LOWORD(lp), HIWORD(lp));
+        fit_scroll();
         return 0;
     case WM_GETMINMAXINFO: {
-        RECT r = {0, 0, S(CLIENT_W), S(LOG_TOP + 120 + (banner_shown ? BANNER_H : 0))};
+        /* As wide as the content and its scroll bar, if it has one, and no
+         * taller than the content. */
+        RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
         AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+        int bar = GetWindowLongPtrW(w, GWL_STYLE) & WS_VSCROLL ? GetSystemMetrics(SM_CXVSCROLL) : 0;
         MINMAXINFO *mm = (MINMAXINFO *)lp;
-        mm->ptMinTrackSize.x = r.right - r.left;
-        mm->ptMinTrackSize.y = r.bottom - r.top;
+        mm->ptMinTrackSize.x = mm->ptMaxTrackSize.x = r.right - r.left + bar;
+        mm->ptMaxTrackSize.y = r.bottom - r.top;
+        mm->ptMinTrackSize.y = S(240);
         return 0;
     }
     case WM_CLOSE:
@@ -2132,7 +2806,7 @@ static void make_fonts(void)
     m.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
     wcscpy(m.lfFaceName, L"Consolas");
     mono_font = CreateFontIndirectW(&m);
-    log_brush = CreateSolidBrush(RGB(255, 255, 255));
+    white_brush = CreateSolidBrush(RGB(255, 255, 255));
 }
 
 static int create_windows(void)
@@ -2168,8 +2842,13 @@ static int create_windows(void)
     wc.lpszClassName = L"trackkat_curve";
     if (!RegisterClassW(&wc))
         return 0;
-    wc.lpfnWndProc = banner_proc;
-    wc.lpszClassName = L"trackkat_banner";
+    wc.lpfnWndProc = strip_proc;
+    wc.lpszClassName = L"trackkat_strip";
+    if (!RegisterClassW(&wc))
+        return 0;
+    wc.lpfnWndProc = log_proc;
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = L"trackkat_log";
     if (!RegisterClassW(&wc))
         return 0;
 
@@ -2180,7 +2859,7 @@ static int create_windows(void)
         return 0;
     RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    /* No taller than the screen; the log box gives up the height. */
+    /* No taller than the screen; it scrolls instead. */
     RECT work;
     int height = r.bottom - r.top;
     if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) && height > work.bottom - work.top)
@@ -2188,14 +2867,26 @@ static int create_windows(void)
     wchar_t title[96];
     _snwprintf(title, 96, L"trackkat %ls", version_text);
     title[95] = 0;
-    main_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_window", title, WS_OVERLAPPEDWINDOW,
+    main_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_window", title, WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
                                 CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, height, NULL, NULL, inst, NULL);
     if (!main_hwnd)
         return 0;
     /* The title bar's and taskbar's small icon, drawn at its own size
      * rather than shrunk from the big one. */
-    SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXSMICON)));
+    HICON small_icon = resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXSMICON));
+    SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
     build_window();
+    fit_scroll();
+
+    /* The log's own window, top-level, so it can sit beside a game. */
+    RECT lr = {0, 0, S(LOG_W), S(LOG_H)};
+    AdjustWindowRect(&lr, WS_OVERLAPPEDWINDOW, FALSE);
+    log_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_log", L"trackkat log", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+                               CW_USEDEFAULT, lr.right - lr.left, lr.bottom - lr.top, NULL, NULL, inst, NULL);
+    if (!log_hwnd)
+        return 0;
+    SendMessageW(log_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
+    build_log_window();
 
     taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
     memset(&nid, 0, sizeof nid);
@@ -2224,8 +2915,8 @@ static DWORD WINAPI gui_thread(LPVOID unused)
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        /* Gives the window Tab between controls, Enter to save and Esc to hide. */
-        if (IsDialogMessageW(main_hwnd, &msg))
+        /* Gives the windows Tab between controls, Enter to save and Esc to hide. */
+        if (IsDialogMessageW(main_hwnd, &msg) || IsDialogMessageW(log_hwnd, &msg))
             continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
@@ -2278,10 +2969,11 @@ void hts_gui_quit(void)
     ExitProcess(0);
 }
 
-/* Nonzero while the window is open; hidden to the tray doesn't count. */
+/* Nonzero while the window or the log's is open; hidden to the tray
+ * doesn't count. */
 int hts_gui_window_open(void)
 {
-    return main_hwnd && IsWindowVisible(main_hwnd);
+    return (main_hwnd && IsWindowVisible(main_hwnd)) || (log_hwnd && IsWindowVisible(log_hwnd));
 }
 
 /* Ask a trackkat already running, if there is one, to quit. Returns its
