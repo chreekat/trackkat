@@ -5,7 +5,7 @@ The details behind the [README](../README.md).
 ## Installing and updating
 
 trackkat runs from wherever it was unzipped until you click **Install
-trackkat** in its window (or run `trackkat.exe --install`). That copies it to
+trackkat** at the top of its window (or run `trackkat.exe --install`). That copies it to
 `%LOCALAPPDATA%\Programs\trackkat\<version>`, for you alone and without
 admin, adds it to the Start menu and to Settings → Apps, points games at its
 NPClient there, and switches to the installed copy. If a copy as new is
@@ -17,15 +17,16 @@ Settings files beside `trackkat.exe`, where older versions kept them, are
 moved there once.
 
 Each build has a version, such as `0.1.142 (3f9c2e1)`: the build's number and
-its commit. The window's title and the start of the log show it. An
-installed trackkat looks for a newer build when it starts and every four
-hours, downloads it in the background, checks its SHA-256 and unpacks it
-beside the others. The window then offers **Restart to update**, as does the
-tray menu; otherwise the new version starts the next time trackkat does. If
-it can't reach GitHub, it says so on the console and tries again later; the
-log says so once, until a look works again. **Keep up to date**
-(`updates = off`) stops this. **Check for updates** looks at once, even with
-it off, and the log says what it found.
+its commit. The window's title, the log window and the start of the log
+show it. An installed trackkat looks for a newer build when it starts and
+every four hours, downloads it in the background, checks its SHA-256 and
+unpacks it beside the others. The strip across the top of the window then
+turns amber and offers **Restart to update**, as does the tray menu;
+otherwise the new version starts the next time trackkat does. If it can't
+reach GitHub, it says so on the console and tries again later; the log says
+so once, until a look works again. The strip says what the last look found.
+**Keep up to date** (`updates = off`) stops this. **Check for updates**, in
+the strip, looks at once, even with it off, and the log says what it found.
 
 A game keeps the NPClient it loaded until it quits, and that DLL starts
 `trackkat.exe` from its own folder, so an older version's folder is kept
@@ -63,9 +64,9 @@ window of the one already running.
 no console, until you quit it.
 
 **Started by a game**, trackkat shows only its tray icon, with no console.
-Once no game has been tracking for a minute, and its window isn't open, it
-quits by itself, so a game restarted within the minute finds it still
-running. It says when it starts counting down, and when it quits:
+Once no game has been tracking for a minute, and neither its window nor its
+log window is open, it quits by itself, so a game restarted within the
+minute finds it still running. It says when it starts counting down, and when it quits:
 
 ```
 No game or window is using trackkat; quitting in 60 s unless one starts.
@@ -107,6 +108,10 @@ toward the screen, and sit back, to bring the trimmed view ahead. While
 paused, trimming takes the held view as forward, and games stay held until
 you resume.
 
+In the window, the TRIM switch lights blue while a trim is in place, with
+its yaw and pitch, and PAUSE lights amber while paused. Each switch's keys
+and buttons are listed under it, one to a line, to edit or add to.
+
 ## Calibration
 
 trackkat learns two things from how you move your head, and keeps them in
@@ -134,9 +139,10 @@ Level learnt: camera tipped 14.2 degrees down and 1.3 to its right, from 900 deg
 Neck pivot learnt: 95 mm below the clip, 80 behind it and 60 to its right, from 40 head turns.
 ```
 
-To calibrate level at once, click **Calibrate level** in trackkat's window
-(or type `c` and Enter in its console), then turn your head left and right
-for five seconds. Delete `trackkat.calibration` to start afresh; it explains
+To calibrate level at once, lift the cover beside the calibration in
+trackkat's window and click **Calibrate now** (or type `c` and Enter in its
+console), then turn your head left and right for five seconds. **Clear
+calibration**, under the same cover, forgets what was learnt. Delete `trackkat.calibration` to start afresh; it explains
 its own format.
 
 Single-frame jumps no head could make are ignored.
