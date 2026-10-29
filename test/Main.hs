@@ -1064,6 +1064,23 @@ main = do
     -- Recording and replaying (see "TrackKat.Recording").
     recordingChecks check
 
+    -- Curved tabs: each reflector is tape round a tab, and the centre of
+    -- its light slides round the arc toward the camera as the head turns
+    -- (see Note [Curved reflectors] in TrackKat.Pose). Turning left and
+    -- right while nodding, with the reflectors taken for points, the clip
+    -- is tracked moving several mm it didn't, and turning a little off;
+    -- taken for tape on tabs, both come to about what tracking points
+    -- drawn as discs leaves.
+    let tabTurning t = (50 * sin (2 * pi * t / 4), 15 * sin (2 * pi * t / 2.7))
+        tabFrames = [(t, pose, renderDiscs (tapeDiscs pose)) | t <- at120 8, let (y, p) = tabTurning t; pose = headSeen bentWorn y p 0]
+        asPoints = trackFrames clipBent tabFrames
+        asTabs = trackFrames (clipModel (clip defaultConfig)) tabFrames
+        ((pointsTurn, pointsMoved), _) = turnError asPoints
+        ((tabsTurn, tabsMoved), _) = turnError asTabs
+    check ("tape on tabs taken for points, off by " ++ show (turnError asPoints)) $ lostCount asPoints == 0 && pointsMoved > 5
+    check ("tape on tabs followed, off by " ++ show (turnError asTabs)) $
+        lostCount asTabs == 0 && tabsMoved < 0.3 * pointsMoved && tabsTurn < 0.75 * pointsTurn
+
     n <- readIORef failures
     if n == 0 then putStrLn "all tests passed" else exitFailure
   where
@@ -1386,3 +1403,50 @@ recordedSession =
 sessionEntries :: (Word64, Word8, [Stripe], [(Word64, Input)], Maybe String) -> [Entry]
 sessionEntries (at, n, stripes, inputs, corrupt) =
     [CorruptEntry at why | Just why <- [corrupt]] ++ [InputEntry pressed i | (pressed, i) <- inputs] ++ [FrameEntry at n stripes]
+
+-- | The mean and worst errors of the turning and movement tracked from
+-- the first frame, against the head's: degrees, and mm at the clip's
+-- middle.
+turnError :: [(Double, Pose, Outcome, Maybe Pose)] -> ((Double, Double), (Double, Double))
+turnError rows = case [(truth, p) | (_, truth, Tracked{}, Just p) <- rows] of
+    (truth0, p0) : rest ->
+        let errors = [(fst (poseError turned seen), norm (middle turned ^-^ middle seen)) | (truth, p) <- rest, let turned = moved truth0 truth; seen = moved p0 p]
+            mean xs = sum xs / fromIntegral (max 1 (length xs))
+         in ((mean (map fst errors), mean (map snd errors)), (maximum (0 : map fst errors), maximum (0 : map snd errors)))
+    [] -> ((0, 0), (0, 0))
+  where
+    -- The rigid movement from one pose to another.
+    moved (Pose r0 t0) (Pose r t) = let r' = r `mulMM` transpose r0 in Pose r' (t ^-^ mulMV r' t0)
+    middle (Pose r t) = mulMV r (V3 0 0 900) ^+^ t
+
+-- | The reflectors' discs in the image for a pose of 'clipBent' whose
+-- reflectors are tape covering 25 mm round tabs 10 mm in radius, the
+-- lower ones upright and the top one leaning 37.5 degrees toward the
+-- camera: each disc at the centre of its tape's light, summed over strips
+-- of tape, each as bright as it is square to the camera times how much
+-- light tape returns at that slant, which falls off as a gaussian of
+-- 45 degrees.
+tapeDiscs :: Pose -> [((Double, Double), Double)]
+tapeDiscs (Pose r t) =
+    [ (project defaultIntrinsics (Pose r t) centre, radiusAt1m * 1000 / z)
+    | (middle, axis, radiusAt1m) <- [(mLeft clipBent, upright, 8.8), (mRight clipBent, upright, 8.8), (mTop clipBent, leaning, 7.6)]
+    , let facing = normalize (V3 0 0 (-1) ^+^ (dot (V3 0 0 1) axis *^ axis))
+          across = cross axis facing
+          strips =
+            [ (w, at)
+            | i <- [0 .. 99 :: Int]
+            , let phi = (fromIntegral i + 0.5 - 50) / 100 * 2.5
+                  normal = (cos phi *^ facing) ^+^ (sin phi *^ across)
+                  at = middle ^-^ (10 *^ facing) ^+^ (10 *^ normal)
+                  inCamera = mulMV r at ^+^ t
+                  slant = dot (mulMV r normal) (normalize ((-1) *^ inCamera))
+                  angle = acos (min 1 slant)
+                  w = slant * exp (negate ((angle / (pi / 4)) ^ (2 :: Int)))
+            , slant > 0
+            ]
+          centre = (1 / sum (map fst strips)) *^ foldr ((^+^) . uncurry (*^)) (V3 0 0 0) strips
+          V3 _ _ z = mulMV r centre ^+^ t
+    ]
+  where
+    upright = V3 0 1 0
+    leaning = V3 0 (cos (37.5 * pi / 180)) (sin (37.5 * pi / 180))

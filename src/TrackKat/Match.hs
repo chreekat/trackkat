@@ -4,12 +4,12 @@
 -- reflector should be in the image.
 --
 -- Usually each reflector is one blob. But a reflector can fade from view
--- (they are flat discs, dim when seen at a slant), two can run together
+-- (they are tape, dim when seen at a slant), two can run together
 -- into one blob, one can break into two pieces, and other bright things
 -- can show up as extra blobs. See Note [Matching blobs].
 module TrackKat.Match (
     Three (..),
-    modelPoints,
+    reflectors,
     Size (..),
     noSize,
     Kind (..),
@@ -25,7 +25,7 @@ import Data.List (sortOn)
 import Data.Maybe (catMaybes)
 
 import TrackKat.Frame (Blob (..), blobAxes)
-import TrackKat.Linear (V3, norm)
+import TrackKat.Linear (norm)
 import TrackKat.Pose
 
 -- | One of something for each reflector: left, right, top.
@@ -36,8 +36,8 @@ instance Applicative Three where
     pure a = Three a a a
     Three f g h <*> Three a b c = Three (f a) (g b) (h c)
 
-modelPoints :: Model -> Three V3
-modelPoints m = Three (mLeft m) (mRight m) (mTop m)
+reflectors :: Three Reflector
+reflectors = Three LeftReflector RightReflector TopReflector
 
 -- | How big a reflector's blob has been lately, in the pixels it would have
 -- at 1 m (a blob's area goes with the inverse square of distance).
@@ -111,7 +111,7 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
     indexed = zip [0 :: Int ..] (take maxBlobs blobs)
     metres = norm (poseT pose) / 1000
     expected = fmap (\s -> sizeLatest s / (metres * metres)) sizes
-    predicted = fmap (project k pose) (modelPoints m)
+    predicted = fmap (seenAt k m pose) reflectors
     singles = [([i], Sight (blobX b, blobY b) (pixels b) Whole) | (i, b) <- indexed]
     pieces = [([i, j], rejoin a b) | (i, a) <- indexed, (j, b) <- indexed, i < j, together a b]
     units = singles ++ pieces

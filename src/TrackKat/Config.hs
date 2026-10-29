@@ -43,7 +43,7 @@ import System.IO (readFile')
 
 import TrackKat.Lights (Masking (..))
 import TrackKat.Number
-import TrackKat.Pose (Model, triangle)
+import TrackKat.Pose (Model (..), Tabs (..), triangle)
 import TrackKat.Response
 
 data Config = Config
@@ -83,13 +83,19 @@ instance Eq ClipShape where
     a == b = clipDistances a == clipDistances b
 
 -- | A clip from its three distances, if they are positive and form a
--- triangle. The top reflector's post is taken to lean back 45 degrees. The
--- camera faces the wearer, so the model, which goes by the camera's left
--- and right, has the wearer's sides swapped.
+-- triangle. The top reflector's post is taken to lean back 45 degrees.
+-- The reflectors are taken to be as on NaturalPoint's TrackClip: tape
+-- covering 25 mm of tabs 10 mm in radius, the top one on the post where it
+-- is bent 30 to 45 degrees, so by the middle of that (see Note [Curved
+-- reflectors] in "TrackKat.Pose"). The camera faces the wearer, so the
+-- model, which goes by the camera's left and right, has the wearer's sides
+-- swapped.
 clipShape :: Double -> Double -> Double -> Maybe ClipShape
 clipShape lr lt rt
-    | all (> 0) [lr, lt, rt] = ClipShape (lr, lt, rt) <$> triangle 45 lr rt lt
+    | all (> 0) [lr, lt, rt] = ClipShape (lr, lt, rt) . onTabs <$> triangle 45 lr rt lt
     | otherwise = Nothing
+  where
+    onTabs m = m{mTabs = Tabs{tabRadius = 10, tapeArc = 25, postBend = 37.5}}
 
 clipDistances :: ClipShape -> (Double, Double, Double)
 clipDistances (ClipShape d _) = d

@@ -4,10 +4,6 @@ Roughly in order.
 
 - Once ignoring still lights has proven itself, make it always on and drop
   the `ignore lights` setting and its checkbox.
-- Model the reflectors as what they are: tape on short cylinder segments
-  (about 20 mm across, axis normal to the clip), whose lit spot slides a few
-  mm with the viewing angle. In simulation this alone puts tracking 4-10
-  degrees off.
 - Ground truth from a webcam: record it alongside the camera and estimate the
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.

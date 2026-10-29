@@ -332,7 +332,7 @@ step now stripes t =
                 -- was the light, and isn't followed.
                 untracked = case trRecent t of
                     Just r
-                        | not (holding [p | LightIgnored p <- news] (toList (project k (recentPose r) <$> modelPoints m)) lights) ->
+                        | not (holding [p | LightIgnored p <- news] (toList (seenAt k m (recentPose r) <$> reflectors)) lights) ->
                             Just r{recentSince = now}
                     _ -> Nothing
              in ( t{trLearner = lostSight (trLearner t), trLights = lights, trRecent = untracked, trBlobs = roles []}
@@ -350,7 +350,7 @@ step now stripes t =
                 -- is learnt, it is no longer followed.
                 confirmed = now - since >= confirmSeconds
                 (lights, news) = learnt (View (toList sights) (if confirmed then reflectorDiscs seenPose sights else []))
-                wasLight = not confirmed && holding [p | LightIgnored p <- news] (toList (project k seenPose <$> modelPoints m)) lights
+                wasLight = not confirmed && holding [p | LightIgnored p <- news] (toList (seenAt k m seenPose <$> reflectors)) lights
                 -- See Note [Which pose is the head's] in TrackKat.Branch.
                 others = if allSeen then Just (alternatives k m seenPose) else Nothing
                 -- Each reflector a blob of its own, with no other blob,
@@ -424,7 +424,7 @@ step now stripes t =
         _ -> Nothing
     mask = case trMasking t of
         NoMasking -> noMask
-        MaskLights -> activeMask (maybe [] (\r -> toList (project k (recentPose r) <$> modelPoints m)) following) (trLights t)
+        MaskLights -> activeMask (maybe [] (\r -> toList (seenAt k m (recentPose r) <$> reflectors)) following) (trLights t)
     (masked, visible) = partition (inMask mask) blobs
     -- Learning still lights, given what the frame showed of the clip: the
     -- lights learnt, and the events saying what changed.
@@ -450,7 +450,7 @@ step now stripes t =
     -- reflector broken in two.
     reflectorDiscs pose sights =
         let biggestSeen = maximum (0 : [sightPixels s | Just s <- toList sights])
-         in [(project k pose p, 15 + 2 * sqrt (biggestSeen / pi)) | p <- toList (modelPoints m)]
+         in [(seenAt k m pose which, 15 + 2 * sqrt (biggestSeen / pi)) | which <- toList reflectors]
     pivot = appliedPivot (trLearner t)
     metres pose = norm (poseT pose) / 1000
     sighting = maybe (fst <$> findAfresh (mask, (masked, visible))) follow following
@@ -488,7 +488,7 @@ step now stripes t =
         let dt = now - recentTime r
             candidates = [c | c <- matches k m (recentPose r) (trSizes t) visible, now - recentAllSeen r <= showingSeconds (showing (trSizes t) (metres (recentPose r)) (matchSights c))]
             attempt c = do
-                (pose, fit) <- solveNear k pivot (recentPose r) (observations (metres (recentPose r)) c)
+                (pose, fit) <- solveNear k m pivot (recentPose r) (observations (metres (recentPose r)) c)
                 let (turn, move) = poseChange pivot (recentPose r) pose
                     jump = max (turn / maxTurn dt) (move / maxMove dt)
                 if fit <= maxFit && jump <= 1 && plausible pose
@@ -508,15 +508,15 @@ step now stripes t =
             reach ref = let (turn, move) = poseChange pivot ref pose in turn <= maxReachTurn && move <= maxReachMove
          in distance >= nearest && distance <= farthest && maybe True reach (trReference t)
     seenCount c = length (catMaybes (toList (matchSights c)))
-    observations z c = catMaybes (toList (observe z <$> modelPoints m <*> trSizes t <*> matchSights c))
+    observations z c = catMaybes (toList (observe z <$> reflectors <*> trSizes t <*> matchSights c))
     -- A dim reflector, smaller than usual, counts for less: part of it may
     -- be too dim to see, moving its centroid. One sharing a blob counts for
     -- half, its place being an estimate.
-    observe z p size = fmap $ \s ->
+    observe z which size = fmap $ \s ->
         let usual = sizeUsual size / (z * z)
             dim = if usual > 0 then min 1 (sightPixels s / usual) else 1
             shared = if sightKind s == Merged then 0.5 else 1
-         in Observation p (dim * shared) (sightAt s)
+         in Observation which (dim * shared) (sightAt s)
     -- Reflectors' sizes, at 1 m, after a frame at the given distance. One
     -- sharing a blob with another has its share guessed, not seen.
     resize z size seen =
