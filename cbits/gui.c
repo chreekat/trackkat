@@ -71,6 +71,7 @@ typedef struct State {
     wchar_t offer[TEXT_MAX];       /* what the banner says, or nothing for no banner */
     wchar_t offer_button[64];      /* its button */
     wchar_t offer_tray[128];       /* the tray menu's item for it, or nothing for none */
+    int checking;                  /* whether trackkat is looking for a newer version */
     int spots;                     /* blobs in the last frame, up to BLOBS_MAX */
     Spot spot[BLOBS_MAX];
 } State;
@@ -79,7 +80,7 @@ typedef struct State {
 
 static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {CAMERA_SEARCHING, L"", 0, {0}, {0}, 0, 0, 0, {0}, 0, L"", L"",
-                       L"Changes are saved as you make them.", L"", L"", L"", 0, {{0, 0, 0, 0}}};
+                       L"Changes are saved as you make them.", L"", L"", L"", 0, 0, {{0, 0, 0, 0}}};
 static wchar_t version_text[64] = L"development build"; /* set before the window is made */
 static int updatable; /* whether Check for updates works; set before the window is made */
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
@@ -216,6 +217,15 @@ void hts_gui_offer(const wchar_t *text, const wchar_t *button, const wchar_t *tr
     ReleaseSRWLockExclusive(&lock);
 }
 
+/* Whether trackkat is looking for a newer version: the Check for updates
+ * button says so, and can't be clicked until it is done. */
+void hts_gui_checking(int checking)
+{
+    AcquireSRWLockExclusive(&lock);
+    shared.checking = checking;
+    ReleaseSRWLockExclusive(&lock);
+}
+
 /* The version shown in the title and beside the log. Call before
  * hts_gui_start. */
 void hts_gui_version(const wchar_t *text)
@@ -337,6 +347,7 @@ static HWND tray_hwnd, main_hwnd, live_hwnd;
 static HWND recenter_button, pause_button, trim_button, calibration_text, settings_text, log_box;
 static HWND log_group, copy_button, log_hint, version_label;
 static HWND banner, offer_button; /* shown with an offer, above the rest */
+static HWND check_updates;
 static int banner_shown;
 static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
@@ -1512,6 +1523,10 @@ static void refresh(void)
         SetWindowTextW(calibration_text, st.calibration);
     if (wcscmp(st.settings_message, seen.settings_message) != 0)
         SetWindowTextW(settings_text, st.settings_message);
+    if (st.checking != seen.checking) {
+        SetWindowTextW(check_updates, st.checking ? L"Checking…" : L"Check for updates");
+        EnableWindow(check_updates, updatable && !st.checking);
+    }
     int offer_changed = wcscmp(st.offer, seen.offer) != 0 || wcscmp(st.offer_button, seen.offer_button) != 0;
     if (st.paused != seen.paused || fields & (1u << F_PAUSE)) {
         wchar_t label[FIELD_MAX + 32];
@@ -1797,10 +1812,11 @@ static void build_window(void)
         L"Once installed, look for a newer version when trackkat starts and every few hours, and fetch it in the "
         L"background (updates = on). It is used when you click Restart to update, or when trackkat next starts. "
         L"Your settings and calibration stay.");
-    HWND check_updates = tip(control(L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON, 476, CURVES_TOP + 173,
-                                     116, 24, ID_CHECK_UPDATES),
-                             L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
-                             L"one. The log says what was found. Only for an installed trackkat.");
+    check_updates = tip(control(L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON, 476, CURVES_TOP + 173,
+                                116, 24, ID_CHECK_UPDATES),
+                        L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
+                        L"one. The start of this row says what was found, and the log says more. Only for an "
+                        L"installed trackkat.");
     EnableWindow(check_updates, updatable);
 
     settings_text = tip(
@@ -1808,7 +1824,7 @@ static void build_window(void)
         L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
         L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
         L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
-        L"not, why.");
+        L"not, why, or what Check for updates found.");
     curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 604, CURVES_TOP + 174,
                                  96, 22, ID_CURVES_AS_TEXT),
                          L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "

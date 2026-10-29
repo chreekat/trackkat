@@ -21,6 +21,8 @@ void hts_gui_games(int games);
 void hts_gui_stats(const wchar_t *text);
 void hts_gui_calibration(const wchar_t *text);
 void hts_gui_settings_message(const wchar_t *text);
+void hts_gui_updatable(int can);
+void hts_gui_checking(int checking);
 void hts_gui_set_setting(const wchar_t *name, const wchar_t *value);
 int hts_gui_saved_setting(const wchar_t *name, wchar_t *buf, int size);
 int hts_gui_take_actions(void);
@@ -37,6 +39,7 @@ static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 2
 int main(int argc, char **argv)
 {
     int seconds = argc > 1 ? atoi(argv[1]) : 30;
+    hts_gui_updatable(1);
     if (hts_gui_start(1) != 0) {
         fprintf(stderr, "could not start the GUI\n");
         return 1;
@@ -51,7 +54,7 @@ int main(int argc, char **argv)
                         L"turns.");
     hts_gui_camera(1, L"");
     hts_gui_games(1);
-    int paused = 0;
+    int paused = 0, checking = 0;
     for (int i = 0; i < seconds * 60; i++) {
         double t = i / 60.0;
         float yaw = (float)(14 * sin(t * 0.9)), pitch = (float)(-6 + 5 * sin(t * 1.3));
@@ -91,6 +94,12 @@ int main(int argc, char **argv)
                 printf("  key %x\n", hts_gui_chosen_key(list));
                 hts_gui_add_binding(list, L"Ctrl+F7");
             }
+        /* Check for updates takes two seconds, and finds this version. */
+        if (acts & 0x800)
+            checking = 120;
+        if (checking > 0 && --checking == 0)
+            hts_gui_settings_message(L"Up to date (0.1.151).");
+        hts_gui_checking(checking > 0);
         if (acts & 0x8)
             break;
         Sleep(16);

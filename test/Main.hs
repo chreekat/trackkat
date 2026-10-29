@@ -596,6 +596,9 @@ main = do
     check "metadata with a bad digest" $ isLeft (parseRelease ("{\"version\": \"0.1.2\", \"url\": \"https://x\", \"sha256\": \"" ++ replicate 64 'g' ++ "\"}"))
     check "metadata that isn't JSON" $ all (isLeft . parseRelease) ["", "[1]", "{\"version\": }", "{\"a\": 1} x"]
     check "digests compare ignoring case" $ sameDigest "ABC" "abc" && not (sameDigest "abc" "abd")
+    check "nothing published yet passes" $ httpFailure "u" 404 == Unavailable "u: HTTP status 404"
+    check "server errors pass" $ all (\s -> httpFailure "u" s == Unavailable ("u: HTTP status " ++ show s)) [500, 502, 503, 599]
+    check "other statuses don't" $ all (\s -> httpFailure "u" s == LookFailed ("u: HTTP status " ++ show s)) [400, 403, 410, 600]
 
     -- The game served through NaturalPoint's NPClient, remembered across
     -- restarts.

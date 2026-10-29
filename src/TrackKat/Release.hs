@@ -26,6 +26,8 @@ module TrackKat.Release (
     parseLocation,
     releaseLocation,
     sameDigest,
+    LookFailure (..),
+    httpFailure,
 
     -- * Files
     releaseFiles,
@@ -155,6 +157,25 @@ releaseLocation (LocalFile meta) path
     | "https://" `isPrefixOf` map toLower path || "http://" `isPrefixOf` map toLower path =
         Left ("metadata from a file names a zip on the web: " ++ path)
     | otherwise = Right (LocalFile (takeDirectory meta </> path))
+
+-- | Why a look for a newer release failed.
+data LookFailure
+    = -- | GitHub had nothing at the URL just then, or failed to serve it:
+      -- likely while a new build is being published, so worth trying again
+      -- in a few minutes
+      Unavailable String
+    | -- | anything else, as being offline or a download that doesn't check
+      LookFailed String
+    deriving (Eq, Show)
+
+-- | What an HTTP status other than success means, for a URL: 404 and
+-- server errors (5xx) are 'Unavailable', others 'LookFailed'.
+httpFailure :: String -> Int -> LookFailure
+httpFailure url status
+    | status == 404 || (status >= 500 && status <= 599) = Unavailable described
+    | otherwise = LookFailed described
+  where
+    described = url ++ ": HTTP status " ++ show status
 
 -- | The files of a release, as its zip has them and as installing copies
 -- them from a folder it was unzipped to. CI checks the zip against this.
