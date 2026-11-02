@@ -147,8 +147,32 @@ jobs:
             if ($subsystem -ne $t.subsystem) { "::error::$($t.exe) has PE subsystem $subsystem, not $($t.subsystem)"; exit 1 }
           }
           $exe = (Resolve-Path dist\trackkat.exe).Path
+          # A program that doesn't finish may be showing a message box: say what it says.
+          Add-Type -TypeDefinition @'
+          using System; using System.Runtime.InteropServices; using System.Text; using System.Collections.Generic;
+          public static class Windows {
+            delegate bool Each(IntPtr w, IntPtr l);
+            [DllImport("user32")] static extern bool EnumWindows(Each f, IntPtr l);
+            [DllImport("user32")] static extern bool EnumChildWindows(IntPtr w, Each f, IntPtr l);
+            [DllImport("user32")] static extern uint GetWindowThreadProcessId(IntPtr w, out uint pid);
+            [DllImport("user32", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr w, StringBuilder s, int n);
+            static string Text(IntPtr w) { var s = new StringBuilder(4096); GetWindowText(w, s, 4096); return s.ToString(); }
+            public static string Of(int pid) {
+              var found = new List<string>();
+              EnumWindows((w, l) => {
+                uint owner; GetWindowThreadProcessId(w, out owner);
+                if (owner == pid) {
+                  found.Add("window: " + Text(w));
+                  EnumChildWindows(w, (c, l2) => { found.Add("  " + Text(c)); return true; }, IntPtr.Zero);
+                }
+                return true;
+              }, IntPtr.Zero);
+              return string.Join("\n", found);
+            }
+          }
+          '@
           function Finish($p, $what) {
-            if (-not $p.WaitForExit(60000)) { $p.Kill($true); "::error::$what didn't finish"; exit 1 }
+            if (-not $p.WaitForExit(60000)) { [Windows]::Of($p.Id); $p.Kill($true); "::error::$what didn't finish"; exit 1 }
             if ($p.ExitCode -ne 0) { "::error::$what exited with $($p.ExitCode)"; exit 1 }
           }
           Finish (Start-Process $exe -ArgumentList "--list-files" -PassThru) "trackkat --list-files with no console"
