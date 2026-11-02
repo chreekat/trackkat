@@ -1,8 +1,9 @@
 /* Windows plumbing for trackkat.exe: publishing poses to games, the control
  * block shared with our NPClient DLL, global hotkeys and joystick buttons,
- * and the registry. */
+ * the registry, and where what it prints goes. */
 
 #include <windows.h>
+#include <io.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -445,4 +446,78 @@ int hts_hotkeys_start(int *mouse_err, int *joysticks_err)
 int hts_hotkeys_take(void)
 {
     return (int)InterlockedExchange(&hotkey_presses, 0);
+}
+
+/* ---- Console ------------------------------------------------------------- */
+
+/* trackkat.exe is a GUI program, so Windows gives it no console, and its
+ * standard output and error are whatever it was started with, which may be
+ * nothing. Where they now go, as hts_console_attach found: */
+#define OUTPUT_REDIRECTED 0 /* the file or pipe it was started with */
+#define OUTPUT_PARENT_CONSOLE 1 /* the console of the terminal that started it */
+#define OUTPUT_NONE 2 /* NUL */
+
+static int console_output = OUTPUT_NONE;
+
+/* A file or pipe to write to, as given by whatever started this process. */
+static int redirected(DWORD std)
+{
+    HANDLE h = GetStdHandle(std);
+    if (h == NULL || h == INVALID_HANDLE_VALUE)
+        return 0;
+    DWORD type = GetFileType(h);
+    return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
+}
+
+/* Ctrl-C and Ctrl-Break, typed in the terminal trackkat was started from,
+ * are meant for whatever that terminal runs now, not trackkat. */
+static BOOL WINAPI ignore_interrupts(DWORD event)
+{
+    return event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT;
+}
+
+/* Point the C runtime's descriptor fd, which GHC writes through, and the
+ * standard handle std at a file opened anew. */
+static void point_at(int fd, DWORD std, const wchar_t *file)
+{
+    HANDLE h = CreateFileW(file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    int opened = _open_osfhandle((intptr_t)h, 0);
+    if (opened < 0) {
+        CloseHandle(h);
+        return;
+    }
+    if (_dup2(opened, fd) == 0)
+        SetStdHandle(std, (HANDLE)_get_osfhandle(fd));
+    _close(opened);
+}
+
+/* Make standard output and error safe to write to, before anything is
+ * written: left as they are where they are a file or pipe, else pointed at
+ * the console of the terminal this process was started from, if any, else
+ * at NUL. Returns where standard output goes, as an OUTPUT_* code. */
+int hts_console_attach(void)
+{
+    int out = redirected(STD_OUTPUT_HANDLE), err = redirected(STD_ERROR_HANDLE);
+    int attached = 0;
+    if (!out || !err) {
+        attached = AttachConsole(ATTACH_PARENT_PROCESS);
+        if (attached)
+            SetConsoleCtrlHandler(ignore_interrupts, TRUE);
+    }
+    const wchar_t *elsewhere = attached ? L"CONOUT$" : L"NUL";
+    if (!out)
+        point_at(1, STD_OUTPUT_HANDLE, elsewhere);
+    if (!err)
+        point_at(2, STD_ERROR_HANDLE, elsewhere);
+    console_output = out ? OUTPUT_REDIRECTED : attached ? OUTPUT_PARENT_CONSOLE : OUTPUT_NONE;
+    return console_output;
+}
+
+/* Where standard output goes, as hts_console_attach returned. */
+int hts_console_output(void)
+{
+    return console_output;
 }

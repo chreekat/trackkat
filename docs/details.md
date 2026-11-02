@@ -23,9 +23,9 @@ every four hours, downloads it in the background, checks its SHA-256 and
 unpacks it beside the others. The strip across the top of the window then
 turns amber and offers **Restart to update**, as does the tray menu;
 otherwise the new version starts the next time trackkat does. If it can't
-reach GitHub, it says so on the console and tries again later; the log says
-so once, until a look works again. The strip says what the last look found.
-**Keep up to date** (`updates = off`) stops this. **Check for updates**, in
+reach GitHub, it tries again later; the log says so once, until a look
+works again, and a terminal it was started from every time. The strip says
+what the last look found. **Keep up to date** (`updates = off`) stops this. **Check for updates**, in
 the strip, looks at once, even with it off, and the log says what it found.
 
 A game keeps the NPClient it loaded until it quits, and that DLL starts
@@ -34,8 +34,7 @@ while any game has its DLL, and deleted once none does. Its `trackkat.exe`,
 started by such a game, hands over to the newest installed.
 
 **Start with Windows** (`startup = on`) starts trackkat in the tray when you
-log in, through `trackkat-tray.exe`, which starts it without a console
-window. Games start trackkat themselves anyway, except in
+log in. Games start trackkat themselves anyway, except in
 [anti-cheat mode](#anti-cheat).
 
 To uninstall, use Settings → Apps → trackkat. It quits trackkat, removes its
@@ -55,15 +54,23 @@ lets it go.
 
 ## Started by hand, or by a game
 
-**Started by hand**, trackkat opens its window and keeps its console, where
-Enter recenters, `c` Enter calibrates, `j` Enter names the joystick buttons
-you press for the next minute, and Ctrl-C quits. Running it again shows the
-window of the one already running.
+trackkat never opens a console window, however it is started.
 
-**Started with Windows** (`--tray`), trackkat shows only its tray icon, with
-no console, until you quit it.
+**Started by hand**, trackkat opens its window. Running it again shows the
+window of the one already running. For the first minute, the log names the
+joystick buttons you press, ready to bind in `trackkat.conf`.
 
-**Started by a game**, trackkat shows only its tray icon, with no console.
+**Started from a terminal** (PowerShell or Command Prompt), trackkat is a
+window program, so the prompt comes back at once, but trackkat prints what
+its log says to that terminal as it goes. Ctrl-C there doesn't stop it:
+quit it from its window or the tray. Closing the terminal quits it too.
+Piping its output, as in `.\trackkat.exe | Out-Host`, makes the terminal
+wait for it, and adds a line a second with the pose and figures.
+
+**Started with Windows** (`--tray`), trackkat shows only its tray icon,
+until you quit it.
+
+**Started by a game**, trackkat shows only its tray icon.
 Once no game has been tracking for a minute, and neither its window nor its
 log window is open, it quits by itself, so a game restarted within the
 minute finds it still running. It says when it starts counting down, and when it quits:
@@ -140,9 +147,9 @@ Neck pivot learnt: 95 mm below the clip, 80 behind it and 60 to its right, from 
 ```
 
 To calibrate level at once, lift the cover beside the calibration in
-trackkat's window and click **Calibrate now** (or type `c` and Enter in its
-console), then turn your head left and right for five seconds. **Clear
-calibration**, under the same cover, forgets what was learnt. Delete `trackkat.calibration` to start afresh; it explains
+trackkat's window and click **Calibrate now**, then turn your head left and
+right for five seconds. **Clear calibration**, under the same cover, forgets
+what was learnt. Delete `trackkat.calibration` to start afresh; it explains
 its own format.
 
 Single-frame jumps no head could make are ignored.

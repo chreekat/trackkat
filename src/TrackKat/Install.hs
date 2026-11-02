@@ -50,7 +50,7 @@ foreign import ccall unsafe "hts_set_run" c_set_run :: CWString -> CWString -> C
 foreign import ccall unsafe "hts_remove_run" c_remove_run :: CWString -> IO CInt
 foreign import ccall unsafe "hts_get_npclient_path" c_get_npclient_path :: CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_remove_npclient_path" c_remove_npclient_path :: IO CInt
-foreign import ccall unsafe "hts_start" c_start :: CWString -> CWString -> CWString -> CInt -> IO CInt
+foreign import ccall unsafe "hts_start" c_start :: CWString -> CWString -> CWString -> IO CInt
 foreign import ccall safe "hts_wait_exit" c_wait_exit :: CInt -> CInt -> IO CInt
 foreign import ccall unsafe "hts_own_pid" c_own_pid :: IO CInt
 foreign import ccall safe "hts_ask" c_ask :: CWString -> CInt -> IO CInt
@@ -163,17 +163,14 @@ register say p v = do
     unless (rc' == 0) $ say ("Can't list trackkat in Settings' apps (error " ++ show rc' ++ ").")
 
 -- | Have Windows start this copy of trackkat in the tray at login, or not.
--- trackkat-tray.exe starts it without a console window.
+-- Each copy points the Run key at itself whenever it starts, replacing
+-- what older versions pointed it at (trackkat-tray.exe, beside them).
 setStartup :: (String -> IO ()) -> Paths -> Startup -> IO ()
 setStartup say p = \case
     StartAtLogin -> do
-        let tray = exeDir p </> "trackkat-tray.exe"
-        there <- doesFileExist tray
-        if not there
-            then say ("Can't start with Windows: there is no " ++ tray ++ ".")
-            else do
-                rc <- withCWString runName $ \n -> withCWString (quote tray) $ \c -> c_set_run n c 0
-                unless (rc == 0) $ say ("Can't start with Windows (registry error " ++ show rc ++ ").")
+        let command = quote (exeDir p </> "trackkat.exe") ++ " --tray"
+        rc <- withCWString runName $ \n -> withCWString command $ \c -> c_set_run n c 0
+        unless (rc == 0) $ say ("Can't start with Windows (registry error " ++ show rc ++ ").")
     NoStartAtLogin -> do
         rc <- withCWString runName c_remove_run
         unless (rc == 0) $ say ("Can't stop starting with Windows (registry error " ++ show rc ++ ").")
@@ -191,16 +188,12 @@ handOver exe args = do
     pid <- c_own_pid
     launch exe (["--after", show pid] ++ args)
 
--- | Start a trackkat.exe with these arguments. Left is a Windows error code.
+-- | Start a program, such as a trackkat.exe, with these arguments, and no
+-- console window. Left is a Windows error code.
 launch :: FilePath -> [String] -> IO (Either Int ())
-launch exe args = launchWith exe args False
-
--- | Start a program, with or without a console window. Left is a Windows
--- error code.
-launchWith :: FilePath -> [String] -> Bool -> IO (Either Int ())
-launchWith exe args noWindow =
+launch exe args =
     withCWString exe $ \e -> withCWString (unwords (quote exe : args)) $ \c -> withCWString (takeDirectory exe) $ \d -> do
-        rc <- c_start e c d (if noWindow then 1 else 0)
+        rc <- c_start e c d
         pure (if rc < 0 then Left (fromIntegral (negate rc)) else Right ())
 
 -- | Wait up to the given number of seconds for a process to quit; True
@@ -348,7 +341,7 @@ uninstall how = do
                 then pure False
                 else do
                     -- This trackkat.exe, and the DLLs it loaded, go once it has quit.
-                    _ <- launchWith comspec ["/d", "/c", "ping -n 4 127.0.0.1 >nul & rd /s /q", quote (installRoot p)] True
+                    _ <- launch comspec ["/d", "/c", "ping -n 4 127.0.0.1 >nul & rd /s /q", quote (installRoot p)]
                     others <- filter (not . inside (exeDir p)) <$> filesUnder (installRoot p)
                     unless (null others) $ () <$ withCWString "trackkat uninstall" (\n -> withCWString removeRoot (\c -> c_set_run n c 1))
                     pure (not (null others))
