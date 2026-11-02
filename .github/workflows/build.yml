@@ -175,7 +175,7 @@ jobs:
             if (-not $p.WaitForExit(60000)) { [Windows]::Of($p.Id); $p.Kill($true); "::error::$what didn't finish"; exit 1 }
             if ($p.ExitCode -ne 0) { "::error::$what exited with $($p.ExitCode)"; exit 1 }
           }
-          Finish (Start-Process $exe -ArgumentList "--list-files" -PassThru) "trackkat --list-files with no console"
+          Finish (Start-Process $exe -ArgumentList "--list-files" -PassThru) "trackkat --list-files started by Start-Process"
           $script = Join-Path $env:RUNNER_TEMP "attached.ps1"
           $out = Join-Path $env:RUNNER_TEMP "attached.txt"
           @'
