@@ -36,6 +36,7 @@ import TrackKat.Pose
 import TrackKat.Release
 import TrackKat.Response
 import TrackKat.ServedGame
+import TrackKat.Shape
 import TrackKat.Stats
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
@@ -536,7 +537,7 @@ loadCalibration m path = do
         Right c -> do
             say (describeLevel c)
             say (describePivot Nothing c)
-            showCalibration (describeCalibration Nothing c)
+            showCalibration (describeCalibration Nothing c Nothing)
             pure c
         Left err -> do
             when exists $ say (path ++ ": " ++ err ++ "; starting afresh.")
@@ -773,7 +774,7 @@ track s cam = do
                 let centre = trackerCentre tracker
                 forM_ events $ \e -> do
                     say (describeEvent centre e)
-                    forM_ (calibrationNews centre (trackerCalibration tracker) e) $ \news -> do
+                    forM_ (calibrationNews centre (trackerCalibration tracker) (sureEstimate (trackerShape tracker)) e) $ \news -> do
                         showCalibration news
                         showClip (learntClip (trackerModel tracker) centre (trackerCalibration tracker))
                 forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
@@ -880,6 +881,7 @@ describeEvent _ (Calibrated c) =
      in printf "Calibrated: camera tipped %.1f degrees down, %.1f to its right." down right
 describeEvent _ (Refined LevelRefined c) = describeLevel c
 describeEvent centre (Refined PivotRefined c) = describePivot centre c
+describeEvent _ (ShapeEstimated est) = describeShape est
 describeEvent _ Corrected = "Corrected a mirror-image pose."
 describeEvent _ (LightIgnored p) = describeLightIgnored p
 describeEvent _ (LightForgotten p) = describeLightForgotten p
@@ -893,22 +895,25 @@ learnt _ = []
 
 -- | What the calibration box in trackkat's window says after an event, if
 -- the event is about calibration or moves the centre, given the clip's pose
--- at the centre and the calibration so far.
-calibrationNews :: Maybe Pose -> Calibration -> Event -> Maybe String
-calibrationNews centre c Recentered = Just (describeCalibration centre c)
-calibrationNews centre _ (Calibrated c) =
+-- at the centre, the calibration so far and any sure estimate of the
+-- clip's shape.
+calibrationNews :: Maybe Pose -> Calibration -> Maybe ShapeEstimate -> Event -> Maybe String
+calibrationNews centre c estimate Recentered = Just (describeCalibration centre c estimate)
+calibrationNews centre _ estimate (Calibrated c) =
     let (down, right) = cameraTilt (estimatedLevel c)
-     in Just (printf "Calibrated: camera tipped %.1f° down and %.1f° to its right." down right ++ "\n" ++ describePivotBriefly centre c)
-calibrationNews centre _ (Refined _ c) = Just (describeCalibration centre c)
-calibrationNews _ _ Corrected = Nothing
-calibrationNews _ _ (LightIgnored _) = Nothing
-calibrationNews _ _ (LightForgotten _) = Nothing
-calibrationNews _ _ (LightMoved _) = Nothing
-calibrationNews centre _ e = Just (describeEvent centre e)
+     in Just (printf "Calibrated: camera tipped %.1f° down and %.1f° to its right." down right ++ "\n" ++ describePivotBriefly centre c ++ maybe "" (("\n" ++) . describeShapeBriefly) estimate)
+calibrationNews centre _ estimate (Refined _ c) = Just (describeCalibration centre c estimate)
+calibrationNews centre c estimate (ShapeEstimated _) = Just (describeCalibration centre c estimate)
+calibrationNews _ _ _ Corrected = Nothing
+calibrationNews _ _ _ (LightIgnored _) = Nothing
+calibrationNews _ _ _ (LightForgotten _) = Nothing
+calibrationNews _ _ _ (LightMoved _) = Nothing
+calibrationNews centre _ _ e = Just (describeEvent centre e)
 
--- | The window's account of a calibration, on two lines.
-describeCalibration :: Maybe Pose -> Calibration -> String
-describeCalibration centre c = describeLevelBriefly c ++ "\n" ++ describePivotBriefly centre c
+-- | The window's account of a calibration, on two lines, and a third for
+-- a sure estimate of the clip's shape.
+describeCalibration :: Maybe Pose -> Calibration -> Maybe ShapeEstimate -> String
+describeCalibration centre c estimate = describeLevelBriefly c ++ "\n" ++ describePivotBriefly centre c ++ maybe "" (("\n" ++) . describeShapeBriefly) estimate
 
 status :: Outcome -> Maybe HeadPose -> Bool -> String
 status outcome paused gameConnected =

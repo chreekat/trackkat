@@ -19,6 +19,7 @@ module TrackKat.Config (
     clipShape,
     clipDistances,
     clipModel,
+    wornDistances,
     Binding (..),
     Modifier (..),
     Joystick (..),
@@ -42,6 +43,7 @@ import Data.Maybe (fromMaybe)
 import System.IO (readFile')
 
 import TrackKat.Lights (Masking (..))
+import TrackKat.Linear (norm, (^-^))
 import TrackKat.Number
 import TrackKat.Pose (Model (..), Tabs (..), triangle)
 import TrackKat.Response
@@ -99,6 +101,11 @@ clipShape lr lt rt
 
 clipDistances :: ClipShape -> (Double, Double, Double)
 clipDistances (ClipShape d _) = d
+
+-- | A model's distances between reflectors as 'clipShape' takes them, its
+-- sides swapped back to the wearer's.
+wornDistances :: Model -> (Double, Double, Double)
+wornDistances m = (norm (mRight m ^-^ mLeft m), norm (mTop m ^-^ mRight m), norm (mTop m ^-^ mLeft m))
 
 clipModel :: ClipShape -> Model
 clipModel (ClipShape _ m) = m

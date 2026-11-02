@@ -34,6 +34,7 @@ import TrackKat.Install (configFile, findPaths)
 import TrackKat.Number (parseNumber, renderNumber)
 import TrackKat.Pose
 import TrackKat.Recording
+import TrackKat.Shape
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 
@@ -319,9 +320,9 @@ replayFile opts path = do
     replayed <- orFail (replay recording{recStart = start})
     let at t line = printf "%10.3f  %s" (secondsSince start t) line :: String
         -- As live: a frame's line ten times a second, counting the frames
-        -- since the last.
-        go _ [] = pure ()
-        go printed@(lastPrint, frames) (Replayed e result : rest) = case (e, result) of
+        -- since the last. Returns the last frame's tracker.
+        go _ latest [] = pure latest
+        go printed@(lastPrint, frames) latest (Replayed e result : rest) = case (e, result) of
             (FrameEntry t n _, Just (tracker, outcome, events)) -> do
                 mapM_ (putStrLn . at t . describeEvent (trackerCentre tracker)) events
                 let now = secondsSince start t
@@ -331,14 +332,16 @@ replayFile opts path = do
                     if optBlobs opts
                         then summary n fps (trackerBlobs tracker)
                         else showOutcome outcome
-                go (if due then (now, 0) else (lastPrint, frames + 1)) rest
-            (FrameEntry{}, Nothing) -> go printed rest
-            (InputEntry t (Press Recenter), _) -> putStrLn (at t "# Enter pressed") >> go printed rest
-            (InputEntry t (Press Calibrate), _) -> putStrLn (at t "# c Enter pressed") >> go printed rest
-            (InputEntry t (Mark m), _) -> putStrLn (at t ("# mark " ++ show m)) >> go printed rest
-            (CorruptEntry t why, _) -> putStrLn (at t ("# corrupt packet: " ++ why)) >> go printed rest
-            (Unreadable n why, _) -> hPutStrLn stderr (path ++ ": line " ++ show n ++ ": " ++ why ++ "; stopping there")
-    go (-1 / 0, 0 :: Int) replayed
+                go (if due then (now, 0) else (lastPrint, frames + 1)) (Just tracker) rest
+            (FrameEntry{}, Nothing) -> go printed latest rest
+            (InputEntry t (Press Recenter), _) -> putStrLn (at t "# Enter pressed") >> go printed latest rest
+            (InputEntry t (Press Calibrate), _) -> putStrLn (at t "# c Enter pressed") >> go printed latest rest
+            (InputEntry t (Mark m), _) -> putStrLn (at t ("# mark " ++ show m)) >> go printed latest rest
+            (CorruptEntry t why, _) -> putStrLn (at t ("# corrupt packet: " ++ why)) >> go printed latest rest
+            (Unreadable n why, _) -> hPutStrLn stderr (path ++ ": line " ++ show n ++ ": " ++ why ++ "; stopping there") >> pure latest
+    final <- go (-1 / 0, 0 :: Int) Nothing replayed
+    -- What the recording says of the clip's shape, sure or not.
+    forM_ final $ \tracker -> putStrLn ("# " ++ describeShapeSoFar (trackerShape tracker))
 
 isTracked :: Outcome -> Bool
 isTracked Tracked{} = True
@@ -354,6 +357,7 @@ describeEvent _ (Calibrated c) =
      in printf "# calibrated: camera tipped %.1f degrees down, %.1f to its right" down right
 describeEvent _ (Refined LevelRefined c) = "# " ++ describeLevel c
 describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
+describeEvent _ (ShapeEstimated est) = "# " ++ describeShape est
 describeEvent _ Corrected = "# corrected a mirror-image pose"
 describeEvent _ (LightIgnored p) = "# " ++ describeLightIgnored p
 describeEvent _ (LightForgotten p) = "# " ++ describeLightForgotten p

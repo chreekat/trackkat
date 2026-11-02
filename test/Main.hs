@@ -34,6 +34,7 @@ import TrackKat.Recording
 import TrackKat.Release
 import TrackKat.Response
 import TrackKat.ServedGame
+import TrackKat.Shape
 import TrackKat.Stats
 import TrackKat.Tracker
 
@@ -1165,10 +1166,82 @@ main = do
     check ("tape on tabs followed, off by " ++ show (turnError asTabs)) $
         lostCount asTabs == 0 && tabsMoved < 0.3 * pointsMoved && tabsTurn < 0.75 * pointsTurn
 
+    -- The clip's shape from how the head moves (see Note [Clip shape from
+    -- movement] in TrackKat.Shape): three minutes of glancing, the clip
+    -- other than configured, its reflectors seen with 0.2 px of noise,
+    -- show the true shape within a mm or so, scaled to the configured left
+    -- to right distance; as configured, it is found so.
+    let configured = clipModel (clip defaultConfig)
+        shapeCases =
+            [ ("75 105 115", (75, 105, 115), (98, 107.33), Different)
+            , ("with its post straight, 70 116 116", (70, 116, 116), (116, 116), Different)
+            , ("as configured", (70, 110, 110), (110, 110), AsConfigured)
+            ]
+    forM_ shapeCases $ \(name, (lr, lt, rt), (wantLt, wantRt), want) -> do
+        let truth = maybe (error "shape") clipModel (clipShape lr lt rt)
+            (learner, told) = shapeSession truth configured 3
+            estimated = shapeEstimate learner
+            (_, gotLt, gotRt) = maybe (0, 0, 0) (wornDistances . estimatedModel) estimated
+        check ("the clip's shape, " ++ name ++ ", estimated: " ++ describeShapeSoFar learner) $
+            fmap confidence estimated == Just Sure
+                && abs (gotLt - wantLt) < 1.5
+                && abs (gotRt - wantRt) < 1.5
+                && fmap difference estimated == Just want
+        check ("and told as " ++ show want ++ ": " ++ show (map describeShape told)) $
+            not (null told) && all ((== want) . difference) told
+
+    -- Through the tracker, from curved tabs: learnt from clear poses only,
+    -- and found as configured, or found to be so when configured with the
+    -- post straight.
+    let shapeFrames = [(t, pose, renderDiscs (tapeDiscs pose)) | t <- at120 100, let pose = headSeen bentWorn (glanceYaw t) (glancePitch t) (glanceRoll t)]
+        straightened = maybe (error "shape") clipModel (clipShape 70 116 116)
+    forM_ [("as configured", configured, AsConfigured), ("configured straight", straightened, Different)] $ \(name, m, want) -> do
+        let (shapeTracker, shapeRows) = trackFramesEvents m shapeFrames
+            shapesTold = [est | (_, evs) <- shapeRows, ShapeEstimated est <- evs]
+            estimated = shapeEstimate (trackerShape shapeTracker)
+            (_, gotLt, gotRt) = maybe (0, 0, 0) (wornDistances . estimatedModel) estimated
+        check ("the clip's shape through the tracker, " ++ name ++ ": " ++ describeShapeSoFar (trackerShape shapeTracker)) $
+            fmap confidence estimated == Just Sure && fmap difference estimated == Just want && abs (gotLt - 110) < 1.5 && abs (gotRt - 110) < 1.5
+        check ("and told as " ++ show want ++ ": " ++ show (map describeShape shapesTold)) $ not (null shapesTold) && all ((== want) . difference) shapesTold
+
     n <- readIORef failures
     if n == 0 then putStrLn "all tests passed" else exitFailure
   where
     near a b = abs (a - b) < 1e-9
+
+-- | Glancing about, as in simulations of learning the clip's shape: degrees
+-- of yaw, pitch and roll at a time.
+glanceYaw, glancePitch, glanceRoll :: Double -> Double
+glanceYaw t = 22 * sin (2 * pi * t / 3.3) + 8 * sin (2 * pi * t / 1.7 + 1) + 4 * sin (2 * pi * t / 0.9 + 2)
+glancePitch t = 10 * sin (2 * pi * t / 5.3 + 0.5) + 5 * sin (2 * pi * t / 2.1 + 1.3)
+glanceRoll t = 5 * sin (2 * pi * t / 7.7 + 0.2) + 2 * sin (2 * pi * t / 1.3 + 0.9)
+
+-- | Learn the shape of a clip configured as one model, worn as another,
+-- from the given minutes of glancing at 120 frames a second, swaying, the
+-- reflectors seen with 0.2 px of noise and the poses solved with the
+-- configured model: what was learnt, and the estimates told.
+shapeSession :: Model -> Model -> Double -> (ShapeLearner, [ShapeEstimate])
+shapeSession truth configured minutes = go (0 :: Int) (seenPose 0) (newShapeLearner configured) []
+  where
+    frames = round (minutes * 60 * 120)
+    seenPose t =
+        let Pose r p = headSeen (-23) (glanceYaw t) (glancePitch t) (glanceRoll t)
+         in Pose r (p ^+^ V3 (6 * sin (2 * pi * t / 11) + 2 * sin (2 * pi * t / 2.7)) (4 * sin (2 * pi * t / 13)) (5 * sin (2 * pi * t / 9)))
+    go i prev sl told
+        | i >= frames = (sl, reverse told)
+        | otherwise =
+            let t = fromIntegral i / 120
+                noisy j (u, v) = (u + 0.2 * gaussian i j, v + 0.2 * gaussian i (j + 0.5))
+                seen which j = noisy j (seenAt defaultIntrinsics truth (seenPose t) which)
+             in case solvePose defaultIntrinsics configured (Just prev) (seen LeftReflector 0, seen RightReflector 1, seen TopReflector 2) of
+                    Just (pose, _) ->
+                        let (sl', new) = watchShape defaultIntrinsics t (V3 0 100 100) pose sl
+                         in sl' `seq` go (i + 1) pose sl' (maybe told (: told) new)
+                    Nothing -> go (i + 1) prev (shapeLostSight sl) told
+    -- About normally distributed, with a standard deviation of 1.
+    gaussian i k = 2 * sum [hash i (k + 0.13 * n) | n <- [1, 2, 3]]
+    hash :: Int -> Double -> Double
+    hash i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5
 
 -- | Discs of lit pixels, as (centre, radius), as the camera's stripes. Runs
 -- that touch on a line are one stripe, so discs that touch make one blob.
