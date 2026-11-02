@@ -192,16 +192,16 @@ int hts_remove_npclient_path(void)
 /* ---- Processes ------------------------------------------------------------- */
 
 /* Start a program with a command line (which names the program first), in
- * the given folder. A program given no window gets no console window; else
- * a console program shares this one's console, if it has one. Returns the
- * process ID, or minus a Windows error code. */
-int hts_start(const wchar_t *program, wchar_t *command, const wchar_t *dir, int no_window)
+ * the given folder, with no console window: a console program, such as
+ * cmd, gets a console no one sees; trackkat.exe, a GUI program, none.
+ * Returns the process ID, or minus a Windows error code. */
+int hts_start(const wchar_t *program, wchar_t *command, const wchar_t *dir)
 {
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si);
     si.cb = sizeof si;
-    if (!CreateProcessW(program, command, NULL, NULL, FALSE, no_window ? CREATE_NO_WINDOW : 0, NULL, dir, &si, &pi))
+    if (!CreateProcessW(program, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, dir, &si, &pi))
         return -(int)GetLastError();
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);

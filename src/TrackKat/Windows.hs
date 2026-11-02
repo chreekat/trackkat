@@ -4,6 +4,9 @@
 -- | trackkat.exe's Windows plumbing: see cbits/windows.c, cbits/trackir.c
 -- and cbits/joystick.c.
 module TrackKat.Windows (
+    ConsoleOutput (..),
+    attachConsole,
+    consoleOutput,
     openShared,
     publish,
     recenterCount,
@@ -42,6 +45,8 @@ import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
 import TrackKat.GamePose
 import TrackKat.ServedGame
 
+foreign import ccall unsafe "hts_console_attach" c_console_attach :: IO CInt
+foreign import ccall unsafe "hts_console_output" c_console_output :: IO CInt
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
 foreign import ccall unsafe "hts_publish" c_publish :: CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_recenter_count" c_recenter_count :: IO CLong
@@ -65,6 +70,35 @@ foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
 foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
 foreign import ccall unsafe "hts_hotkeys_take" c_hotkeys_take :: IO CInt
 foreign import ccall unsafe "hts_joystick_event" c_joystick_event :: CWString -> CInt -> Ptr CInt -> Ptr CInt -> IO CInt
+
+-- | Where what trackkat.exe prints goes. A GUI program, it has no console
+-- of its own.
+data ConsoleOutput
+    = -- | the file or pipe it was started with, as when a terminal captures
+      -- or pipes its output
+      OutputRedirected
+    | -- | the console of the terminal it was started from
+      ParentConsole
+    | -- | nowhere, as when started from the Start menu, at login or by a game
+      NoConsole
+    deriving (Eq, Show)
+
+-- | Make standard output and error safe to write to, pointing them at the
+-- console of the terminal trackkat was started from, if they aren't a file
+-- or pipe, or else at nothing. Ctrl-C in that terminal is then ignored.
+-- Call it before anything is printed.
+attachConsole :: IO ConsoleOutput
+attachConsole = toConsoleOutput <$> c_console_attach
+
+-- | Where standard output goes, as 'attachConsole' found.
+consoleOutput :: IO ConsoleOutput
+consoleOutput = toConsoleOutput <$> c_console_output
+
+toConsoleOutput :: CInt -> ConsoleOutput
+toConsoleOutput = \case
+    0 -> OutputRedirected
+    1 -> ParentConsole
+    _ -> NoConsole
 
 -- | Create the shared memory games read from. Left is a Windows error code.
 openShared :: IO (Either Int ())

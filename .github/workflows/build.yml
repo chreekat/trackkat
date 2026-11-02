@@ -44,9 +44,8 @@ jobs:
             mingw-w64-i686-gcc
 
       # Games load the DLLs, 64- and 32-bit; npgame and trackdemo stand in
-      # for a game. Only trackkat.exe gets the cat icon. trackkat-tray starts
-      # trackkat at login without a console window.
-      - name: Build the icon, NPClient DLLs, trackkat-tray, npgame and trackdemo
+      # for a game. Only trackkat.exe gets the cat icon.
+      - name: Build the icon, NPClient DLLs, npgame and trackdemo
         shell: pwsh
         run: |
           $msys = "${{ steps.msys2.outputs.msys2-location }}"
@@ -61,8 +60,6 @@ jobs:
           & windres -I icons icons/trackkat.rc -O coff -o icons/trackkat-icon.o
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -o npgame.exe tools/npgame.c -ladvapi32 -luser32
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & gcc -std=c11 -Wall -Wextra -Werror -O2 -s -static -mwindows -municode -o trackkat-tray.exe launcher/trackkat-tray.c
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Compiler messages become annotations, which show without the log.
           $out = & gcc -std=c11 -Wall -Wextra -Werror -O2 -static -mwindows -o trackdemo.exe demo/trackdemo.c `
@@ -124,7 +121,7 @@ jobs:
               --extra-include-dirs="$env:USB_PREFIX\include" --extra-lib-dirs="$env:USB_PREFIX\lib"
             Copy-Item $exe dist\
           }
-          Copy-Item NPClient.dll, NPClient64.dll, trackkat-tray.exe, npgame.exe, trackdemo.exe dist\
+          Copy-Item NPClient.dll, NPClient64.dll, npgame.exe, trackdemo.exe dist\
           Copy-Item "$env:USB_PREFIX\bin\libusb-1.0.dll" dist\
           Copy-Item README.md dist\
           # The icon, for Explorer and trackkat's window.

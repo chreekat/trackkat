@@ -47,8 +47,7 @@ data Start
     | -- | by NPClient, for a game (@--by-game@): in the tray, and quitting
       -- when nothing has used it for 'idleSeconds'
       ByGame
-    | -- | by Windows at login (@--tray@, through trackkat-tray.exe): in the
-      -- tray, until quit
+    | -- | by Windows at login (@--tray@): in the tray, until quit
       AtLogin
 
 -- | What the command line asks for.
@@ -121,6 +120,9 @@ idleSeconds = 60
 
 main :: IO ()
 main = do
+    -- A GUI program, trackkat.exe prints to the terminal it was started
+    -- from, if any.
+    _ <- attachConsole
     hSetBuffering stdout LineBuffering
     getArgs >>= \args -> case parseCommand args of
         Nothing -> putStr usage >> exitFailure
@@ -151,7 +153,7 @@ run start window after = do
     forM_ (newerInstalled place installedNow) $ \v ->
         launch (versionExe paths v) (startArgs start window ++ maybe [] (\pid -> ["--after", show pid]) after) >>= \case
             Right () -> exitSuccess
-            Left e -> putStrLn ("Can't start trackkat " ++ versionFolder v ++ " (error " ++ show e ++ "); carrying on.")
+            Left e -> consoleLine ("Can't start trackkat " ++ versionFolder v ++ " (error " ++ show e ++ "); carrying on.")
     first <- case after of
         Nothing -> singleInstance
         Just pid -> do
@@ -161,7 +163,7 @@ run start window after = do
             claim 50
     unless first $ do
         shown <- showRunning
-        putStrLn (if shown then "trackkat is already running; showing its window." else "trackkat is already running.")
+        consoleLine (if shown then "trackkat is already running; showing its window." else "trackkat is already running.")
         exitFailure
     showVersion (maybe "development build" describeVersion version)
     showUpdateButton (maybe UpdateButtonDisabled (const UpdateButtonEnabled) (selfUpdating place))
@@ -196,31 +198,29 @@ run start window after = do
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say $
             printf
-                "Recenter: %s   Pause: %s   Trim: %s   (Enter also recenters, c Enter calibrates level)"
+                "Recenter: %s   Pause: %s   Trim: %s"
                 (keysAndButtons (recenterBindings config))
                 (keysAndButtons (pauseBindings config))
                 (keysAndButtons (trimBindings config))
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
         session <- newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile
         showButtons session
-        withAsync (console session) $ \_ ->
-            withAsync (watchSettings paths settingsFile session stamp config) $ \_ ->
-                withAsync (joysticks session) $ \_ ->
-                    withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
-                        withAsync (rememberServedGame gameFile) $ \_ ->
-                            withAsync (maintain paths place session offered) $ \_ ->
-                                withAsync (cameraLoop session) $ \camera -> do
-                                    link camera
-                                    controls start settingsFile session (takeOffer paths start offered)
-                                    -- Let the camera go, turning its lights off, but
-                                    -- not for long: after sleep a USB read may never
-                                    -- return.
-                                    _ <- timeout 3000000 (cancel camera)
-                                    -- Reading the console can't be interrupted on
-                                    -- Windows, so rather than wait for the console
-                                    -- thread, leave at once.
-                                    hFlush stdout
-                                    quitProcess
+        withAsync (watchSettings paths settingsFile session stamp config) $ \_ ->
+            withAsync (joysticks session) $ \_ ->
+                withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
+                    withAsync (rememberServedGame gameFile) $ \_ ->
+                        withAsync (maintain paths place session offered) $ \_ ->
+                            withAsync (cameraLoop session) $ \camera -> do
+                                link camera
+                                controls start settingsFile session (takeOffer paths start offered)
+                                -- Let the camera go, turning its lights off, but
+                                -- not for long: after sleep a USB read may never
+                                -- return.
+                                _ <- timeout 3000000 (cancel camera)
+                                -- Rather than wait for the other threads, one
+                                -- perhaps in a download, leave at once.
+                                hFlush stdout `catch` \e -> const (pure ()) (e :: IOException)
+                                quitProcess
 
 -- | Tell games to load the NPClient chosen, trackkat's from its own folder,
 -- falling back to that if NaturalPoint's isn't installed.
@@ -342,7 +342,7 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
         case (found, waiting) of
             -- Offline, or behind a proxy that won't let it through: the log
             -- says so when asked, and otherwise once until a look works, so
-            -- a lasting failure shows; the console every time.
+            -- a lasting failure shows; the terminal, if any, every time.
             (Left failure, _) -> do
                 let (line, short) = case failure of
                         Unavailable err ->
@@ -351,7 +351,7 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
                             )
                         LookFailed err -> ("Can't look for a newer trackkat: " ++ err, "Can't check now: see the log.")
                 case (why, logged) of
-                    (Due, FailureLogged) -> putStrLn line
+                    (Due, FailureLogged) -> consoleLine line
                     _ -> say line
                 answer (UpdateNote short)
                 pure FailureLogged
@@ -426,7 +426,13 @@ rememberServedGame path = go 0
 
 -- | Print a line, and add it to the log in trackkat's window.
 say :: String -> IO ()
-say line = putStrLn line >> guiLog line
+say line = consoleLine line >> guiLog line
+
+-- | Print a line to the terminal trackkat was started from, or to the file
+-- or pipe its output goes to, if any; quietly not, if it can't, as once
+-- the terminal has closed the pipe.
+consoleLine :: String -> IO ()
+consoleLine line = putStrLn line `catch` \e -> const (pure ()) (e :: IOException)
 
 -- | Connect to the camera and track, again and again if it goes away.
 cameraLoop :: Session -> IO ()
@@ -723,18 +729,6 @@ describeTrim NoTrim = "straight ahead"
 describeTrim (Trim t) =
     printf "yaw %+.0f pitch %+.0f roll %+.0f, x %+.0f y %+.0f z %+.0f mm" (yaw t) (pitch t) (roll t) (tx t) (ty t) (tz t)
 
-console :: Session -> IO ()
-console s = do
-    eof <- isEOF
-    unless eof $ do
-        line <- getLine
-        case line of
-            "" -> recenter s
-            "c" -> calibrate s
-            "j" -> showButtons s
-            _ -> say "Enter recenters; c Enter calibrates level; j Enter shows joystick buttons"
-        console s
-
 -- | Print joystick button presses for the next minute, so they can be
 -- copied into the settings file.
 showButtons :: Session -> IO ()
@@ -819,8 +813,13 @@ track s cam = do
                     writeIORef lastStatus now
                     w <- atomicModifyIORef' window (\w -> (emptyWindow, w))
                     -- The window shows the pose and figures live, so its
-                    -- log is left to events.
-                    putStrLn (status outcome paused gameConnected ++ "   " ++ summary w)
+                    -- log is left to events, as is a terminal's, which
+                    -- has its prompt back; only output captured or piped
+                    -- gets them.
+                    consoleOutput >>= \case
+                        OutputRedirected -> consoleLine (status outcome paused gameConnected ++ "   " ++ summary w)
+                        ParentConsole -> pure ()
+                        NoConsole -> pure ()
                     showStats (summary w)
             Corrupt why _ -> do
                 say ("# dropped a corrupt packet: " ++ why)
