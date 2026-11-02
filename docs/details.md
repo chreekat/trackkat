@@ -185,6 +185,30 @@ while it doesn't see the reflectors clearly. A
 calibration learnt from mirror images, whose neck pivot is in front of the
 clip, is forgotten when trackkat starts, with a line in the log saying so.
 
+### The clip's shape (experimental)
+
+No single frame shows the shape of the clip's triangle: any triangle fits
+any three points in the image. How your head moves does: turning about your
+neck looks like turning about one still point only with the right shape.
+So trackkat also estimates the shape, from the same clearly seen turning it
+learns from, and reports it; it doesn't apply it. Movement shows the shape
+but not its size, so the estimate keeps your left to right distance and
+gives the two distances to the top to match. After a minute or two of
+glancing about, once it is sure, it logs a line, and shows it under the
+calibration:
+
+```
+Clip shape estimate (experimental): 70 99 108 mm, from 2 minutes of turning, keeping 70 mm left to right (movement shows the shape, not the size); configured 70 110 110. Try clip = 70 99 108 if tracking seems off.
+```
+
+or, when it is within 2 mm of `clip` in `trackkat.conf`, says so. In
+simulation it comes within about a mm of the truth after a minute of
+glancing 30 degrees each way, half that after five, falling short of a
+far different shape by about a tenth of the difference; glancing only half
+as far takes about twice as long and comes out up to a mm small. It starts
+afresh each session and when `clip` changes. `tirprobe --replay` prints it
+at the end, so a recording can tell you your clip's shape.
+
 ## Still lights
 
 Something bright behind you that stays put, such as a lamp or a lit fire,

@@ -5,6 +5,7 @@ module TrackKat.Tracker (
     Masking (..),
     trackerCalibration,
     trackerModel,
+    trackerShape,
     trackerCentre,
     trackerPose,
     BlobRole (..),
@@ -36,6 +37,7 @@ import TrackKat.Lights
 import TrackKat.Linear (M33, mulMM, norm, transpose)
 import TrackKat.Match
 import TrackKat.Pose
+import TrackKat.Shape
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
@@ -52,6 +54,9 @@ data Event
     | -- | Everyday movement changed the calibration noticeably; what is
       -- applied follows it slowly.
       Refined Refinement Calibration
+    | -- | The clip's shape was estimated from how the head moves, surely, or
+      -- differently from when it was last (see "TrackKat.Shape").
+      ShapeEstimated ShapeEstimate
     | -- | The pose tracked, or the one recentered on, was found to be the
       -- mirror image of the head's (see "TrackKat.Branch") and was
       -- switched for the head's.
@@ -154,6 +159,7 @@ data Tracker = Tracker
     , trSizes :: !(Three Size)
     , trReference :: !(Maybe Pose)
     , trLearner :: !Learner
+    , trShape :: !ShapeLearner
     , trBranch :: !Branch
     -- ^ whether the poses tracked and recentered on are the head's
     , trSweep :: !(Maybe Sweep)
@@ -169,7 +175,7 @@ data Tracker = Tracker
 -- | A tracker that starts from the given calibration and recenters on the
 -- first frame it tracks.
 newTracker :: Intrinsics -> Model -> Masking -> Calibration -> Tracker
-newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newBranch m) Nothing [Recenter] masking noLights []
+newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newShapeLearner m) (newBranch m) Nothing [Recenter] masking noLights []
 
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
@@ -178,6 +184,10 @@ trackerCalibration = learnerCalibration . trLearner
 -- | The clip tracked.
 trackerModel :: Tracker -> Model
 trackerModel = trModel
+
+-- | What has been learnt of the clip's shape.
+trackerShape :: Tracker -> ShapeLearner
+trackerShape = trShape
 
 -- | The clip's pose at the last recenter.
 trackerCentre :: Tracker -> Maybe Pose
@@ -214,7 +224,7 @@ request r t = t{trPending = trPending t ++ [r]}
 -- | Track a differently shaped clip from the next frame, recentering then,
 -- since the clip's axes move with its shape.
 setModel :: Model -> Tracker -> Tracker
-setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLearner = changeClip m (trLearner t), trBranch = newBranch m}
+setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLearner = changeClip m (trLearner t), trShape = newShapeLearner m, trBranch = newBranch m}
 
 -- | Seconds of head turning to calibrate level from.
 calibrationSeconds :: Double
@@ -340,7 +350,7 @@ step now stripes t =
                         | not (holding [p | LightIgnored p <- news] (toList (seenAt k m (recentPose r) <$> reflectors)) lights) ->
                             Just r{recentSince = now}
                     _ -> Nothing
-             in ( t{trLearner = lostSight (trLearner t), trLights = lights, trRecent = untracked, trBlobs = roles []}
+             in ( t{trLearner = lostSight (trLearner t), trShape = shapeLostSight (trShape t), trLights = lights, trRecent = untracked, trBlobs = roles []}
                 , Lost (length visible) (length masked)
                 , news
                 )
@@ -391,6 +401,7 @@ step now stripes t =
                         , trReference = reference
                         , trBranch = corrected fix seenPose watched
                         , trLearner = if correcting then lostSight (trLearner t) else trLearner t
+                        , trShape = if correcting then shapeLostSight (trShape t) else trShape t
                         , trSweep = if correcting then fmap (\(Sweep deadline _) -> Sweep deadline []) (trSweep t) else trSweep t
                         , trLights = lights
                         , trBlobs = roles [s | Just s <- toList sights]
@@ -399,10 +410,10 @@ step now stripes t =
                 ref = maybe pose id (trReference t1)
                 -- Only a pose surely the head's, its reflectors seen
                 -- clearly, is learnt from.
-                (learner, refinements) = case clarity of
-                    Clear | settled (trBranch t1) -> learn now pose (trLearner t1)
-                    _ -> (lostSight (trLearner t1), [])
-                (t2, calibrated) = calibrate pose ref t1{trLearner = learner}
+                ((learner, refinements), (shapes, shapeNews)) = case clarity of
+                    Clear | settled (trBranch t1) -> (learn now pose (trLearner t1), watchShape k now pivot pose (trShape t1))
+                    _ -> ((lostSight (trLearner t1), []), (shapeLostSight (trShape t1), Nothing))
+                (t2, calibrated) = calibrate pose ref t1{trLearner = learner, trShape = shapes}
                 applied = trLearner t2
                 seen =
                     Seen
@@ -415,6 +426,7 @@ step now stripes t =
                 , [Corrected | correcting]
                     ++ reverse requested
                     ++ [Refined r (learnerCalibration learner) | r <- refinements]
+                    ++ [ShapeEstimated est | Just est <- [shapeNews]]
                     ++ calibrated
                     ++ news
                 )

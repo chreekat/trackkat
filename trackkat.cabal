@@ -33,6 +33,7 @@ library
     TrackKat.Release
     TrackKat.Response
     TrackKat.ServedGame
+    TrackKat.Shape
     TrackKat.Stats
     TrackKat.Tracker
     TrackKat.USB

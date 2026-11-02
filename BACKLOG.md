@@ -16,8 +16,10 @@ Roughly in order.
 ## Low priority
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
-- Estimate the clip's shape from movement, for clips other than the
-  developer's.
+- Apply the clip shape estimated from movement (see docs/details.md), once
+  it has proven itself on real clips: re-solve its linearisation about the
+  estimate (it falls short of a far different shape by about a tenth), keep
+  it with the calibration, and offer to write it to `clip`.
 - Find the source of the wiggle after a fast head turn (the view overshoots
   and comes back): print, per snap, the overshoot in the raw pose, the fit
   error during it, and the overshoot sent to the game. If the rebound is real
