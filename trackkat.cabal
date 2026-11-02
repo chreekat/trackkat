@@ -36,6 +36,7 @@ library
     TrackKat.Shape
     TrackKat.Stats
     TrackKat.Tracker
+    TrackKat.Visibility
     TrackKat.USB
   build-depends:
     , array       ^>=0.5.8

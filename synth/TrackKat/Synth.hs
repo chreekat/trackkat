@@ -24,6 +24,7 @@ module TrackKat.Synth (
     allLit,
     unlit,
     clipDiscs,
+    clipDiscsOnHead,
     pointDiscs,
     tapeDiscs,
     renderDiscs,
@@ -45,6 +46,7 @@ import Data.List (sortOn)
 import TrackKat.Frame (Stripe (..), frameHeight, frameWidth)
 import TrackKat.Linear
 import TrackKat.Pose
+import TrackKat.Visibility (HeadShape, behindHead)
 
 -- Note [Simulated frames]
 -- ~~~~~~~~~~~~~~~~~~~~~~~
@@ -67,7 +69,9 @@ import TrackKat.Pose
 -- with how lit it is. Discs that touch make one blob, as reflectors that
 -- run together do; other troubles (a reflector in pieces, a line of
 -- pixels dropped, jitter of the centroid, a fire's flicker, the head
--- hiding what is behind it) are added to the discs.
+-- hiding a light behind it) are added to the discs. The head can hide the
+-- clip's own reflectors too, taken to be an ellipsoid (see Note [Seeing the
+-- reflectors] in "TrackKat.Visibility").
 
 -- | The camera: its lens, how far it is tipped down, in degrees, and where
 -- the head's neck pivot is, with the head turned no way, in the camera's
@@ -152,6 +156,18 @@ clipDiscs :: Intrinsics -> Clip -> Lit -> Pose -> [Disc]
 clipDiscs k c = case clipLook c of
     AsPoints -> pointDiscs k (clipTruth c)
     AsTape -> tapeDiscs k (clipTruth c)
+
+-- | The clip's reflectors' discs in the image at a pose, as they show on a
+-- head of the given shape: none of those it hides (see Note [Seeing the
+-- reflectors] in "TrackKat.Visibility").
+clipDiscsOnHead :: Intrinsics -> Clip -> HeadShape -> Lit -> Pose -> [Disc]
+clipDiscsOnHead k c shape (litL, litR, litT) pose = clipDiscs k c (shown litL mLeft, shown litR mRight, shown litT mTop) pose
+  where
+    Wear turn neck = clipWear c
+    toClip = transpose turn
+    shown lit at
+        | behindHead shape (mulMV toClip neck) toClip pose (at (clipTruth c)) = 0
+        | otherwise = lit
 
 -- | The reflectors' discs in the image for a pose, taking them for points,
 -- each with its radius scaled by how lit it is (0 for unseen).
