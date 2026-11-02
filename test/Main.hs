@@ -838,6 +838,27 @@ main = do
         phoned = trackFrames clipBent [(t, pose, renderDiscs (if t < 1 then reflectorDiscs clipBent allLit pose else phone pose)) | t <- at120 3, let pose = headSeen bentWorn 0 0 0]
     check "lights by the camera aren't the clip" $ all isLost [o | (t, _, o, _) <- phoned, t >= 1]
 
+    -- Leaning in toward the camera, slowly, the clip coming straight at it
+    -- from 870 mm (the pivot at about 950) to 270: a seated head reaches
+    -- far closer than it reaches sideways.
+    let leantTo d = let Pose r p = headSeen bentWorn 0 0 0 in Pose r (d *^ normalize p)
+        leanDistance t = 870 - 50 * max 0 (t - 1)
+        leaningIn = [(t, leantTo (leanDistance t), allLit) | t <- at120 13]
+        leant = trackPath clipBent leaningIn
+        lostAt = [round (leanDistance t) :: Int | (t, _, Lost{}, _) <- leant]
+    check ("leaning in to 270 mm " ++ show (take 3 lostAt, summed leant)) $ null lostAt && fst (worstError leant) < 1
+
+    -- A phone's lights laid out like the clip, 400 mm in front of the face,
+    -- toward the camera, are not the clip leaning in: not while the clip
+    -- is in view, nor once it has gone from view.
+    let face = headSeen bentWorn 0 0 0
+        inFront = let Pose r p = face in Pose r ((norm p - 400) *^ normalize p)
+        phoneLights = [(project defaultIntrinsics inFront p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
+        withPhone = trackFrames clipBent [(t, face, renderDiscs (reflectorDiscs clipBent allLit face ++ (if t >= 1 then phoneLights else []))) | t <- at120 2]
+        phoneOnly = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then reflectorDiscs clipBent allLit face else phoneLights)) | t <- at120 3]
+    check ("a phone in front of the clip in view isn't the clip " ++ show (summed withPhone)) $ lostCount withPhone == 0 && fst (worstError withPhone) < 1
+    check "a phone in front of the clip gone from view isn't the clip" $ all isLost [o | (t, _, o, _) <- phoneOnly, t >= 1]
+
     -- A reflector broken in two by a line too dim, and a fleck beside
     -- another, as at a low threshold.
     let broken = [(t, pose, (if t > 0.5 then breakAt (project defaultIntrinsics pose (mLeft clipBent)) else id) (renderDiscs (fleck pose : reflectorDiscs clipBent allLit pose))) | t <- at120 2.5, let pose = headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0]

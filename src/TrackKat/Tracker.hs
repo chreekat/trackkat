@@ -35,7 +35,7 @@ import TrackKat.Branch
 import TrackKat.Calibration
 import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
 import TrackKat.Lights
-import TrackKat.Linear (M33, mulMM, norm, transpose)
+import TrackKat.Linear (M33, dot, mulMM, mulMV, norm, normalize, transpose, (*^), (^+^), (^-^))
 import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Shape
@@ -261,10 +261,11 @@ showingSeconds OneBehind = 2.5
 showingSeconds OneOut = 1
 
 -- | Blobs smaller or larger than this many pixels are not reflectors, when
--- finding the clip afresh.
+-- finding the clip afresh. A reflector lighting 250 pixels at 950 mm
+-- lights about 3600 as near as 'nearest'.
 minBlobPixels, maxBlobPixels :: Int
 minBlobPixels = 15
-maxBlobPixels = 2500
+maxBlobPixels = 5000
 
 -- | The smallest blob taken for a reflector predicted nearby: one fading
 -- from view, or part of one.
@@ -294,7 +295,9 @@ maxTurn dt = 15 + 100 * dt
 maxMove dt = 40 + 200 * dt
 
 -- | The farthest a head turns (degrees) and moves (mm, at its pivot) from
--- where it was recentered. Beyond that the blobs aren't the clip, but
+-- where it was recentered: the move to either side, up or down, or back,
+-- as the camera sees it. Toward the camera a head leans in much farther,
+-- as near as 'nearest'. Beyond that the blobs aren't the clip, but
 -- something like a phone's light.
 maxReachTurn, maxReachMove :: Double
 maxReachTurn = 120
@@ -497,10 +500,15 @@ step now stripes t =
             GT -> []
         alike extra = let ps = map blobPoints (bigShown ++ extra) in fromIntegral (maximum ps) / fromIntegral (max 1 (minimum ps)) :: Double
         whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
+        -- None of the blobs far smaller than its reflector has lately been,
+        -- at the pose's distance: lights much nearer the camera than the
+        -- head, laid out like the clip, light far fewer pixels than its
+        -- reflectors would there.
+        bigEnough pose = and . liftA2 (\size b -> fromIntegral (blobPoints b) * 8 * metres pose ^ (2 :: Int) >= sizeUsual size) (trSizes t)
         attempt extra = do
             (l, r, top) <- identify at (bigShown ++ extra)
             (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
-            if plausible pose
+            if plausible pose && bigEnough pose (Three l r top)
                 then Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra), extra)
                 else Nothing
     -- The best match to the prediction, unless its pose is an impossible
@@ -525,10 +533,18 @@ step now stripes t =
                         let alike = [a | a <- cs, seenCount a == seenCount c]
                          in fmap snd (listToMaybe (sortOn fst (mapMaybe attempt (take 5 alike))))
     -- Somewhere a head can be: at a sane distance from the camera, and not
-    -- too far from where it was recentered.
+    -- too far from where it was recentered, though as far toward the
+    -- camera as it likes.
     plausible pose =
         let distance = norm (poseT pose)
-            reach ref = let (turn, move) = poseChange pivot ref pose in turn <= maxReachTurn && move <= maxReachMove
+            pivotAt (Pose r p) = mulMV r pivot ^+^ p
+            reach ref =
+                let (turn, _) = poseChange pivot ref pose
+                    fromCamera = normalize (pivotAt ref)
+                    moved = pivotAt pose ^-^ pivotAt ref
+                    back = dot moved fromCamera
+                    aside = norm (moved ^-^ back *^ fromCamera)
+                 in turn <= maxReachTurn && aside <= maxReachMove && back <= maxReachMove
          in distance >= nearest && distance <= farthest && maybe True reach (trReference t)
     seenCount c = length (catMaybes (toList (matchSights c)))
     observations z c = catMaybes (toList (observe z <$> reflectors <*> trSizes t <*> matchSights c))
