@@ -78,6 +78,7 @@ typedef struct State {
     wchar_t offer_button[64];      /* its button */
     wchar_t offer_tray[128];       /* the tray menu's item for it, or nothing for none */
     int checking;                  /* whether trackkat is looking for a newer version */
+    ULONGLONG looked_at;           /* GetTickCount64 when the last look ended, or 0 */
     wchar_t update_status[TEXT_MAX]; /* what the last look found, in a few words */
     int up_to_date;                /* whether that is that none is newer */
     int spots;                     /* blobs in the last frame, up to BLOBS_MAX */
@@ -255,11 +256,17 @@ void hts_gui_update_status(int up_to_date, const wchar_t *text)
     ReleaseSRWLockExclusive(&lock);
 }
 
+/* Ms after a look ends before Check for updates can be clicked again. */
+#define CHECK_COOLDOWN 60000
+
 /* Whether trackkat is looking for a newer version: the Check for updates
- * button says so, and can't be clicked until it is done. */
+ * button says so, and can't be clicked until it is done, nor for a minute
+ * after. */
 void hts_gui_checking(int checking)
 {
     AcquireSRWLockExclusive(&lock);
+    if (shared.checking && !checking)
+        shared.looked_at = GetTickCount64();
     shared.checking = checking;
     ReleaseSRWLockExclusive(&lock);
 }
@@ -2167,9 +2174,15 @@ static void refresh(void)
         SetWindowTextW(calibration_text, st.calibration);
     if (wcscmp(st.settings_message, seen.settings_message) != 0)
         SetWindowTextW(settings_text, st.settings_message);
-    if (st.checking != seen.checking) {
+    /* Clickable again a minute after a look, so it isn't asked again and
+     * again. */
+    static int shown_rested = 1;
+    int rested = !st.looked_at || GetTickCount64() - st.looked_at >= CHECK_COOLDOWN;
+    if (st.checking != seen.checking)
         SetWindowTextW(check_updates, st.checking ? L"Checking…" : L"Check for updates");
-        EnableWindow(check_updates, updatable && !st.checking);
+    if (st.checking != seen.checking || rested != shown_rested) {
+        EnableWindow(check_updates, updatable && !st.checking && rested);
+        shown_rested = rested;
     }
     int offer_changed = wcscmp(st.offer, seen.offer) != 0 || wcscmp(st.offer_button, seen.offer_button) != 0 ||
                         wcscmp(st.offer_tray, seen.offer_tray) != 0;
@@ -2250,7 +2263,8 @@ static void build_window(void)
     check_updates = tip(control_in(strip_hwnd, L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON,
                                    CLIENT_W - 10 - 130, 8, 130, 24, ID_CHECK_UPDATES),
                         L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
-                        L"one. Beside it, what was found; the log says more. Only for an installed trackkat.");
+                        L"one. Beside it, what was found; the log says more. It rests for a minute after each look. "
+                        L"Only for an installed trackkat.");
     EnableWindow(check_updates, updatable);
     offer_button = tip(control_in(strip_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   CLIENT_W - 10 - STRIP_BUTTON_W, 7, STRIP_BUTTON_W, 26, ID_OFFER),
