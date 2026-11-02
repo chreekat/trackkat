@@ -85,3 +85,6 @@ startup = off
 # fire behind you, are learnt in a few seconds and ignored, so that
 # they don't stop trackkat finding the clip.
 ignore lights = on
+
+# head view: what the window shows of your head: virtual, physical or camera.
+head view = virtual

@@ -3,8 +3,9 @@
  * what the user asks for. Keys chosen for the bindings are all Ctrl+F7. A
  * second game, unnamed, comes and goes; the clip is calibrated, and every
  * twelve seconds its top reflector is out of sight for two, then the clip
- * for two more; Check for updates finds a newer version the second time,
- * which Restart to update takes back.
+ * for two more; a lamp is ignored, and a stray glint comes and goes; Check
+ * for updates finds a newer version the second time, which Restart to
+ * update takes back.
  *
  * usage: fakegui [seconds] */
 
@@ -12,6 +13,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int hts_gui_start(int show);
 void hts_gui_stop(void);
@@ -20,6 +22,7 @@ void hts_gui_frame(int blobs, int reflectors_seen, float yaw, float pitch, float
                    float vpitch, float vroll, float vx, float vy, float vz);
 void hts_gui_camera(int camera, const wchar_t *text);
 void hts_gui_clip(int shown, const float *points);
+void hts_gui_blobs(int n, const float *blobs, int m, const float *areas);
 void hts_gui_paused(int paused);
 void hts_gui_trim(int trimmed, float yaw, float pitch, int moves);
 void hts_gui_games(int games, const wchar_t *name);
@@ -39,9 +42,18 @@ int hts_gui_capturing(void);
 void hts_gui_add_binding(int which, const wchar_t *binding);
 
 static const wchar_t *const names[] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness", L"responsiveness",
-                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"npclient"};
+                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"npclient", L"head view"};
 static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"", L"on", L"90", L"45", L"1:6, precision 40",
-                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"trackkat"};
+                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"trackkat", L"virtual"};
+
+/* A blob, as hts_gui_blobs takes them, put at spots[n]; how many there are
+ * then. */
+static int spot(float *spots, int n, float x, float y, float pixels, int role, float var_x, float var_y, float cov_xy)
+{
+    float b[7] = {x, y, pixels, (float)role, var_x, var_y, cov_xy};
+    memcpy(spots + 7 * n, b, sizeof b);
+    return n + 1;
+}
 
 int main(int argc, char **argv)
 {
@@ -75,6 +87,21 @@ int main(int argc, char **argv)
             hts_gui_games(fmod(t, 20) > 15 ? 2 : 1, L"DCS");
         hts_gui_frame(lost ? 2 : -1, lost ? 0 : top_hidden ? 3 : 7, yaw, pitch, roll, x, y, z, yaw * 6, pitch * 7,
                       roll * 4, x * 3, y * 4, z * 2.5f);
+        /* The reflectors, wider than tall, move as the head turns; out of
+         * sight, what is left of them is taken for strays. The lamp, tall,
+         * and its flicker stay put. */
+        float spots[7 * 6], bx = 296 - yaw * 5 + x, by = 110 + pitch * 5 - y;
+        int n = 0, role = lost ? 1 : 0;
+        n = spot(spots, n, bx - 28, by + 24, 350, role, 34, 22, 1);
+        n = spot(spots, n, bx + 28, by + 26, 345, role, 33, 22, -1);
+        if (!top_hidden)
+            n = spot(spots, n, bx, by - 6, 260, 0, 24, 20, 0);
+        n = spot(spots, n, 156, 297, 712, 2, 38, 82, 6);
+        n = spot(spots, n, 150, 279, 64, 2, 5, 6, 0);
+        if (fmod(t, 5) < 3)
+            n = spot(spots, n, 548, 64, 18, 1, 1.5f, 1.5f, 0);
+        static const float lamp[] = {155, 292, 30};
+        hts_gui_blobs(n, spots, 1, lamp);
         if (i % 60 == 0)
             hts_gui_stats(L"latency 0.11 ms (max 0.42)  gap max 9 ms  stripes max 31  GC 3 (max 0.21 ms)");
         if (i % 600 == 300)

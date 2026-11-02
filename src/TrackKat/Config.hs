@@ -6,6 +6,7 @@ module TrackKat.Config (
     NPClient (..),
     Updates (..),
     Startup (..),
+    HeadView (..),
     defaultConfig,
     parseConfig,
     readSettings,
@@ -58,7 +59,14 @@ data Config = Config
     , updates :: Updates
     , startup :: Startup
     , lightMasking :: Masking
+    , headView :: HeadView
     }
+    deriving (Eq, Show)
+
+-- | What the window's head view shows, as last clicked to: the head as
+-- games see it, the head as the camera measures it with the clip on it, or
+-- the camera's picture.
+data HeadView = VirtualView | PhysicalView | CameraView
     deriving (Eq, Show)
 
 -- | Whether an installed trackkat looks for, and fetches, newer versions.
@@ -112,7 +120,8 @@ clipModel (ClipShape _ m) = m
 
 -- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
 -- DCS; strong smoothing; the headset clip trackkat was developed with, its
--- post as it is now bent; trackkat's own NPClient; still lights ignored.
+-- post as it is now bent; trackkat's own NPClient; still lights ignored;
+-- the head view as games see it.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -135,6 +144,7 @@ defaultConfig =
         , updates = UpdatesOn
         , startup = NoStartAtLogin
         , lightMasking = MaskLights
+        , headView = VirtualView
         }
   where
     gain g = Points [(1, g)]
@@ -221,6 +231,7 @@ setting (c, k@(Knobs on s r)) name value =
             "updates" -> (\u -> (c{updates = u}, k)) <$> parseUpdates value
             "startup" -> (\st -> (c{startup = st}, k)) <$> parseStartup value
             "ignore lights" -> (\l -> (c{lightMasking = l}, k)) <$> parseMasking value
+            "head view" -> (\v -> (c{headView = v}, k)) <$> parseHeadView value
             _ -> Left ("unknown setting " ++ show name)
 
 -- | Read and parse a settings file, whole so editors can replace it, giving
@@ -321,6 +332,9 @@ renderConfig c =
         , "# fire behind you, are learnt in a few seconds and ignored, so that"
         , "# they don't stop trackkat finding the clip."
         , "ignore lights = " ++ renderMasking (lightMasking c)
+        , ""
+        , "# head view: what the window shows of your head: virtual, physical or camera."
+        , "head view = " ++ renderHeadView (headView c)
         ]
   where
     r = response c
@@ -351,6 +365,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                    , ("updates", renderUpdates (updates c))
                    , ("startup", renderStartup (startup c))
                    , ("ignore lights", renderMasking (lightMasking c))
+                   , ("head view", renderHeadView (headView c))
                    ]
 
 parseLean :: String -> Either String Lean
@@ -397,6 +412,17 @@ parseMasking _ = Left "ignore lights is on or off"
 renderMasking :: Masking -> String
 renderMasking MaskLights = "on"
 renderMasking NoMasking = "off"
+
+parseHeadView :: String -> Either String HeadView
+parseHeadView "virtual" = Right VirtualView
+parseHeadView "physical" = Right PhysicalView
+parseHeadView "camera" = Right CameraView
+parseHeadView _ = Left "head view is virtual, physical or camera"
+
+renderHeadView :: HeadView -> String
+renderHeadView VirtualView = "virtual"
+renderHeadView PhysicalView = "physical"
+renderHeadView CameraView = "camera"
 
 -- | Read three distances in mm, separated by spaces or commas or both.
 parseClip :: String -> Either String ClipShape
