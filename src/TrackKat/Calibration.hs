@@ -27,6 +27,7 @@ module TrackKat.Calibration (
     describePivot,
     describeLevelBriefly,
     describePivotBriefly,
+    learntClip,
     plausiblePivot,
     plausibleCalibration,
     screenCalibration,
@@ -183,6 +184,17 @@ describePivotBriefly (Just centre) c =
         (pivotTurns c)
   where
     V3 x y z = inLevelAxes (estimatedLevel c) centre (estimatedPivot c)
+
+-- | Where the clip's reflectors (left, right, top) sit on the head once
+-- both the level and the pivot have been learnt, given the clip's pose at
+-- the centre: in mm from the neck pivot, along the head's axes as it faces
+-- the camera there (see 'inHeadAxes').
+learntClip :: Model -> Maybe Pose -> Calibration -> Maybe (V3, V3, V3)
+learntClip m (Just centre) c
+    | levelTurning c > 0 && pivotTurns c > 0 = Just (onHead (mLeft m), onHead (mRight m), onHead (mTop m))
+  where
+    onHead p = inHeadAxes (estimatedLevel c) centre (p ^-^ estimatedPivot c)
+learntClip _ _ _ = Nothing
 
 -- * Up
 

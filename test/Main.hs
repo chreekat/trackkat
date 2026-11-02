@@ -433,6 +433,38 @@ main = do
     check ("pivot in clip axes is off to one side " ++ show inClip) $ let V3 x _ _ = inClip in abs x > 30
     check "pivot described square to the head" $ norm (inLevelAxes cameraLevel (Pose worn (V3 0 0 700)) inClip ^-^ V3 0 150 60) < 1e-9
 
+    -- The clip on the head, from the neck pivot, once both are learnt: a
+    -- clip squarely facing the camera at the centre, the pivot below and
+    -- behind it, is above and in front of the pivot, its left reflector
+    -- (as the camera sees it) on the wearer's right; a clip turned 90
+    -- degrees, facing the camera from the side of the head, is on that side.
+    let calibrated up = either error id (parseCalibration ("up = " ++ up ++ "\nturning = 900\npivot = 0 100 100\npivot windows = 40\n"))
+        middle (l, r, _) = 0.5 *^ (l ^+^ r)
+        sides (l, r, t) = map norm [r ^-^ l, t ^-^ l, t ^-^ r]
+        clipSides = sides (mLeft headset, mRight headset, mTop headset)
+        closeTo a b = norm (a ^-^ b) < 1e-6
+    check "no clip on the head before anything is learnt" $
+        all isNothing [learntClip headset (Just facing) defaultCalibration, learntClip headset Nothing (calibrated "0 -1 0")]
+    check "no clip on the head with only the level learnt" $
+        isNothing (learntClip headset (Just facing) (either error id (parseCalibration "up = 0 -1 0\nturning = 900\n")))
+    case learntClip headset (Just facing) (calibrated "0 -1 0") of
+        Nothing -> check "clip on the head once learnt" False
+        Just placed@(l, r, _) -> do
+            check ("clip facing the camera is above and in front of the pivot " ++ show placed) $ closeTo (middle placed) (V3 0 100 100)
+            check ("its left reflector is on the wearer's right " ++ show placed) $ let V3 x _ _ = l; V3 x' _ _ = r in x > 0 && x' < 0
+            check "the clip keeps its shape on the head" $ and (zipWith (\a b -> abs (a - b) < 1e-6) (sides placed) clipSides)
+    case learntClip headset (Just (Pose (rodrigues (V3 0 (pi / 2) 0)) (V3 0 0 700))) (calibrated "0 -1 0") of
+        Nothing -> check "turned clip on the head" False
+        Just placed -> check ("clip turned 90 degrees is on the wearer's right " ++ show placed) $ closeTo (middle placed) (V3 100 100 0)
+    -- With the camera tipped down, up on the head is the learnt up, not the
+    -- camera's.
+    let tipped = V3 0 (negate (cos (deg 20))) (negate (sin (deg 20)))
+    case learntClip headset (Just facing) (calibrated "0 -0.9396926 -0.3420201") of
+        Nothing -> check "clip on the head with the camera tipped" False
+        Just placed ->
+            check ("clip on the head with the camera tipped " ++ show placed) $
+                let V3 _ y _ = middle placed in abs (y - dot (V3 0 (-100) (-100)) tipped) < 1e-3
+
     -- Swaying the body while glancing mustn't drag the pivot far.
     let (swaying, _) = runLearner (glancing (\time -> V3 (30 * sin (2 * pi * time / 3.7)) 0 (20 * sin (2 * pi * time / 5.3))))
     check ("pivot while swaying " ++ show (estimatedPivot (learnerCalibration swaying))) $
@@ -767,7 +799,7 @@ main = do
     let fading = [(t, headSeen bentWorn (10 * sin (2 * pi * t / 3)) 0 0, (1, 1, max 0 (min 1 (abs (t - 1.7) / 0.5 - 0.4)))) | t <- at120 3]
         faded = trackPath clipBent fading
     check ("tracked through fading " ++ show (summed faded)) $ lostCount faded == 0 && fst (worstError faded) < 1
-    check "two of three reflectors reported" $ any ((== 1) . seenMissing) (seens faded)
+    check "two of three reflectors reported" $ any ((== 1) . length . seenMissing) (seens faded)
 
     -- Out of sight for longer, it is lost, and found again on its return.
     let hiding = [(t, headSeen bentWorn (5 * sin (2 * pi * t / 3)) 0 0, (1, 1, if t > 1 && t < 3 then 0 else 1)) | t <- at120 4]
@@ -976,8 +1008,8 @@ main = do
         passIgnored = [p | ((t, _, _, _), evs) <- passRows, t < 5, LightIgnored p <- evs]
     check ("the fire at " ++ show passFire ++ " learnt before the head passes " ++ show passIgnored) $
         length passIgnored == 1 && all (\p -> distance p passFire < 10) passIgnored
-    check ("the head passing in front of the fire " ++ show (summed (after 4 passed), maximum (0 : map seenMissing (seens (after 4 passed))))) $
-        lostCount (after 4 passed) == 0 && all ((== 0) . seenMissing) (seens (after 4 passed)) && fst (worstError (after 4 passed)) < 1.5
+    check ("the head passing in front of the fire " ++ show (summed (after 4 passed), maximum (0 : map (length . seenMissing) (seens (after 4 passed))))) $
+        lostCount (after 4 passed) == 0 && all (null . seenMissing) (seens (after 4 passed)) && fst (worstError (after 4 passed)) < 1.5
     check ("the fire not taken to have moved with the head " ++ show (moved passRows, forgotten passRows)) $ null (moved passRows) && null (forgotten passRows)
 
     -- The fire goes out: it is forgotten after a while.
