@@ -593,17 +593,66 @@ static Head head_at(const float pose[6], int left, int top, int size)
     return (Head){left + size / 2.0 - pose[3] * k, top + size / 2.0 + pose[4] * k, size * 0.2 * 600.0 / (600.0 + z)};
 }
 
+/* Where a point on the head, in radii from its centre, lands with the head
+ * turned about its neck by the pose: across and down from the centre of the
+ * head turned no way, in radii; and whether it is on the side of the head
+ * that faces us. */
+static int on_head(const float pose[6], double x, double y, double z, double *across, double *down)
+{
+    double p[3] = {x, y, z}, neck[3] = {0, -NECK, 0};
+    turn(pose, p);
+    turn(pose, neck);
+    *across = p[0] - neck[0];
+    *down = -(p[1] - neck[1] - NECK);
+    return p[2] > 0;
+}
+
 /* Where a point on the head, in radii from its centre, lands on screen
  * with the head turned about its neck by the pose, and whether it is on
  * the side of the head that faces us. */
 static int project(const Head *h, const float pose[6], double x, double y, double z, POINT *out)
 {
-    double p[3] = {x, y, z}, neck[3] = {0, -NECK, 0};
-    turn(pose, p);
-    turn(pose, neck);
-    out->x = (LONG)lround(h->cx + (p[0] - neck[0]) * h->r);
-    out->y = (LONG)lround(h->cy - (p[1] - neck[1] - NECK) * h->r);
-    return p[2] > 0;
+    double across, down;
+    int front = on_head(pose, x, y, z, &across, &down);
+    out->x = (LONG)lround(h->cx + across * h->r);
+    out->y = (LONG)lround(h->cy + down * h->r);
+    return front;
+}
+
+/* The clip's i-th reflector on the head, in radii from its centre. */
+static void clip_point(int i, double p[3])
+{
+    p[0] = seen.clip[i][0] / HEAD_MM;
+    p[1] = seen.clip[i][1] / HEAD_MM - NECK;
+    p[2] = seen.clip[i][2] / HEAD_MM;
+}
+
+/* The head drawn as h, smaller and moved if need be so that, turned no
+ * way, it, its neck and the clip on it (if shown) are inside the box, a
+ * little in from its edges. A pivot learnt far from the clip puts the clip
+ * well above the head. */
+static Head fitted(Head h, int clip, int left, int top, int size)
+{
+    static const float still[6] = {0, 0, 0, 0, 0, 0};
+    double lo_x = -1, hi_x = 1, lo_y = -1, hi_y = 1.35; /* the head and its neck */
+    if (clip)
+        for (int i = 0; i < REFLECTORS; i++) {
+            double p[3], x, y;
+            clip_point(i, p);
+            on_head(still, p[0], p[1], p[2], &x, &y);
+            lo_x = fmin(lo_x, x);
+            hi_x = fmax(hi_x, x);
+            lo_y = fmin(lo_y, y);
+            hi_y = fmax(hi_y, y);
+        }
+    double margin = S(5), room = size - 2 * margin;
+    double r = fmin(h.r, fmin(room / (hi_x - lo_x), room / (hi_y - lo_y)));
+    double cx = h.cx, cy = h.cy;
+    cx = fmax(cx, left + margin - lo_x * r);
+    cx = fmin(cx, left + size - margin - hi_x * r);
+    cy = fmax(cy, top + margin - lo_y * r);
+    cy = fmin(cy, top + size - margin - hi_y * r);
+    return (Head){cx, cy, r};
 }
 
 static void pen_line(HDC dc, COLORREF c, int width, POINT a, POINT b)
@@ -810,9 +859,11 @@ static void draw_clip(HDC dc, const Head *h, int pass)
 {
     POINT p[REFLECTORS];
     int front[REFLECTORS];
-    for (int i = 0; i < REFLECTORS; i++)
-        front[i] = project(h, seen.head, seen.clip[i][0] / HEAD_MM, seen.clip[i][1] / HEAD_MM - NECK,
-                           seen.clip[i][2] / HEAD_MM, &p[i]);
+    for (int i = 0; i < REFLECTORS; i++) {
+        double q[3];
+        clip_point(i, q);
+        front[i] = project(h, seen.head, q[0], q[1], q[2], &p[i]);
+    }
     for (int i = 0; i < REFLECTORS; i++) {
         int j = (i + 1) % REFLECTORS;
         if ((front[i] && front[j]) == pass)
@@ -875,12 +926,12 @@ static void draw_virtual(HDC dc, int left, int top, int size, int live)
 
 /* The physical view: the head as the camera measures it, dotted yellow,
  * turning about its neck pivot, a grey dot with the neck below it; and once
- * the pivot is learnt, the clip where it sits on it. */
+ * the pivot is learnt, the clip where it sits on it, all in the box. */
 static void draw_physical(HDC dc, int left, int top, int size, int live)
 {
     const float *v = seen.head;
-    Head h = head_at(v, left, top, size);
     int clip = live && seen.clip_shown;
+    Head h = fitted(head_at(v, left, top, size), clip, left, top, size);
     COLORREF outline = live ? C_HEAD_TICK : C_DIM;
     POINT centre, p, q;
     project(&h, v, 0, 0, 0, &centre);
