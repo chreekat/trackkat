@@ -182,7 +182,6 @@ httpFailure url status
 releaseFiles :: [FilePath]
 releaseFiles =
     [ "trackkat.exe"
-    , "trackkat-tray.exe"
     , "tirprobe.exe"
     , "NPClient.dll"
     , "NPClient64.dll"

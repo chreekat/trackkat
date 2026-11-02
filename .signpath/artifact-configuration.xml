@@ -6,7 +6,6 @@
   <zip-file>
     <pe-file-set>
       <include path="trackkat.exe" />
-      <include path="trackkat-tray.exe" />
       <include path="tirprobe.exe" />
       <include path="npgame.exe" />
       <include path="trackdemo.exe" />

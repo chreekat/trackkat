@@ -81,11 +81,13 @@ flag icon
   default:     False
   manual:      True
 
+-- A GUI program (-mwindows), so it opens no console window however it is
+-- started; it prints to the terminal it was started from, if any.
 executable trackkat
   import:           shared
   hs-source-dirs:   app/trackkat
   main-is:          Main.hs
-  ghc-options:      -threaded -rtsopts "-with-rtsopts=-T"
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-T" -optl-mwindows
   build-depends:
     , async
     , base
