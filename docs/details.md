@@ -152,9 +152,14 @@ right for five seconds. **Clear calibration**, under the same cover, forgets
 what was learnt. Delete `trackkat.calibration` to start afresh; it explains
 its own format.
 
-Once both are learnt, the head view also shows, dotted yellow, your own
-head as the camera measures it, with the clip where the learnt pivot puts
-it; a reflector out of sight is drawn hollow. This is experimental.
+Click the head view to switch it between three views; trackkat keeps the
+one you left it on as `head view` in `trackkat.conf`. **Virtual** shows
+your head as games see it. **Physical** shows, dotted yellow, your own head
+as the camera measures it, turning about your neck pivot (the grey dot);
+once both are learnt, with the clip where the learnt pivot puts it, a
+reflector out of sight drawn hollow and named below. This is experimental.
+**Camera** shows the camera's whole picture, each blob at its size and
+shape.
 
 Single-frame jumps no head could make are ignored.
 
@@ -234,8 +239,8 @@ No longer ignoring the light at (300, 95): it moved.
 The second line comes once the light has been out of sight for 45
 seconds, the third when a light turns out to have been one of the clip's
 reflectors, moving off with it. The status line notes blobs ignored, such as `+2 masked`, the
-corner of the window's head view shows them grey among what the camera
-sees, and `tirprobe --blobs` marks them `masked`.
+window's head view shows them grey among what the camera sees, its
+camera view with the area ignored around each light dashed, and `tirprobe --blobs` marks them `masked`.
 
 So with a fire lit, trackkat finds the clip about three seconds after it
 starts, and at once after that. If you hold perfectly still while it
