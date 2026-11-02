@@ -421,7 +421,7 @@ main = do
     check ("level described briefly " ++ describeLevelBriefly c) $
         take 14 (describeLevelBriefly c) == "Camera tipped " && length (describeLevelBriefly c) <= 90
     check ("pivot described briefly " ++ describePivotBriefly (Just straight) c) $
-        take 11 (describePivotBriefly (Just straight) c) == "Neck pivot " && length (describePivotBriefly (Just straight) c) <= 95
+        take 11 (describePivotBriefly (Just straight) c) == "Neck pivot " && '±' `elem` describePivotBriefly (Just straight) c && length (describePivotBriefly (Just straight) c) <= 95
     forM_ [Nothing, Just straight] $ \centre ->
         check ("nothing learnt described briefly " ++ show centre) $
             [describeLevelBriefly defaultCalibration, describePivotBriefly centre defaultCalibration]
@@ -471,6 +471,31 @@ main = do
     check ("pivot while swaying " ++ show (estimatedPivot (learnerCalibration swaying))) $
         norm (estimatedPivot (learnerCalibration swaying) ^-^ truePivot) < 15
 
+    -- How high the pivot is, along the axis of turning left and right, is
+    -- shown only by nods and tilts (see Note [Learning the pivot]). Turning
+    -- alone for twenty seconds shows where the axis is, but leaves the
+    -- height where most heads have it, and says it is unsure of it.
+    let headAbout pivot place y p r = seenFrom (rotYXZ y p r) (place ^-^ mulMV (rotYXZ y p r) pivot)
+        turningOnly = learnerCalibration (fst (runLearner [(time, noisy i (headAt neckAt (35 * sin (2 * pi * time / 2.5)) 0 0)) | i <- [0 .. 120 * 20 :: Int], let time = fromIntegral i / 120]))
+        V3 axisX axisHeight axisZ = estimatedPivot turningOnly
+        V3 _ priorHeight _ = estimatedPivot defaultCalibration
+        V3 trueX _ trueZ = truePivot
+    check ("turning alone finds the axis " ++ show (estimatedPivot turningOnly)) $ abs (axisX - trueX) < 5 && abs (axisZ - trueZ) < 5
+    check "but not the height on it" $ abs (axisHeight - priorHeight) < 5
+    check ("and knows it " ++ describePivotBriefly (Just straight) turningOnly) $
+        pivotSpreadAlong turningOnly (V3 0 1 0) > 30 && pivotSpreadAlong turningOnly (V3 1 0 0) < 10 && pivotSpreadAlong turningOnly (V3 0 0 1) < 10
+    -- Later evidence moves what was learnt: ten minutes of glancing and
+    -- nodding about one pivot, then three about one 50 mm lower, as when
+    -- the clip has moved up on the headset, and the lower one is learnt.
+    let lower = truePivot ^+^ V3 0 50 0
+        movedOn =
+            [ (time, noisy i (headAbout (if time < 600 then truePivot else lower) neckAt (30 * sin (2 * pi * time / 2.5)) (12 * sin (2 * pi * time / 1.7)) 0))
+            | i <- [0 .. 60 * 780 :: Int]
+            , let time = fromIntegral i / 60 :: Double
+            ]
+        moved = learnerCalibration (fst (runLearner movedOn))
+    check ("a pivot that moved is learnt again " ++ show (estimatedPivot moved)) $ norm (estimatedPivot moved ^-^ lower) < 8
+
     -- Saving and loading.
     let saved = renderCalibration c
         closeV a b = norm (a ^-^ b) < 1e-3
@@ -482,6 +507,16 @@ main = do
             check "loaded pivot" $ closeV (estimatedPivot loaded) (estimatedPivot c)
             check "loaded evidence" $ abs (levelTurning loaded - levelTurning c) < 1e-3 && abs (pivotTurns loaded - pivotTurns c) < 1e-3
             check "loaded calibration applies at once" $ closeV (appliedPivot (newLearner headset loaded)) (estimatedPivot c)
+    -- A calibration saved by earlier builds, whose information was the
+    -- windows' normal matrices, loads with its pivot as it was, but is taken
+    -- for no surer than a tenth of what is now remembered.
+    let older = "up = 0 -0.9 0.4\nturning = 3000\npivot = 3 192 26\npivot windows = 160\npivot information = 400 10 5 30 2 380\n"
+    case parseCalibration older of
+        Left err -> check ("an older calibration loads: " ++ err) False
+        Right loaded -> do
+            check "an older calibration's pivot" $ closeV (estimatedPivot loaded) (V3 3 192 26)
+            check ("an older calibration's pivot is taken as unsure " ++ show [pivotSpreadAlong loaded u | u <- [V3 1 0 0, V3 0 1 0, V3 0 0 1]]) $
+                all (\u -> pivotSpreadAlong loaded u > 9) [V3 1 0 0, V3 0 1 0, V3 0 0 1]
     check "empty calibration file" $ fmap renderCalibration (parseCalibration "") == Right (renderCalibration defaultCalibration)
     check "bad up" $ isLeft (parseCalibration "up = 0 0 0\n")
     check "bad line" $ isLeft (parseCalibration "# fine\nnonsense\n")

@@ -21,6 +21,7 @@ module TrackKat.Calibration (
     defaultCalibration,
     estimatedLevel,
     estimatedPivot,
+    pivotSpreadAlong,
     levelTurning,
     pivotTurns,
     describeLevel,
@@ -74,12 +75,12 @@ data Calibration = Calibration
     , upWeight :: !Double
     -- ^ degrees of turning in 'upSum'
     , pivotInfo :: !M33
-    -- ^ information about the pivot: the normal matrix of the least-squares
-    -- fits so far, older ones faded, plus the prior's
+    -- ^ information about the pivot from windows of turning, per mm
+    -- squared, faded as in Note [Learning the pivot]; the prior's isn't in it
     , pivotMoment :: !V3
     -- ^ the right-hand side to 'pivotInfo''s normal equations
     , pivotWindows :: !Double
-    -- ^ windows of turning in 'pivotInfo', faded alike
+    -- ^ windows of turning learnt from, older ones faded
     }
     deriving (Show)
 
@@ -90,8 +91,8 @@ defaultCalibration =
     Calibration
         { upSum = V3 0 0 0
         , upWeight = 0
-        , pivotInfo = scaleM priorStrength identity
-        , pivotMoment = priorStrength *^ priorPivot
+        , pivotInfo = zeroM
+        , pivotMoment = V3 0 0 0
         , pivotWindows = 0
         }
 
@@ -111,7 +112,16 @@ estimatedLevel = levelFromUp . estimatedUp
 -- | The point the head turns about, in the clip's axes (x to the wearer's
 -- left, y down, z back, from the middle of the two lower reflectors), mm.
 estimatedPivot :: Calibration -> V3
-estimatedPivot c = fromMaybe priorPivot (solve3 (pivotInfo c) (pivotMoment c))
+estimatedPivot c = fromMaybe priorPivot (solve3 (pivotPrecision c) (priorInfo `mulMV` priorPivot ^+^ pivotMoment c))
+
+-- | All that is known of the pivot: the prior's information and the
+-- windows', per mm squared.
+pivotPrecision :: Calibration -> M33
+pivotPrecision c = priorInfo `addM` pivotInfo c
+
+-- | The pivot's standard error, mm, along a direction in the clip's axes.
+pivotSpreadAlong :: Calibration -> V3 -> Double
+pivotSpreadAlong c u = maybe priorSpread (sqrt . max 0 . dot u) (solve3 (pivotPrecision c) u)
 
 -- | Degrees of head turning up was learnt from, with older turns faded.
 levelTurning :: Calibration -> Double
@@ -139,25 +149,34 @@ describeLevel c
                 (levelTurning c)
 
 -- | A line for the console about the learnt pivot, or that none is yet,
--- given the clip's pose at the centre. Directions are along the level axes with the head at the
--- centre, facing the camera, however the clip sits on the head; without a
--- centre, only the distance is given.
+-- given the clip's pose at the centre. Directions are along the level axes
+-- with the head at the centre, facing the camera, however the clip sits on
+-- the head; without a centre, only the distance is given. Each comes with
+-- its standard error, which stays large for a direction little shown yet
+-- (see Note [Learning the pivot]).
 describePivot :: Maybe Pose -> Calibration -> String
 describePivot _ c | pivotTurns c <= 0 = "Neck pivot: " ++ notLearnt
 describePivot Nothing c =
-    printf "Neck pivot learnt: %.0f mm from the clip, from %.0f head turns." (norm (estimatedPivot c)) (pivotTurns c)
+    printf
+        "Neck pivot learnt: %.0f mm from the clip, give or take %.0f, from %.0f head turns."
+        (norm (estimatedPivot c))
+        (pivotSpreadAlong c (normalize (estimatedPivot c)))
+        (pivotTurns c)
 describePivot (Just centre) c =
     printf
-        "Neck pivot learnt: %.0f mm %s the clip, %.0f %s it and %.0f to your %s, from %.0f head turns."
+        "Neck pivot learnt: %.0f mm %s the clip, %.0f %s it and %.0f to your %s, give or take %.0f, %.0f and %.0f mm, from %.0f head turns."
         (abs y)
         (if y >= 0 then "below" else "above" :: String)
         (abs z)
         (if z >= 0 then "behind" else "in front of" :: String)
         (abs x)
         (if x >= 0 then "left" else "right" :: String)
+        sy
+        sz
+        sx
         (pivotTurns c)
   where
-    V3 x y z = inLevelAxes (estimatedLevel c) centre (estimatedPivot c)
+    (V3 x y z, V3 sx sy sz) = pivotInLevelAxes centre c
 
 -- | The learnt level as the window shows it, shorter than 'describeLevel'.
 describeLevelBriefly :: Calibration -> String
@@ -171,19 +190,37 @@ describeLevelBriefly c
 describePivotBriefly :: Maybe Pose -> Calibration -> String
 describePivotBriefly _ c | pivotTurns c <= 0 = "Neck pivot: " ++ notLearnt
 describePivotBriefly Nothing c =
-    printf "Neck pivot %.0f mm from the clip, from %.0f head turns." (norm (estimatedPivot c)) (pivotTurns c)
+    printf
+        "Neck pivot %.0f ± %.0f mm from the clip, from %.0f head turns."
+        (norm (estimatedPivot c))
+        (pivotSpreadAlong c (normalize (estimatedPivot c)))
+        (pivotTurns c)
 describePivotBriefly (Just centre) c =
     printf
-        "Neck pivot %.0f mm %s the clip, %.0f %s it and %.0f to your %s, from %.0f head turns."
+        "Neck pivot %.0f ± %.0f mm %s the clip, %.0f ± %.0f %s, %.0f ± %.0f to your %s, from %.0f turns."
         (abs y)
+        sy
         (if y >= 0 then "below" else "above" :: String)
         (abs z)
-        (if z >= 0 then "behind" else "in front of" :: String)
+        sz
+        (if z >= 0 then "behind" else "in front" :: String)
         (abs x)
+        sx
         (if x >= 0 then "left" else "right" :: String)
         (pivotTurns c)
   where
-    V3 x y z = inLevelAxes (estimatedLevel c) centre (estimatedPivot c)
+    (V3 x y z, V3 sx sy sz) = pivotInLevelAxes centre c
+
+-- | The learnt pivot along the level axes with the head at the given
+-- centre, and its standard error along each, mm.
+pivotInLevelAxes :: Pose -> Calibration -> (V3, V3)
+pivotInLevelAxes centre c = (inLevelAxes level centre (estimatedPivot c), V3 (along (V3 1 0 0)) (along (V3 0 1 0)) (along (V3 0 0 1)))
+  where
+    level = estimatedLevel c
+    -- The clip's direction that is the given level direction at the
+    -- centre, the turn from one set of axes to the other being orthogonal.
+    along e = pivotSpreadAlong c (V3 (dot e (toLevel (V3 1 0 0))) (dot e (toLevel (V3 0 1 0))) (dot e (toLevel (V3 0 0 1))))
+    toLevel = inLevelAxes level centre
 
 -- | Where the clip's reflectors (left, right, top) sit on the head once
 -- both the level and the pivot have been learnt, given the clip's pose at
@@ -276,11 +313,82 @@ screenCalibration m c
         Left
             "its neck pivot is in front of the clip, where no neck is: it was learnt from mirror-image poses, with yaw and pitch reversed"
 
--- | How much the prior counts, against about 5 for each window of turning.
--- Mostly it pins the part of the pivot that turning left and right can't
--- show: how far up or down the axis of turning it lies.
-priorStrength :: Double
-priorStrength = 1
+-- Note [Learning the pivot]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~
+-- Each window of turning is a least-squares problem: the point p, in the
+-- clip's axes, that stayed most still (see 'addWindow'). Its normal
+-- equations A p = b say how well it shows each direction of p. Turning
+-- left and right about a vertical axis leaves every point on that axis
+-- still, so it shows where the axis is, behind the clip and to one side,
+-- but nothing of how high on it the pivot is; only nods and tilts show
+-- that, and they are rarer and smaller.
+--
+-- So what is kept is the windows' information matrix, each window
+-- weighted as the evidence it is: A over how far its poses stray from
+-- turning about one point (its own fit, and at least 'windowNoise', for
+-- how much no one point explains a neck), counted as 'windowPoses'
+-- independent poses, since a window's poses err alike. Its inverse is the
+-- estimate's covariance, so the uncertainty is known direction by
+-- direction, and is what the descriptions give.
+--
+-- A prior, the pivot of most heads give or take 'priorSpread' in each
+-- direction, holds the directions little shown: until nods and tilts are
+-- seen, the height stays near the usual one rather than following what a
+-- few turns happen to hint. Directions well shown leave it behind within
+-- a few windows.
+--
+-- Old evidence fades only in the directions new evidence shows, and only
+-- once the estimate is known along them to within 'pivotMemorySpread':
+-- turning left and right keeps where the axis of turning is up to date
+-- without wearing away what nods showed of the height, and nodding later
+-- moves the height however much the head turned before. So a clip moved on
+-- the headset is learnt again in about as many windows as it took first.
+--
+-- A neck has no one pivot: it turns left and right between the top two
+-- vertebrae, nods quickly at the base of the skull above them, and bends
+-- lower down for big slow nods and tilts. One point is kept nonetheless,
+-- since what it is for wants one point: so that turning doesn't move the
+-- view (see 'relativePose'), the point that moves least over the head's
+-- turning is best, and that is the least-squares point of all its windows
+-- together, weighted as here, where the axis of turning is coming from the
+-- turns and its height from the nods and tilts, each as often as they
+-- happen. The mirror image's poses (see "TrackKat.Branch") turn about a
+-- point in front of the clip, far from all of these. So the height depends
+-- on how the head nods: quick small nods put it high, at the skull's base,
+-- and slow deep ones low, in the neck; while it is little shown, the prior
+-- holds it between.
+
+-- | How far, mm, the pivot is from 'priorPivot' on most heads, in any
+-- direction: the standard deviation of the prior.
+priorSpread :: Double
+priorSpread = 40
+
+priorInfo :: M33
+priorInfo = scaleM (1 / (priorSpread * priorSpread)) identity
+
+-- | How far, mm, a window's poses stray from turning about one point at
+-- the least, however well they fit: how far a neck is from a single pivot
+-- over half a second.
+windowNoise :: Double
+windowNoise = 2
+
+-- | How many independent poses a window's are worth.
+windowPoses :: Double
+windowPoses = 1
+
+-- | Evidence is remembered along each direction until it gives the pivot
+-- to within this many mm; beyond that, older evidence fades as new comes.
+pivotMemorySpread :: Double
+pivotMemorySpread = 3
+
+-- | Windows remembered in the count told, 'pivotTurns'.
+countMemory :: Double
+countMemory = 1000
+
+-- | How strongly a window's own fixed point is held toward the estimate
+-- along what the window can't show, against 1 for each pose.
+holdStrength :: Double
+holdStrength = 1
 
 -- | Length of a window, in seconds.
 windowSeconds :: Double
@@ -294,11 +402,6 @@ windowSpan = 8
 -- and the body moved too.
 windowFit :: Double
 windowFit = 4
-
--- | Information remembered, as the trace of the normal matrix: about two
--- hundred windows of turning.
-pivotMemory :: Double
-pivotMemory = 1000
 
 -- | Sums over a window's poses, enough to fit the point that stays still.
 data TurnWindow = TurnWindow
@@ -335,7 +438,7 @@ addPose (Pose r t) w =
 
 -- | Add a window if the head turned enough during it, a fixed point
 -- explains its movement, and that point and the estimate with it are where
--- a neck can be on the given clip.
+-- a neck can be on the given clip. See Note [Learning the pivot].
 --
 -- With rotations R_i and translations t_i, a point p in the clip's axes is
 -- at R_i p + t_i. Fitting p and the still position c to R_i p + t_i = c by
@@ -350,16 +453,30 @@ addWindow m w c
     | otherwise = Just added
   where
     (a, b) = normalEquations w
-    (own, fit) = fixedPoint priorStrength (estimatedPivot c) w
-    dataTrace = traceM (pivotInfo c) - 3 * priorStrength
-    fade = if dataTrace + traceM a > pivotMemory then max 0 ((pivotMemory - traceM a) / dataTrace) else 1
-    prior = scaleM priorStrength identity
+    (own, fit) = fixedPoint holdStrength (estimatedPivot c) w
+    weight = windowPoses / (fromIntegral (wCount w) * (fit * fit + windowNoise * windowNoise))
+    info = scaleM weight a
+    (remembered, rememberedMoment) = forgetBeyondMemory (pivotInfo c `addM` info, pivotMoment c ^+^ weight *^ b)
     added =
         c
-            { pivotInfo = prior `addM` scaleM fade (pivotInfo c `addM` scaleM (-1) prior) `addM` a
-            , pivotMoment = priorStrength *^ priorPivot ^+^ fade *^ (pivotMoment c ^-^ priorStrength *^ priorPivot) ^+^ b
-            , pivotWindows = fade * pivotWindows c + 1
+            { pivotInfo = remembered
+            , pivotMoment = rememberedMoment
+            , pivotWindows = pivotWindows c * (1 - 1 / countMemory) + 1
             }
+
+-- | Information about the pivot from windows, and its moment, with
+-- evidence taken away along any direction where there is more than
+-- 'pivotMemorySpread' allows, down to that. Directions that new windows
+-- add little to keep what they have. What is taken away is a share of all
+-- the evidence along that direction, so what remains points to the same
+-- estimate.
+forgetBeyondMemory :: (M33, V3) -> (M33, V3)
+forgetBeyondMemory (info0, moment0) = foldl' forget (info0, moment0) (eigenSymmetric info0)
+  where
+    most = 1 / (pivotMemorySpread * pivotMemorySpread)
+    forget (info, moment) (e, u)
+        | e <= most = (info, moment)
+        | otherwise = (info `addM` scaleM (most - e) (outer u u), moment ^-^ ((1 - most / e) * dot u moment) *^ u)
 
 -- | The normal equations A p = b of a window's fit of a fixed point.
 normalEquations :: TurnWindow -> (M33, V3)
@@ -408,8 +525,42 @@ addM (M33 a b c) (M33 d e f) = M33 (a ^+^ d) (b ^+^ e) (c ^+^ f)
 scaleM :: Double -> M33 -> M33
 scaleM k (M33 a b c) = M33 (k *^ a) (k *^ b) (k *^ c)
 
-traceM :: M33 -> Double
-traceM (M33 (V3 a _ _) (V3 _ b _) (V3 _ _ c)) = a + b + c
+zeroM :: M33
+zeroM = M33 (V3 0 0 0) (V3 0 0 0) (V3 0 0 0)
+
+outer :: V3 -> V3 -> M33
+outer (V3 a b d) v = M33 (a *^ v) (b *^ v) (d *^ v)
+
+-- | The eigenvalues and unit eigenvectors of a symmetric matrix, by Jacobi
+-- rotations.
+eigenSymmetric :: M33 -> [(Double, V3)]
+eigenSymmetric m0 = [(at diagonal i i, column vectors i) | i <- [0, 1, 2]]
+  where
+    rows (M33 (V3 a b c) (V3 d e f) (V3 g h i)) = [[a, b, c], [d, e, f], [g, h, i]]
+    at x i j = x !! i !! j
+    column x j = V3 (at x 0 j) (at x 1 j) (at x 2 j)
+    (diagonal, vectors) = iterate sweep (rows m0, rows identity) !! 8
+    sweep acc = foldl' rotate acc [(0, 1), (0, 2), (1, 2)]
+    -- Zero the (p, q) element with a rotation J: A to J^T A J, V to V J.
+    rotate (am, vm) (p, q)
+        | abs apq < 1e-300 = (am, vm)
+        | otherwise = (mul (transposeL j) (mul am j), mul vm j)
+      where
+        apq = at am p q
+        theta = (at am q q - at am p p) / (2 * apq)
+        t = signum theta / (abs theta + sqrt (theta * theta + 1)) + (if theta == 0 then 1 else 0)
+        cs = 1 / sqrt (t * t + 1)
+        sn = t * cs
+        j = [[entry r k | k <- [0, 1, 2]] | r <- [0, 1, 2]]
+        entry r k
+            | (r, k) == (p, p) || (r, k) == (q, q) = cs
+            | (r, k) == (p, q) = sn
+            | (r, k) == (q, p) = negate sn
+            | r == k = 1
+            | otherwise = 0
+    mul x y = [[sum (zipWith (*) row col) | col <- transposeL y] | row <- x]
+    transposeL [r0, r1, r2] = zipWith3 (\x y z -> [x, y, z]) r0 r1 r2
+    transposeL _ = []
 
 -- * Learning
 
@@ -559,7 +710,8 @@ renderCalibration c =
         , "# middle of the clip's two lower reflectors, along the clip's axes (x to"
         , "# your left, y down, z back); how many half-second windows of turning it"
         , "# was learnt from; and how sure of it trackkat is, as the information"
-        , "# matrix of its least-squares fit: xx xy xz yy yz zz."
+        , "# matrix of its least-squares fit, the inverse of its covariance, per"
+        , "# square cm: xx xy xz yy yz zz."
         , "pivot = " ++ vector pivot
         , "pivot windows = " ++ renderNumber (pivotWindows c)
         , "pivot information = " ++ unwords (map renderNumber [a, b, d, f, g, j])
@@ -567,7 +719,35 @@ renderCalibration c =
   where
     vector (V3 x y z) = unwords (map renderNumber [x, y, z])
     pivot = estimatedPivot c
-    M33 (V3 a b d) (V3 _ f g) (V3 _ _ j) = pivotInfo c
+    M33 (V3 a b d) (V3 _ f g) (V3 _ _ j) = scaleM perSquareCm (pivotPrecision c)
+
+-- | Information per square mm in square cm.
+perSquareCm :: Double
+perSquareCm = 100
+
+-- | Information about the pivot as saved, per square cm with the prior's,
+-- as information from windows alone, per square mm, no more than is
+-- remembered (see Note [Learning the pivot]). Builds before this one saved
+-- the normal matrices of the windows' fits, with 1 for the prior, which
+-- come to more than is now remembered. Their windows count as they would
+-- now with their poses straying 'windowNoise' and a little, but for no more
+-- than a tenth of what is remembered along any direction: they were taken
+-- for surer than they were, the height especially, so what is learnt now
+-- soon outweighs them.
+windowInfo :: M33 -> M33
+windowInfo saved = foldr add zeroM [(min limit (max 0 e), u) | (e, u) <- eigenSymmetric fromWindows]
+  where
+    most = 1 / (pivotMemorySpread * pivotMemorySpread)
+    precision = scaleM (1 / perSquareCm) saved
+    olderBuild = maximum (map fst (eigenSymmetric precision)) > 1.01 * (most + 1 / (priorSpread * priorSpread))
+    (fromWindows, limit)
+        | olderBuild = (scaleM (windowPoses / (fromIntegral olderWindowPoses * (1 + windowNoise * windowNoise))) (saved `addM` scaleM (-1) identity), most / 10)
+        | otherwise = (precision `addM` scaleM (-1) priorInfo, most)
+    add (e, u) acc = acc `addM` scaleM e (outer u u)
+
+-- | Poses in a window of earlier builds, at 120 frames a second.
+olderWindowPoses :: Int
+olderWindowPoses = 60
 
 -- | Read a calibration file. Settings it lacks start from scratch; the
 -- error names the offending line.
@@ -576,14 +756,14 @@ parseCalibration str = do
     s <- foldl' line (Right emptyFile) (zip [1 :: Int ..] (lines str))
     let up = maybe cameraUp normalize (fUp s)
         weight = fromMaybe 0 (fTurning s)
-        info = fromMaybe (pivotInfo defaultCalibration) (fInfo s)
+        info = maybe zeroM windowInfo (fInfo s)
         pivot = fromMaybe (estimatedPivot defaultCalibration) (fPivot s)
     pure
         Calibration
             { upSum = weight *^ up
             , upWeight = weight
             , pivotInfo = info
-            , pivotMoment = mulMV info pivot
+            , pivotMoment = mulMV (priorInfo `addM` info) pivot ^-^ mulMV priorInfo priorPivot
             , pivotWindows = fromMaybe 0 (fWindows s)
             }
   where
