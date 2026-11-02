@@ -34,6 +34,7 @@ module TrackKat.Pose (
     levelFromYaws,
     cameraTilt,
     inLevelAxes,
+    inHeadAxes,
     HeadPose (..),
     relativePose,
     eulerYXZ,
@@ -586,6 +587,13 @@ cameraTilt (Level (M33 _ (V3 dx dy dz) _)) =
 -- the given pose.
 inLevelAxes :: Level -> Pose -> V3 -> V3
 inLevelAxes (Level toLevel) (Pose r _) v = mulMV toLevel (mulMV r v)
+
+-- | A direction given in the clip's axes, in the head's axes while the clip
+-- is in the given pose and the head faces the camera: x to the wearer's
+-- right, y up, z out of the face. They are level axes seen in a mirror, as
+-- trackkat's window draws the head.
+inHeadAxes :: Level -> Pose -> V3 -> V3
+inHeadAxes l pose v = (-1) *^ inLevelAxes l pose v
 
 -- | A head's rotation and movement from a reference pose, in a level frame:
 -- x to the camera's right, y down, z away from the camera.

@@ -4,6 +4,7 @@ module TrackKat.Tracker (
     newTracker,
     Masking (..),
     trackerCalibration,
+    trackerModel,
     trackerCentre,
     trackerPose,
     BlobRole (..),
@@ -26,7 +27,7 @@ module TrackKat.Tracker (
 
 import Data.Foldable (toList)
 import Data.List (intercalate, partition, sortOn)
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe, mapMaybe)
 
 import TrackKat.Branch
 import TrackKat.Calibration
@@ -87,7 +88,7 @@ data Outcome
 
 -- | How the reflectors appeared in a tracked frame.
 data Seen = Seen
-    { seenMissing :: Int
+    { seenMissing :: [Reflector]
     -- ^ reflectors out of sight, held where recent frames had them
     , seenMerged :: Int
     -- ^ reflectors sharing a blob with another
@@ -107,7 +108,7 @@ describeSeen (Seen missing merged strays masked) = case notes of
     _ -> "   " ++ intercalate ", " notes
   where
     notes =
-        [show (3 - missing) ++ " of 3 reflectors" | missing > 0]
+        [show (3 - length missing) ++ " of 3 reflectors" | not (null missing)]
             ++ ["merged" | merged > 0]
             ++ ["+" ++ show strays ++ (if strays == 1 then " stray" else " strays") | strays > 0]
             ++ [describeMasked masked | masked > 0]
@@ -173,6 +174,10 @@ newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
 trackerCalibration = learnerCalibration . trLearner
+
+-- | The clip tracked.
+trackerModel :: Tracker -> Model
+trackerModel = trModel
 
 -- | The clip's pose at the last recenter.
 trackerCentre :: Tracker -> Maybe Pose
@@ -401,7 +406,7 @@ step now stripes t =
                 applied = trLearner t2
                 seen =
                     Seen
-                        (length (filter isNothing (toList sights)))
+                        [which | (which, Nothing) <- toList ((,) <$> reflectors <*> sights)]
                         (length [() | Just s <- toList sights, sightKind s == Merged])
                         unused
                         hidden
