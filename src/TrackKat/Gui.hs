@@ -29,6 +29,7 @@ module TrackKat.Gui (
     Sighting (..),
     showFrame,
     showBlobs,
+    showClip,
     Output (..),
     showOutput,
     showTrim,
@@ -44,12 +45,13 @@ import Data.Bits (shiftR, testBit, (.&.))
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
-import Foreign.Marshal.Array (allocaArray, withArrayLen)
-import Foreign.Ptr (Ptr)
+import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
+import Foreign.Ptr (Ptr, nullPtr)
 
 import TrackKat.Config (Binding, bindingFromCodes, renderBinding)
 import TrackKat.Frame (Blob (..))
-import TrackKat.Pose (HeadPose (..))
+import TrackKat.Linear (V3 (..))
+import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Trim (..))
 import TrackKat.Tracker (BlobRole (..))
 import TrackKat.Windows (Hotkey (..))
@@ -72,8 +74,9 @@ foreign import ccall unsafe "hts_gui_add_binding" c_add_binding :: CInt -> CWStr
 foreign import ccall unsafe "hts_gui_log" c_log :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_camera" c_camera :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_frame"
-    c_frame :: CInt -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
+    c_frame :: CInt -> CInt -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> IO ()
+foreign import ccall unsafe "hts_gui_clip" c_clip :: CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> CInt -> IO ()
 foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> CWString -> IO ()
@@ -227,19 +230,22 @@ showCamera (CameraDown why) = withCWString why (c_camera 2)
 
 -- | What a frame showed of the clip.
 data Sighting
-    = InSight HeadPose
+    = -- | the head, and the reflectors out of sight
+      InSight HeadPose [Reflector]
     | -- | how many reflectors were seen
       OutOfSight Int
 
--- | Show a frame: the head, and the pose games are sent. Skipped if the
--- window is busy copying the last one.
+-- | Show a frame: the head, which reflectors were seen, and the pose games
+-- are sent. Skipped if the window is busy copying the last one.
 showFrame :: Sighting -> HeadPose -> IO ()
 showFrame sighting view =
-    c_frame blobs (f yaw) (f pitch) (f roll) (f tx) (f ty) (f tz) (g yaw) (g pitch) (g roll) (g tx) (g ty) (g tz)
+    c_frame blobs shown (f yaw) (f pitch) (f roll) (f tx) (f ty) (f tz) (g yaw) (g pitch) (g roll) (g tx) (g ty) (g tz)
   where
-    (blobs, head') = case sighting of
-        InSight hp -> (-1, hp)
-        OutOfSight n -> (fromIntegral n, view)
+    (blobs, shown, head') = case sighting of
+        InSight hp missing -> (-1, sum [bit | (which, bit) <- reflectorBits, which `notElem` missing], hp)
+        OutOfSight n -> (fromIntegral n, 0, view)
+    -- As REFLECTOR_LEFT and the rest in cbits/gui.c.
+    reflectorBits = [(LeftReflector, 1), (RightReflector, 2), (TopReflector, 4)]
     f axis = realToFrac (axis head')
     g axis = realToFrac (axis view)
 
@@ -256,6 +262,15 @@ showBlobs blobs = withArrayLen (concatMap spot (take shownBlobs blobs)) $ \n -> 
     roleCode ReflectorBlob = 0
     roleCode StrayBlob = 1
     roleCode MaskedBlob = 2
+
+-- | Show the clip's reflectors (left, right, top) on the head, in mm from
+-- the neck pivot along the head's axes (see 'TrackKat.Pose.inHeadAxes'), or
+-- show none.
+showClip :: Maybe (V3, V3, V3) -> IO ()
+showClip Nothing = c_clip 0 nullPtr
+showClip (Just (l, r, t)) = withArray (concatMap coords [l, r, t]) (c_clip 1)
+  where
+    coords (V3 x y z) = map realToFrac [x, y, z]
 
 -- | Whether games see the head move.
 data Output = Live | Paused

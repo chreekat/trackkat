@@ -54,10 +54,15 @@ typedef struct Spot {
     int role;
 } Spot;
 
+/* The clip's reflectors, as hts_gui_frame's bits for those seen and
+ * hts_gui_clip's points number them. */
+enum { REFLECTOR_LEFT, REFLECTOR_RIGHT, REFLECTOR_TOP, REFLECTORS };
+
 typedef struct State {
     int camera;
     wchar_t camera_text[TEXT_MAX]; /* why the camera is down */
     int blobs;                     /* -1 while the clip is in sight, else how many reflectors are */
+    int reflectors_seen;           /* bit per reflector seen in the last frame, 1 << REFLECTOR_LEFT and so on */
     float head[6];                 /* yaw, pitch, roll in degrees, x, y, z in mm */
     float view[6];                 /* the same, as games see it */
     int paused;
@@ -77,6 +82,8 @@ typedef struct State {
     int up_to_date;                /* whether that is that none is newer */
     int spots;                     /* blobs in the last frame, up to BLOBS_MAX */
     Spot spot[BLOBS_MAX];
+    int clip_shown;                /* whether the clip is drawn on the head */
+    float clip[REFLECTORS][3];     /* its reflectors, mm from the neck pivot along the head's axes */
 } State;
 
 /* ---- Shared with Haskell, under the lock --------------------------------- */
@@ -135,14 +142,17 @@ void hts_gui_log(const wchar_t *line)
     ReleaseSRWLockExclusive(&lock);
 }
 
-/* Called on every frame, so it skips the update rather than wait for the
- * GUI to finish copying. The next frame's comes soon enough. */
-void hts_gui_frame(int blobs, float yaw, float pitch, float roll, float x, float y, float z, float vyaw,
+/* The last frame: how many reflectors were seen if the clip was out of
+ * sight, the bits of those seen (1 << REFLECTOR_LEFT and so on), the head
+ * and the view. Called on every frame, so it skips the update rather than
+ * wait for the GUI to finish copying. The next frame's comes soon enough. */
+void hts_gui_frame(int blobs, int reflectors_seen, float yaw, float pitch, float roll, float x, float y, float z, float vyaw,
                    float vpitch, float vroll, float vx, float vy, float vz)
 {
     if (!TryAcquireSRWLockExclusive(&lock))
         return;
     shared.blobs = blobs;
+    shared.reflectors_seen = reflectors_seen;
     float h[6] = {yaw, pitch, roll, x, y, z}, v[6] = {vyaw, vpitch, vroll, vx, vy, vz};
     memcpy(shared.head, h, sizeof h);
     memcpy(shared.view, v, sizeof v);
@@ -161,6 +171,19 @@ void hts_gui_blobs(int n, const float *blobs)
         const float *b = blobs + 4 * i;
         shared.spot[i] = (Spot){b[0], b[1], b[2], (int)b[3]};
     }
+    ReleaseSRWLockExclusive(&lock);
+}
+
+/* The clip on the head: if shown, its reflectors as x, y, z each, left,
+ * right and top, in mm from the neck pivot along the head's axes (x the
+ * wearer's right, y up, z out of the face). Set when the calibration
+ * changes. */
+void hts_gui_clip(int shown, const float *points)
+{
+    AcquireSRWLockExclusive(&lock);
+    shared.clip_shown = shown;
+    if (shown)
+        memcpy(shared.clip, points, sizeof shared.clip);
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -504,6 +527,8 @@ static void tray_menu(void)
 #define C_AMBER RGB(240, 170, 60)
 #define C_RED RGB(230, 85, 75)
 #define C_GREY RGB(120, 126, 138)
+#define C_HEAD_FAINT RGB(150, 124, 64)
+#define C_ACCENT_FAINT RGB(66, 112, 166)
 
 /* Rotate a point on the head, in head axes (x the user's right, y up, z out
  * of the face), by the view's roll, then pitch, then yaw, as seen in a
@@ -526,17 +551,35 @@ static void turn(const float view[6], double p[3])
     p[2] = z;
 }
 
+/* The head drawn is a ball HEAD_MM in radius, about 180 mm across, that
+ * turns about its neck pivot: NECK radii below its centre, on the midline
+ * and level with the ear lobes, about where the top of the neck is. */
+#define HEAD_MM 90.0
+#define NECK 0.35
+
 typedef struct {
-    double cx, cy, r;
+    double cx, cy, r; /* the centre with the head turned no way, and the radius, in pixels */
 } Head;
 
-/* Where a point on the head lands on screen, and whether it faces us. */
-static int project(const Head *h, const float view[6], double x, double y, double z, POINT *out)
+/* The head at a pose, in a box of the given size: 300 mm from the centre
+ * to the edge; nearer is bigger. */
+static Head head_at(const float pose[6], int left, int top, int size)
 {
-    double p[3] = {x, y, z};
-    turn(view, p);
-    out->x = (LONG)lround(h->cx + p[0] * h->r);
-    out->y = (LONG)lround(h->cy - p[1] * h->r);
+    double k = size / 2.0 / 300.0;
+    double z = pose[5] < -300 ? -300 : pose[5];
+    return (Head){left + size / 2.0 - pose[3] * k, top + size / 2.0 + pose[4] * k, size * 0.2 * 600.0 / (600.0 + z)};
+}
+
+/* Where a point on the head, in radii from its centre, lands on screen
+ * with the head turned about its neck by the pose, and whether it is on
+ * the side of the head that faces us. */
+static int project(const Head *h, const float pose[6], double x, double y, double z, POINT *out)
+{
+    double p[3] = {x, y, z}, neck[3] = {0, -NECK, 0};
+    turn(pose, p);
+    turn(pose, neck);
+    out->x = (LONG)lround(h->cx + (p[0] - neck[0]) * h->r);
+    out->y = (LONG)lround(h->cy - (p[1] - neck[1] - NECK) * h->r);
     return p[2] > 0;
 }
 
@@ -559,6 +602,16 @@ static void disc(HDC dc, COLORREF fill, COLORREF line, int width, int cx, int cy
     SelectObject(dc, ob);
     SelectObject(dc, op);
     DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+static void ring(HDC dc, COLORREF line, int width, int style, int cx, int cy, int r)
+{
+    HPEN pen = CreatePen(style, width, line);
+    HGDIOBJ op = SelectObject(dc, pen), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Ellipse(dc, cx - r, cy - r, cx + r + 1, cy + r + 1);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
     DeleteObject(pen);
 }
 
@@ -610,13 +663,42 @@ static void draw_camera(HDC dc, int left, int top, int width)
         }
 }
 
+/* The clip's reflectors where they sit on the head drawn as h, at the
+ * head's own pose: on the far side of the head (pass 0), to be drawn
+ * before it, or on the near side (pass 1). The clip's triangle is faint,
+ * and each reflector a dot, blue if seen in the last frame and hollow if
+ * not. */
+static void draw_clip(HDC dc, const Head *h, int pass)
+{
+    POINT p[REFLECTORS];
+    int front[REFLECTORS];
+    for (int i = 0; i < REFLECTORS; i++)
+        front[i] = project(h, seen.head, seen.clip[i][0] / HEAD_MM, seen.clip[i][1] / HEAD_MM - NECK,
+                           seen.clip[i][2] / HEAD_MM, &p[i]);
+    for (int i = 0; i < REFLECTORS; i++) {
+        int j = (i + 1) % REFLECTORS;
+        if ((front[i] && front[j]) == pass)
+            pen_line(dc, C_ACCENT_FAINT, 1, p[i], p[j]);
+    }
+    for (int i = 0; i < REFLECTORS; i++)
+        if (front[i] == pass) {
+            if (seen.reflectors_seen & 1 << i)
+                disc(dc, C_ACCENT, C_BACK, 1, p[i].x, p[i].y, S(3));
+            else
+                ring(dc, C_ACCENT, 1, PS_SOLID, p[i].x, p[i].y, S(3));
+        }
+}
+
 /* The head as games see it: a face that turns, tilts and moves with the
  * view, a line out of the nose showing where it looks; and in its corner,
- * what the camera sees. */
+ * what the camera sees. Once the clip is shown on the head, the head as
+ * the camera measures it too, in yellow, as the axes' ticks are: dotted,
+ * with a line out of its nose and the clip on it. */
 static void draw_head(HDC dc, int left, int top, int size)
 {
     const float *v = seen.view;
     int live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
+    int clip = live && seen.clip_shown;
     fill_rect(dc, left, top, left + size, top + size, C_BOX);
     HPEN grid = CreatePen(PS_DOT, 1, C_GRID);
     HGDIOBJ old = SelectObject(dc, grid);
@@ -630,21 +712,21 @@ static void draw_head(HDC dc, int left, int top, int size)
     if (seen.camera == CAMERA_TRACKING)
         draw_camera(dc, left + S(6), top + S(6), S(96));
 
-    /* 300 mm from the centre to the edge; nearer is bigger. */
-    double k = size / 2.0 / 300.0;
-    double z = v[5] < -300 ? -300 : v[5];
-    Head h = {left + size / 2.0 - v[3] * k, top + size / 2.0 + v[4] * k, size * 0.2 * 600.0 / (600.0 + z)};
-    HRGN clip = CreateRectRgn(left, top, left + size, top + size);
-    SelectClipRgn(dc, clip);
+    Head h = head_at(v, left, top, size), own = head_at(seen.head, left, top, size);
+    HRGN box = CreateRectRgn(left, top, left + size, top + size);
+    SelectClipRgn(dc, box);
 
     COLORREF skin = live ? RGB(78, 88, 104) : RGB(58, 62, 70);
     COLORREF line = live ? RGB(205, 212, 224) : C_DIM;
     COLORREF feature = live ? RGB(240, 244, 250) : C_DIM;
     int w = S(2);
-    POINT centre = {(LONG)lround(h.cx), (LONG)lround(h.cy)}, p, q;
+    POINT centre, p, q;
+    project(&h, v, 0, 0, 0, &centre);
 
     /* What is behind the head is drawn before it, what faces us after. */
     for (int pass = 0; pass < 2; pass++) {
+        if (pass == 0 && clip)
+            draw_clip(dc, &own, 0);
         if (pass == 1)
             disc(dc, skin, line, w, centre.x, centre.y, (int)lround(h.r));
         for (int side = -1; side <= 1; side += 2)
@@ -674,8 +756,17 @@ static void draw_head(HDC dc, int left, int top, int size)
         prev = p;
         prev_front = front;
     }
+    if (clip) {
+        project(&own, seen.head, 0, 0, 0, &p);
+        ring(dc, C_HEAD_FAINT, 1, PS_DOT, p.x, p.y, (int)lround(own.r));
+        if (project(&own, seen.head, 0, -0.05, 1, &p)) {
+            project(&own, seen.head, 0, -0.05, 2.2, &q);
+            pen_line(dc, C_HEAD_TICK, 1, p, q);
+        }
+        draw_clip(dc, &own, 1);
+    }
     SelectClipRgn(dc, NULL);
-    DeleteObject(clip);
+    DeleteObject(box);
 
     if (!live) {
         const wchar_t *why = seen.camera == CAMERA_TRACKING ? L"Clip out of sight" : L"No tracking";
@@ -1961,7 +2052,9 @@ static void live_tips(void)
     tip_area(live_hwnd, 1, S(8), S(8), S(8 + HEAD_SIZE), S(8 + HEAD_SIZE),
              L"Your head as games see it, turned and moved as the game's view will be. The blue line shows where "
              L"it looks. In the corner, what the camera sees: the clip's reflectors blue, other bright things "
-             L"(ignored) amber, and still lights ignored grey.");
+             L"(ignored) amber, and still lights ignored grey. Experimental: once the level and neck pivot are "
+             L"learnt, your own head as the camera measures it, dotted yellow, with the clip where it sits on "
+             L"it: each reflector blue while seen, hollow while not.");
     tip_area(live_hwnd, 2, x0, 0, x0 + S(130), rows,
              L"Your head as the camera measures it, from the centre you set by recentering: degrees turned, mm "
              L"moved.");

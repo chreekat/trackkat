@@ -691,6 +691,7 @@ clearCalibration s = do
     putMVar (sSaving s) defaultCalibration
     say "Calibration cleared: trackkat learns it afresh as you turn your head."
     showCalibration noCalibration
+    showClip Nothing
 
 -- | Pause, holding the pose games see, or resume.
 togglePause :: Session -> IO ()
@@ -781,7 +782,9 @@ track s cam = do
                 let centre = trackerCentre tracker
                 forM_ events $ \e -> do
                     say (describeEvent centre e)
-                    mapM_ showCalibration (calibrationNews centre (trackerCalibration tracker) e)
+                    forM_ (calibrationNews centre (trackerCalibration tracker) e) $ \news -> do
+                        showCalibration news
+                        showClip (learntClip (trackerModel tracker) centre (trackerCalibration tracker))
                 forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
                 -- A new centre or level is a jump the shaper must not smooth.
                 when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
@@ -798,7 +801,7 @@ track s cam = do
                 sent <- maybe (readIORef (sLatest s)) pure paused
                 publish (toGamePose sent)
                 published <- getMonotonicTime
-                showFrame (case outcome of Tracked{outPose = hp} -> InSight hp; Lost{outBlobs = n} -> OutOfSight n) sent
+                showFrame (case outcome of Tracked{outPose = hp, outSeen = seen} -> InSight hp (seenMissing seen); Lost{outBlobs = n} -> OutOfSight n) sent
                 showBlobs (trackerBlobs tracker)
                 previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
                 modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
