@@ -522,6 +522,19 @@ main = do
         describeChanges defaultConfig withTrackIR == "Settings reloaded: npclient = trackir"
     check "npclient editable" $ editSettings [("npclient", "trackir")] "npclient = trackkat\n" == Right "npclient = trackir\n"
 
+    -- The window's head view, as last clicked to.
+    check "head view as games see it by default" $ headView defaultConfig == VirtualView
+    check "head view setting" $
+        map (fmap headView . parseConfig . ("head view = " ++)) ["virtual", "physical", "camera"]
+            == map Right [VirtualView, PhysicalView, CameraView]
+    check "bad head view" $ parseConfig "head view = side" == Left "line 1: head view is virtual, physical or camera"
+    let withCamera = defaultConfig{headView = CameraView}
+    check "head view round-trips" $ parseConfig (renderConfig withCamera) == Right withCamera
+    check "head view change described" $
+        describeChanges defaultConfig withCamera == "Settings reloaded: head view = camera"
+    check "head view editable" $
+        editSettings [("head view", "physical")] "head view = virtual\n" == Right "head view = physical\n"
+
     -- Trimming: where the view looks, and where it is, becomes forward,
     -- until recentering.
     let trimmed t y p = fst (shape plain t 0 HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)

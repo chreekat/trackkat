@@ -10,6 +10,7 @@ module TrackKat.Tracker (
     trackerPose,
     BlobRole (..),
     trackerBlobs,
+    trackerLights,
     Request (..),
     request,
     setModel,
@@ -200,6 +201,11 @@ trackerPose = fmap recentPose . trRecent
 -- | The last frame's blobs, heaviest first, and what each was taken for.
 trackerBlobs :: Tracker -> [(Blob, BlobRole)]
 trackerBlobs = trBlobs
+
+-- | The still lights learnt, each as the centre and radius, in pixels, of
+-- the area masked around it.
+trackerLights :: Tracker -> [((Double, Double), Double)]
+trackerLights = lightAreas . trLights
 
 -- | What a blob was taken for.
 data BlobRole

@@ -75,7 +75,7 @@ foreign import ccall unsafe "hts_gui_log" c_log :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_camera" c_camera :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_frame"
     c_frame :: CInt -> CInt -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
-foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> IO ()
+foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_clip" c_clip :: CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> CInt -> IO ()
@@ -250,14 +250,24 @@ showFrame sighting view =
     g axis = realToFrac (axis view)
 
 -- | Show a frame's blobs, heaviest first, at their places in the camera's
--- image, and what each was taken for; the window shows the first few.
--- Skipped if the window is busy copying the last ones.
-showBlobs :: [(Blob, BlobRole)] -> IO ()
-showBlobs blobs = withArrayLen (concatMap spot (take shownBlobs blobs)) $ \n -> c_blobs (fromIntegral (n `div` 4))
+-- image with their size and shape, and what each was taken for; and the
+-- areas masked around still lights, as centre and radius in pixels. The
+-- window shows the first few of each. Skipped if the window is busy copying
+-- the last ones.
+showBlobs :: [(Blob, BlobRole)] -> [((Double, Double), Double)] -> IO ()
+showBlobs blobs areas =
+    withArrayLen (concatMap spot (take shownBlobs blobs)) $ \n spots ->
+        withArrayLen (concatMap area (take shownAreas areas)) $ \m ->
+            c_blobs (fromIntegral (n `div` 7)) spots (fromIntegral (m `div` 3))
   where
-    -- As BLOBS_MAX in cbits/gui.c.
+    -- As BLOBS_MAX and AREAS_MAX in cbits/gui.c.
     shownBlobs = 16
-    spot (b, role) = map realToFrac [blobX b, blobY b, fromIntegral (blobPoints b)] ++ [roleCode role]
+    shownAreas = 8
+    spot (b, role) =
+        map realToFrac [blobX b, blobY b, fromIntegral (blobPoints b)]
+            ++ [roleCode role]
+            ++ map realToFrac [blobVarX b, blobVarY b, blobCovXY b]
+    area ((x, y), r) = map realToFrac [x, y, r]
     -- As SPOT_REFLECTOR and the rest in cbits/gui.c.
     roleCode ReflectorBlob = 0
     roleCode StrayBlob = 1

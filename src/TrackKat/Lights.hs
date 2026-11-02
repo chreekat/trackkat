@@ -9,6 +9,7 @@ module TrackKat.Lights (
     View (..),
     unseen,
     learnLights,
+    lightAreas,
     unlearn,
     holding,
     Mask,
@@ -277,6 +278,11 @@ learnLights now (View sights reflectors) blobs ls =
          in case core of
                 Just _ -> updated
                 Nothing -> Candidate (blobX b) (blobY b) 1 (pixels b) now now 0 : updated
+
+-- | The lights learnt, each as the centre and radius, in pixels, of the
+-- area masked around it.
+lightAreas :: Lights -> [((Double, Double), Double)]
+lightAreas = map (\r -> (rAt r, rRadius r)) . lRegions
 
 -- | Forget the lights centred at the given places whose areas hold any of
 -- the other places given; the places of those forgotten.

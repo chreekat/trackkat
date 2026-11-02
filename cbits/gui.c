@@ -39,10 +39,10 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
-enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_HEAD_VIEW, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness",
                                                     L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
-                                                    L"npclient", L"updates", L"startup", L"ignore lights"};
+                                                    L"npclient", L"updates", L"startup", L"ignore lights", L"head view"};
 #define LISTS 3 /* binding lists: recenter, pause, trim */
 
 /* A blob as the camera saw it, and what it was taken for. */
@@ -52,7 +52,14 @@ typedef struct Spot {
     float x, y; /* in the camera's image, pixels */
     float pixels;
     int role;
+    float var_x, var_y, cov_xy; /* the spread of its lit pixels, in pixels squared */
 } Spot;
+
+/* The area masked around a still light: its centre and radius, in pixels. */
+#define AREAS_MAX 8
+typedef struct Area {
+    float x, y, r;
+} Area;
 
 /* The clip's reflectors, as hts_gui_frame's bits for those seen and
  * hts_gui_clip's points number them. */
@@ -83,6 +90,8 @@ typedef struct State {
     int up_to_date;                /* whether that is that none is newer */
     int spots;                     /* blobs in the last frame, up to BLOBS_MAX */
     Spot spot[BLOBS_MAX];
+    int areas;                     /* still lights' areas, up to AREAS_MAX */
+    Area area[AREAS_MAX];
     int clip_shown;                /* whether the clip is drawn on the head */
     float clip[REFLECTORS][3];     /* its reflectors, mm from the neck pivot along the head's axes */
 } State;
@@ -160,18 +169,23 @@ void hts_gui_frame(int blobs, int reflectors_seen, float yaw, float pitch, float
     ReleaseSRWLockExclusive(&lock);
 }
 
-/* The last frame's blobs: n of them, each as x, y, pixels and role
- * (SPOT_REFLECTOR and the rest). Skipped, like hts_gui_frame, while the GUI
+/* The last frame's blobs: n of them, each as x, y, pixels, role
+ * (SPOT_REFLECTOR and the rest), and the variances of its pixels' x and y
+ * and their covariance; and the areas masked around still lights: m of
+ * them, each as x, y and radius. Skipped, like hts_gui_frame, while the GUI
  * is copying. */
-void hts_gui_blobs(int n, const float *blobs)
+void hts_gui_blobs(int n, const float *blobs, int m, const float *areas)
 {
     if (!TryAcquireSRWLockExclusive(&lock))
         return;
     shared.spots = n < BLOBS_MAX ? n : BLOBS_MAX;
     for (int i = 0; i < shared.spots; i++) {
-        const float *b = blobs + 4 * i;
-        shared.spot[i] = (Spot){b[0], b[1], b[2], (int)b[3]};
+        const float *b = blobs + 7 * i;
+        shared.spot[i] = (Spot){b[0], b[1], b[2], (int)b[3], b[4], b[5], b[6]};
     }
+    shared.areas = m < AREAS_MAX ? m : AREAS_MAX;
+    for (int i = 0; i < shared.areas; i++)
+        shared.area[i] = (Area){areas[3 * i], areas[3 * i + 1], areas[3 * i + 2]};
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -378,6 +392,7 @@ enum {
     ID_COVER,
     ID_OPEN_LOG,
     ID_CLOSE_LOG,
+    ID_HEAD_VIEW,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
@@ -393,6 +408,7 @@ enum {
 
 static HINSTANCE inst;
 static HWND tray_hwnd, main_hwnd, live_hwnd, strip_hwnd, log_hwnd;
+static HWND head_ctl; /* the head view, which a click switches */
 /* The lit switches in the live view, in the order of the binding lists. */
 static HWND switch_ctl[LISTS];
 static HWND calibration_text, settings_text, log_box, log_line, aids_label;
@@ -416,7 +432,7 @@ static WNDPROC button_proc, edit_proc;
 static int swallow_key_up; /* the key that was captured is still to come up */
 static State seen; /* the last snapshot */
 static int dpi = 96;
-static HFONT ui_font, mono_font, small_font, bold_font;
+static HFONT ui_font, mono_font, small_font, bold_font, caps_font, tiny_font;
 static HBRUSH white_brush;
 static UINT taskbar_created;
 static int tray_added;
@@ -642,14 +658,26 @@ static void text_at(HDC dc, HFONT font, COLORREF c, int x, int y, int w, int h, 
 #define CAMERA_W 640
 #define CAMERA_H 480
 
+/* The head view's three views, in the order a click goes through them, by
+ * their names as the head view setting writes them. */
+enum { VIEW_VIRTUAL, VIEW_PHYSICAL, VIEW_CAMERA, VIEWS };
+static const wchar_t *const view_settings[VIEWS] = {L"virtual", L"physical", L"camera"};
+static int head_view;           /* the view shown */
+static int head_view_saved = -1; /* the view last saved, until the settings file says otherwise */
+static void show_head_view(int view); /* with the window's help, which it changes */
+
+#define C_FRAME RGB(24, 27, 33)
+#define C_FRAME_EDGE RGB(58, 64, 76)
+#define C_DOT_OFF RGB(74, 81, 96)
+
 /* What the camera sees, small, with its top left corner at left, top: each
  * blob a dot at its place, sized by its area but half as big again to be
  * seen, coloured by what it was taken for. */
 static void draw_camera(HDC dc, int left, int top, int width)
 {
     int height = width * CAMERA_H / CAMERA_W;
-    fill_rect(dc, left, top, left + width, top + height, C_BACK);
-    HPEN pen = CreatePen(PS_SOLID, 1, C_GRID);
+    fill_rect(dc, left, top, left + width, top + height, C_FRAME);
+    HPEN pen = CreatePen(PS_SOLID, 1, C_FRAME_EDGE);
     HGDIOBJ old_pen = SelectObject(dc, pen), old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     Rectangle(dc, left, top, left + width, top + height);
     SelectObject(dc, old_pen);
@@ -668,6 +696,109 @@ static void draw_camera(HDC dc, int left, int top, int width)
                 r = S(1);
             disc(dc, c, c, 1, left + (int)lround(b->x * k), top + (int)lround(b->y * k), r);
         }
+}
+
+/* A blob at its size and shape, scaled by k, in the camera's image drawn
+ * with its top left corner at left, top: an ellipse as long and wide as
+ * its lit pixels spread, as many pixels in area, at least a dot. */
+static void draw_blob(HDC dc, const Spot *b, int left, int top, double k, COLORREF c)
+{
+    double mid = (b->var_x + b->var_y) / 2;
+    double half = sqrt((b->var_x - b->var_y) * (b->var_x - b->var_y) / 4 + b->cov_xy * b->cov_xy);
+    double major = mid + half, minor = mid - half < 1.0 / 12 ? 1.0 / 12 : mid - half;
+    double ratio = major > minor ? sqrt(major / minor) : 1;
+    double angle = 0.5 * atan2(2 * b->cov_xy, b->var_x - b->var_y);
+    double along = sqrt(b->pixels / PI * ratio) * k, across = sqrt(b->pixels / PI / ratio) * k;
+    double least = S(1) + 0.5;
+    along = along < least ? least : along;
+    across = across < least ? least : across;
+    POINT p[24];
+    for (int i = 0; i < 24; i++) {
+        double t = 2 * PI * i / 24, u = along * cos(t), v = across * sin(t);
+        p[i].x = (LONG)lround(left + b->x * k + u * cos(angle) - v * sin(angle));
+        p[i].y = (LONG)lround(top + b->y * k + u * sin(angle) + v * cos(angle));
+    }
+    HBRUSH brush = CreateSolidBrush(c);
+    HPEN pen = CreatePen(PS_SOLID, 1, c);
+    HGDIOBJ ob = SelectObject(dc, brush), op = SelectObject(dc, pen);
+    Polygon(dc, p, 24);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+/* A row of the camera view's legend: a dot of the colour, with its word to
+ * the left, ending at right. */
+static void legend_row(HDC dc, int right, int y, COLORREF c, const wchar_t *word)
+{
+    text_at(dc, tiny_font, C_DIM, right - S(70), y - S(1), S(60), S(14), DT_RIGHT, word);
+    disc(dc, c, c, 1, right - S(4), y + S(6), S(3));
+}
+
+/* The camera view: the camera's whole image, as big as fits the box below
+ * the view's name: each blob at its size and shape, the clip's reflectors
+ * blue and joined as a triangle, others amber, still lights grey, with the
+ * area masked around each dashed; and a legend. */
+static void draw_camera_view(HDC dc, int left, int top, int size)
+{
+    int legend = S(6);
+    legend_row(dc, left + size - S(6), top + legend, C_ACCENT, L"clip");
+    legend_row(dc, left + size - S(6), top + legend + S(11), C_AMBER, L"stray");
+    legend_row(dc, left + size - S(6), top + legend + S(22), C_GREY, L"ignored");
+
+    int fy = top + S(40), fw = size - S(12), room = top + size - S(18) - fy;
+    if (fw * CAMERA_H / CAMERA_W > room)
+        fw = room * CAMERA_W / CAMERA_H;
+    int fh = fw * CAMERA_H / CAMERA_W, fx = left + (size - fw) / 2;
+    fill_rect(dc, fx, fy, fx + fw, fy + fh, C_FRAME);
+    HPEN cross = CreatePen(PS_SOLID, 1, RGB(40, 44, 53));
+    HGDIOBJ old_pen = SelectObject(dc, cross);
+    MoveToEx(dc, fx + fw / 2, fy, NULL);
+    LineTo(dc, fx + fw / 2, fy + fh);
+    MoveToEx(dc, fx, fy + fh / 2, NULL);
+    LineTo(dc, fx + fw, fy + fh / 2);
+    SelectObject(dc, old_pen);
+    DeleteObject(cross);
+
+    if (seen.camera == CAMERA_TRACKING) {
+        double k = (double)fw / CAMERA_W;
+        SaveDC(dc);
+        IntersectClipRect(dc, fx, fy, fx + fw, fy + fh);
+        for (int i = 0; i < seen.areas; i++) {
+            const Area *a = &seen.area[i];
+            ring(dc, C_GREY, 1, PS_DASH, fx + (int)lround(a->x * k), fy + (int)lround(a->y * k),
+                 (int)lround(a->r * k));
+        }
+        /* The clip's triangle, between its three heaviest blobs. */
+        POINT corner[REFLECTORS];
+        int corners = 0;
+        for (int i = 0; i < seen.spots && corners < REFLECTORS; i++)
+            if (seen.spot[i].role == SPOT_REFLECTOR) {
+                corner[corners].x = fx + (LONG)lround(seen.spot[i].x * k);
+                corner[corners++].y = fy + (LONG)lround(seen.spot[i].y * k);
+            }
+        for (int i = 0; i < corners && corners > 1; i++)
+            if (corners == REFLECTORS || i == 0)
+                pen_line(dc, C_ACCENT_FAINT, 1, corner[i], corner[(i + 1) % corners]);
+        /* Masked lights first, then strays, so the clip shows over them. */
+        static const int order[3] = {SPOT_MASKED, SPOT_STRAY, SPOT_REFLECTOR};
+        static const COLORREF colour[3] = {C_GREY, C_AMBER, C_ACCENT};
+        for (int pass = 0; pass < 3; pass++)
+            for (int i = 0; i < seen.spots; i++)
+                if (seen.spot[i].role == order[pass])
+                    draw_blob(dc, &seen.spot[i], fx, fy, k, colour[pass]);
+        RestoreDC(dc, -1);
+    }
+
+    HPEN edge = CreatePen(PS_SOLID, 1, C_FRAME_EDGE);
+    HGDIOBJ op = SelectObject(dc, edge), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, fx, fy, fx + fw, fy + fh);
+    SelectObject(dc, op);
+    SelectObject(dc, ob);
+    DeleteObject(edge);
+    if (seen.camera != CAMERA_TRACKING)
+        text_at(dc, bold_font, C_AMBER, fx, fy, fw, fh, DT_CENTER, L"No camera");
 }
 
 /* The clip's reflectors where they sit on the head drawn as h, at the
@@ -696,33 +827,12 @@ static void draw_clip(HDC dc, const Head *h, int pass)
         }
 }
 
-/* The head as games see it: a face that turns, tilts and moves with the
- * view, a line out of the nose showing where it looks; and in its corner,
- * what the camera sees. Once the clip is shown on the head, the head as
- * the camera measures it too, in yellow, as the axes' ticks are: dotted,
- * with a line out of its nose and the clip on it. */
-static void draw_head(HDC dc, int left, int top, int size)
+/* The virtual view: the head as games see it, a face that turns, tilts and
+ * moves with the view, a line out of the nose showing where it looks. */
+static void draw_virtual(HDC dc, int left, int top, int size, int live)
 {
     const float *v = seen.view;
-    int live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
-    int clip = live && seen.clip_shown;
-    fill_rect(dc, left, top, left + size, top + size, C_BOX);
-    HPEN grid = CreatePen(PS_DOT, 1, C_GRID);
-    HGDIOBJ old = SelectObject(dc, grid);
-    MoveToEx(dc, left + size / 2, top, NULL);
-    LineTo(dc, left + size / 2, top + size);
-    MoveToEx(dc, left, top + size / 2, NULL);
-    LineTo(dc, left + size, top + size / 2);
-    SelectObject(dc, old);
-    DeleteObject(grid);
-    /* Under the head, which can pass over it. */
-    if (seen.camera == CAMERA_TRACKING)
-        draw_camera(dc, left + S(6), top + S(6), S(96));
-
-    Head h = head_at(v, left, top, size), own = head_at(seen.head, left, top, size);
-    HRGN box = CreateRectRgn(left, top, left + size, top + size);
-    SelectClipRgn(dc, box);
-
+    Head h = head_at(v, left, top, size);
     COLORREF skin = live ? RGB(78, 88, 104) : RGB(58, 62, 70);
     COLORREF line = live ? RGB(205, 212, 224) : C_DIM;
     COLORREF feature = live ? RGB(240, 244, 250) : C_DIM;
@@ -732,8 +842,6 @@ static void draw_head(HDC dc, int left, int top, int size)
 
     /* What is behind the head is drawn before it, what faces us after. */
     for (int pass = 0; pass < 2; pass++) {
-        if (pass == 0 && clip)
-            draw_clip(dc, &own, 0);
         if (pass == 1)
             disc(dc, skin, line, w, centre.x, centre.y, (int)lround(h.r));
         for (int side = -1; side <= 1; side += 2)
@@ -763,23 +871,133 @@ static void draw_head(HDC dc, int left, int top, int size)
         prev = p;
         prev_front = front;
     }
-    if (clip) {
-        project(&own, seen.head, 0, 0, 0, &p);
-        ring(dc, C_HEAD_FAINT, 1, PS_DOT, p.x, p.y, (int)lround(own.r));
-        if (project(&own, seen.head, 0, -0.05, 1, &p)) {
-            project(&own, seen.head, 0, -0.05, 2.2, &q);
-            pen_line(dc, C_HEAD_TICK, 1, p, q);
-        }
-        draw_clip(dc, &own, 1);
+}
+
+/* The physical view: the head as the camera measures it, dotted yellow,
+ * turning about its neck pivot, a grey dot with the neck below it; and once
+ * the pivot is learnt, the clip where it sits on it. */
+static void draw_physical(HDC dc, int left, int top, int size, int live)
+{
+    const float *v = seen.head;
+    Head h = head_at(v, left, top, size);
+    int clip = live && seen.clip_shown;
+    COLORREF outline = live ? C_HEAD_TICK : C_DIM;
+    POINT centre, p, q;
+    project(&h, v, 0, 0, 0, &centre);
+    int r = (int)lround(h.r);
+    POINT pivot = {(LONG)lround(h.cx), (LONG)lround(h.cy + NECK * h.r)};
+    POINT neck = {pivot.x, (LONG)lround(h.cy + 1.35 * h.r)};
+
+    if (clip)
+        draw_clip(dc, &h, 0);
+    pen_line(dc, C_DOT_OFF, S(2), pivot, neck);
+    disc(dc, live ? RGB(52, 58, 72) : RGB(46, 50, 58), live ? RGB(52, 58, 72) : RGB(46, 50, 58), 1, centre.x,
+         centre.y, r);
+    /* Dotted, two pixels wide. */
+    ring(dc, outline, 1, PS_DOT, centre.x, centre.y, r);
+    ring(dc, outline, 1, PS_DOT, centre.x, centre.y, r - 1);
+    disc(dc, C_DIM, C_DIM, 1, pivot.x, pivot.y, S(2));
+    for (int side = -1; side <= 1; side += 2)
+        if (project(&h, v, side * 0.36, 0.22, 0.9, &p))
+            disc(dc, RGB(36, 40, 48), RGB(36, 40, 48), 1, p.x, p.y, (int)lround(h.r * 0.1));
+    if (project(&h, v, 0, -0.05, 1, &p)) {
+        project(&h, v, 0, -0.05, 2.2, &q);
+        pen_line(dc, outline, S(2), p, q);
+    }
+    if (clip)
+        draw_clip(dc, &h, 1);
+}
+
+/* Lines of text from x, y, wrapped at the width. */
+static void text_wrapped(HDC dc, HFONT font, COLORREF c, int x, int y, int w, int h, const wchar_t *s)
+{
+    RECT rc = {x, y, x + w, y + h};
+    SelectObject(dc, font);
+    SetTextColor(dc, c);
+    DrawTextW(dc, s, -1, &rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+}
+
+/* The clip's reflectors by the wearer's sides: REFLECTOR_LEFT is the one on
+ * the left of the camera's image, so on the wearer's right. */
+static const wchar_t *const reflector_names[REFLECTORS] = {L"right", L"left", L"top"};
+
+/* Which reflectors the last frame missed, as "top reflector not seen". */
+static void describe_unseen(wchar_t *buf, size_t size)
+{
+    const wchar_t *missing[REFLECTORS];
+    int n = 0;
+    static const int order[REFLECTORS] = {REFLECTOR_TOP, REFLECTOR_RIGHT, REFLECTOR_LEFT};
+    for (int i = 0; i < REFLECTORS; i++)
+        if (!(seen.reflectors_seen & 1 << order[i]))
+            missing[n++] = reflector_names[order[i]];
+    buf[0] = 0;
+    if (n == 1)
+        _snwprintf(buf, size, L"%ls reflector not seen", missing[0]);
+    else if (n == 2)
+        _snwprintf(buf, size, L"%ls and %ls reflectors not seen", missing[0], missing[1]);
+    buf[size - 1] = 0;
+}
+
+/* The head view, in a box of the given size: the view shown, its name and
+ * what it shows top left, and a dot for each view at the bottom, the one
+ * shown lit. The virtual and physical views have what the camera sees in
+ * the top right corner. */
+static void draw_head(HDC dc, int left, int top, int size)
+{
+    int live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
+    fill_rect(dc, left, top, left + size, top + size, C_BOX);
+    HRGN box = CreateRectRgn(left, top, left + size, top + size);
+    SelectClipRgn(dc, box);
+    if (head_view == VIEW_CAMERA)
+        draw_camera_view(dc, left, top, size);
+    else {
+        HPEN grid = CreatePen(PS_DOT, 1, C_GRID);
+        HGDIOBJ old = SelectObject(dc, grid);
+        MoveToEx(dc, left + size / 2, top, NULL);
+        LineTo(dc, left + size / 2, top + size);
+        MoveToEx(dc, left, top + size / 2, NULL);
+        LineTo(dc, left + size, top + size / 2);
+        SelectObject(dc, old);
+        DeleteObject(grid);
+        /* Under the head, which can pass over it. */
+        if (seen.camera == CAMERA_TRACKING)
+            draw_camera(dc, left + size - S(54), top + S(6), S(48));
+        if (head_view == VIEW_VIRTUAL)
+            draw_virtual(dc, left, top, size, live);
+        else
+            draw_physical(dc, left, top, size, live);
     }
     SelectClipRgn(dc, NULL);
     DeleteObject(box);
 
+    static const wchar_t *const names[VIEWS] = {L"VIRTUAL", L"PHYSICAL", L"CAMERA"};
+    static const wchar_t *const lines[VIEWS] = {L"what games see", L"your head, as measured", L"what the sensor sees"};
+    static const COLORREF colours[VIEWS] = {RGB(185, 220, 255), RGB(255, 210, 122), C_TEXT};
+    SetTextCharacterExtra(dc, S(1));
+    text_at(dc, caps_font, colours[head_view], left + S(8), top + S(5), size - S(66), S(14), DT_LEFT,
+            names[head_view]);
+    SetTextCharacterExtra(dc, 0);
+    text_at(dc, small_font, C_DIM, left + S(8), top + S(19), size - S(66), S(14), DT_LEFT, lines[head_view]);
+    for (int i = 0; i < VIEWS; i++)
+        disc(dc, i == head_view ? C_TEXT : C_DOT_OFF, i == head_view ? C_TEXT : C_DOT_OFF, 1,
+             left + size / 2 + (i - 1) * S(12), top + size - S(10), S(3));
+
+    if (head_view == VIEW_CAMERA)
+        return;
+    int note = top + size - S(40);
     if (!live) {
         const wchar_t *why = seen.camera == CAMERA_TRACKING ? L"Clip out of sight" : L"No tracking";
-        text_at(dc, bold_font, C_AMBER, left, top + size - S(28), size, S(24), DT_CENTER, why);
-    } else if (seen.paused)
-        text_at(dc, bold_font, C_AMBER, left, top + size - S(28), size, S(24), DT_CENTER, L"PAUSED");
+        text_at(dc, bold_font, C_AMBER, left, note, size, S(20), DT_CENTER, why);
+    } else if (head_view == VIEW_VIRTUAL && seen.paused)
+        text_at(dc, bold_font, C_AMBER, left, note, size, S(20), DT_CENTER, L"PAUSED");
+    else if (head_view == VIEW_PHYSICAL && !seen.clip_shown)
+        text_wrapped(dc, small_font, C_DIM, left + S(8), top + size - S(48), size - S(16), S(32),
+                     L"The clip shows once trackkat has learnt your neck.");
+    else if (head_view == VIEW_PHYSICAL) {
+        wchar_t buf[64];
+        describe_unseen(buf, 64);
+        text_at(dc, small_font, C_DIM, left + S(8), top + size - S(32), size - S(16), S(14), DT_LEFT, buf);
+    }
 }
 
 static const wchar_t *const axis_names[6] = {L"Yaw", L"Pitch", L"Roll", L"X", L"Y", L"Z"};
@@ -825,7 +1043,6 @@ static void paint_live(HDC dc, int width, int height)
 {
     fill_rect(dc, 0, 0, width, height, C_BACK);
     SetBkMode(dc, TRANSPARENT);
-    draw_head(dc, S(8), S(8), S(HEAD_SIZE));
 
     int x0 = S(TABLE_X);
     int tracking = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
@@ -1005,6 +1222,28 @@ static void draw_switch(const DRAWITEMSTRUCT *d)
     }
 }
 
+/* The head view, drawn off screen first so it doesn't flicker, with a
+ * focus rectangle while it has the keyboard. */
+static void draw_head_view(const DRAWITEMSTRUCT *d)
+{
+    int w = d->rcItem.right - d->rcItem.left, h = d->rcItem.bottom - d->rcItem.top;
+    HDC mem = CreateCompatibleDC(d->hDC);
+    HBITMAP bmp = CreateCompatibleBitmap(d->hDC, w, h);
+    HGDIOBJ old = SelectObject(mem, bmp);
+    SetBkMode(mem, TRANSPARENT);
+    draw_head(mem, 0, 0, w < h ? w : h);
+    if (d->itemState & ODS_FOCUS && !(d->itemState & ODS_NOFOCUSRECT)) {
+        RECT f = {S(2), S(2), w - S(2), h - S(2)};
+        SetTextColor(mem, RGB(0, 0, 0));
+        SetBkColor(mem, RGB(255, 255, 255));
+        DrawFocusRect(mem, &f);
+    }
+    BitBlt(d->hDC, d->rcItem.left, d->rcItem.top, w, h, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+}
+
 static LRESULT CALLBACK live_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
@@ -1027,11 +1266,23 @@ static LRESULT CALLBACK live_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         EndPaint(w, &ps);
         return 0;
     }
-    case WM_DRAWITEM:
-        draw_switch((const DRAWITEMSTRUCT *)lp);
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT *d = (const DRAWITEMSTRUCT *)lp;
+        if (d->hwndItem == head_ctl)
+            draw_head_view(d);
+        else
+            draw_switch(d);
         return TRUE;
+    }
+    case WM_SETCURSOR:
+        /* A hand over the head view, which a click switches. */
+        if ((HWND)wp == head_ctl) {
+            SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_HAND));
+            return TRUE;
+        }
+        break;
     case WM_COMMAND:
-        /* The switches' clicks are the window's to act on. */
+        /* The switches' and head view's clicks are the window's to act on. */
         return SendMessageW(main_hwnd, msg, wp, lp);
     }
     return DefWindowProcW(w, msg, wp, lp);
@@ -1662,7 +1913,15 @@ static void show_field(int i, const wchar_t *value)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"trackir") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"on") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
-    else if (i == F_SMOOTHING) {
+    else if (i == F_HEAD_VIEW) {
+        /* The file read back with the view last saved says nothing new, and
+         * may be older than a view clicked to since. */
+        for (int v = 0; v < VIEWS; v++)
+            if (wcscmp(value, view_settings[v]) == 0 && v != head_view_saved) {
+                head_view_saved = -1;
+                show_head_view(v);
+            }
+    } else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
         SendMessageW(field_ctl[i], BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
         EnableWindow(field_ctl[F_STEADINESS], on);
@@ -1682,10 +1941,13 @@ static void show_field(int i, const wchar_t *value)
 static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
+    head_view_saved = head_view;
     for (int i = 0; i < F_COUNT; i++)
         if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS ||
             slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
+        else if (i == F_HEAD_VIEW)
+            copy_text(values[i], FIELD_MAX, view_settings[head_view]);
         else if (i < F_RECENTER + LISTS)
             list_from_box(i, values[i], FIELD_MAX);
         else
@@ -2051,17 +2313,11 @@ static void tip_area(HWND w, UINT_PTR id, int l, int t, int r, int b, const wcha
 }
 
 /* Help for the parts of the live view, where paint_live draws them; the
- * switches have their own. */
+ * head view and the switches have their own. */
 static void live_tips(void)
 {
     int x0 = S(TABLE_X), bar_l = x0 + S(226), right = S(PANEL_W - 10);
     int rows = S(26) + 6 * S(ROW_H), lights = S(LIGHTS_Y), w = S(LIGHT_W);
-    tip_area(live_hwnd, 1, S(8), S(8), S(8 + HEAD_SIZE), S(8 + HEAD_SIZE),
-             L"Your head as games see it, turned and moved as the game's view will be. The blue line shows where "
-             L"it looks. In the corner, what the camera sees: the clip's reflectors blue, other bright things "
-             L"(ignored) amber, and still lights ignored grey. Experimental: once the level and neck pivot are "
-             L"learnt, your own head as the camera measures it, dotted yellow, with the clip where it sits on "
-             L"it: each reflector blue while seen, hollow while not.");
     tip_area(live_hwnd, 2, x0, 0, x0 + S(130), rows,
              L"Your head as the camera measures it, from the centre you set by recentering: degrees turned, mm "
              L"moved.");
@@ -2144,6 +2400,32 @@ static void show_log(void)
     SetForegroundWindow(log_hwnd);
 }
 
+/* What the head view's help says, for each view: how to switch, and what
+ * the view shows. */
+static const wchar_t *const head_view_tips[VIEWS] = {
+    L"Click to switch views: virtual, physical, camera. Virtual: your head as games see it, turned and moved as "
+    L"the game's view will be; the blue line shows where it looks. In the corner, what the camera sees.",
+    L"Click to switch views: virtual, physical, camera. Physical (experimental): your head as the camera measures "
+    L"it, dotted yellow, turning about your neck pivot, the grey dot. Once the level and neck pivot are learnt, "
+    L"the clip where it sits on your head: each reflector blue while seen, hollow while not. In the corner, what "
+    L"the camera sees.",
+    L"Click to switch views: virtual, physical, camera. Camera: what the camera sees, the whole of its picture, "
+    L"each bright thing at its size and shape: the clip's reflectors blue, joined as its triangle; other bright "
+    L"things amber, ignored; still lights grey, ignored, with the area ignored around each dashed."};
+
+/* Show a view in the head view, naming it for screen readers. */
+static void show_head_view(int view)
+{
+    static const wchar_t *const names[VIEWS] = {
+        L"Head view: virtual, what games see. Click for the physical view.",
+        L"Head view: physical, your head as measured. Click for the camera view.",
+        L"Head view: camera, what the sensor sees. Click for the virtual view."};
+    head_view = view;
+    SetWindowTextW(head_ctl, names[view]);
+    retip(head_ctl, head_view_tips[view]);
+    InvalidateRect(head_ctl, NULL, FALSE);
+}
+
 static void refresh(void)
 {
     State st;
@@ -2205,6 +2487,7 @@ static void refresh(void)
     watch_cover();
     if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd)) {
         InvalidateRect(live_hwnd, NULL, FALSE);
+        InvalidateRect(head_ctl, NULL, FALSE);
         for (int i = 0; i < 6; i++)
             InvalidateRect(curve_plot[i], NULL, FALSE);
     }
@@ -2277,6 +2560,10 @@ static void build_window(void)
     live_hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"trackkat_live", L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                                 S(10), S(PANEL_Y), S(PANEL_W), S(PANEL_H), main_hwnd, NULL, inst, NULL);
     live_tips();
+    head_ctl = tip(control_in(live_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 8, 8, HEAD_SIZE, HEAD_SIZE,
+                              ID_HEAD_VIEW),
+                   head_view_tips[head_view]);
+    show_head_view(head_view);
     static const int switch_ids[LISTS] = {ID_RECENTER, ID_PAUSE, ID_TRIM};
     static const wchar_t *const switch_tips[LISTS] = {
         L"Make the way you face now straight ahead, and clear any trim. Its keys and buttons, below, or a game's "
@@ -2611,6 +2898,10 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_TRIM:
             InterlockedOr(&actions, ACT_TRIM);
             return 0;
+        case ID_HEAD_VIEW:
+            show_head_view((head_view + 1) % VIEWS);
+            save_soon(500);
+            return 0;
         case ID_COVER: {
             /* Lifted without the mouse over it, it was from the keyboard. */
             RECT r;
@@ -2679,7 +2970,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case IDOK: {
             /* Enter on a drawn button presses it, as on any other. */
             HWND focus = GetFocus();
-            if (focus == cover || is_switch(focus))
+            if (focus == cover || focus == head_ctl || is_switch(focus))
                 SendMessageW(w, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(focus), BN_CLICKED), (LPARAM)focus);
             else
                 save_settings();
@@ -2909,6 +3200,11 @@ static void make_fonts(void)
     LOGFONTW s = lf;
     s.lfHeight = lf.lfHeight * 9 / 10;
     small_font = CreateFontIndirectW(&s);
+    s.lfWeight = FW_BOLD;
+    caps_font = CreateFontIndirectW(&s);
+    LOGFONTW t = lf;
+    t.lfHeight = lf.lfHeight * 3 / 4;
+    tiny_font = CreateFontIndirectW(&t);
     LOGFONTW m = lf;
     m.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
     wcscpy(m.lfFaceName, L"Consolas");
