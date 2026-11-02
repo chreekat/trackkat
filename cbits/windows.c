@@ -452,10 +452,10 @@ int hts_hotkeys_take(void)
 
 /* trackkat.exe is a GUI program, so Windows gives it no console, and its
  * standard output and error are whatever it was started with, which may be
- * nothing. Where they now go, as hts_console_attach found: */
+ * nothing. Where they now go, as attach_console found: */
 #define OUTPUT_REDIRECTED 0 /* the file or pipe it was started with */
 #define OUTPUT_PARENT_CONSOLE 1 /* the console of the terminal that started it */
-#define OUTPUT_NONE 2 /* NUL */
+#define OUTPUT_NONE 2 /* NUL, or for a console program, its own console */
 
 static int console_output = OUTPUT_NONE;
 
@@ -467,13 +467,6 @@ static int redirected(DWORD std)
         return 0;
     DWORD type = GetFileType(h);
     return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
-}
-
-/* Ctrl-C and Ctrl-Break, typed in the terminal trackkat was started from,
- * are meant for whatever that terminal runs now, not trackkat. */
-static BOOL WINAPI ignore_interrupts(DWORD event)
-{
-    return event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT;
 }
 
 /* Point the C runtime's descriptor fd, which GHC writes through, and the
@@ -494,18 +487,25 @@ static void point_at(int fd, DWORD std, const wchar_t *file)
     _close(opened);
 }
 
-/* Make standard output and error safe to write to, before anything is
- * written: left as they are where they are a file or pipe, else pointed at
- * the console of the terminal this process was started from, if any, else
- * at NUL. Returns where standard output goes, as an OUTPUT_* code. */
-int hts_console_attach(void)
+/* In a GUI program, make standard output and error safe to write to: left
+ * as they are where they are a file or pipe, else pointed at the console of
+ * the terminal this process was started from, if any, else at NUL. Ctrl-C
+ * typed in that terminal is meant for whatever it runs now, not trackkat,
+ * so it is ignored. This runs before main, so before GHC's runtime starts:
+ * the runtime then sets its console handlers up with the console attached,
+ * and can take them down again when it exits. */
+__attribute__((constructor)) static void attach_console(void)
 {
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)GetModuleHandleW(NULL);
+    const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const char *)dos + dos->e_lfanew);
+    if (nt->OptionalHeader.Subsystem != IMAGE_SUBSYSTEM_WINDOWS_GUI)
+        return;
     int out = redirected(STD_OUTPUT_HANDLE), err = redirected(STD_ERROR_HANDLE);
     int attached = 0;
     if (!out || !err) {
         attached = AttachConsole(ATTACH_PARENT_PROCESS);
         if (attached)
-            SetConsoleCtrlHandler(ignore_interrupts, TRUE);
+            SetConsoleCtrlHandler(NULL, TRUE);
     }
     const wchar_t *elsewhere = attached ? L"CONOUT$" : L"NUL";
     if (!out)
@@ -513,10 +513,9 @@ int hts_console_attach(void)
     if (!err)
         point_at(2, STD_ERROR_HANDLE, elsewhere);
     console_output = out ? OUTPUT_REDIRECTED : attached ? OUTPUT_PARENT_CONSOLE : OUTPUT_NONE;
-    return console_output;
 }
 
-/* Where standard output goes, as hts_console_attach returned. */
+/* Where standard output goes, as an OUTPUT_* code. */
 int hts_console_output(void)
 {
     return console_output;
