@@ -120,9 +120,6 @@ idleSeconds = 60
 
 main :: IO ()
 main = do
-    -- A GUI program, trackkat.exe prints to the terminal it was started
-    -- from, if any.
-    _ <- attachConsole
     hSetBuffering stdout LineBuffering
     getArgs >>= \args -> case parseCommand args of
         Nothing -> putStr usage >> exitFailure
