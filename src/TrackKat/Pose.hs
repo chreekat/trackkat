@@ -104,10 +104,12 @@ trackClip =
 -- reflectors are points (see 'pointReflectors').
 --
 -- Only the triangle's shape affects the angles, and its size only scales
--- the distance estimate. The lean doesn't need to be accurate: it picks which
--- of the two mirror-image solutions the solver starts near (a wrong pick is
--- put right from how the head turns; see "TrackKat.Branch"), and
--- recentering absorbs the rest.
+-- the distance estimate. For points, the lean doesn't need to be accurate:
+-- it picks which of the two mirror-image solutions the solver starts near
+-- (a wrong pick is put right from how the head turns; see
+-- "TrackKat.Branch"), and recentering absorbs the rest. For tape on tabs
+-- it matters more, as it says which way the tape faces from the triangle
+-- (see Note [Curved reflectors]).
 triangle :: Double -> Double -> Double -> Double -> Maybe Model
 triangle lean lr lt rt
     | lr <= 0 || h2 <= 0 = Nothing

@@ -9,6 +9,24 @@ Roughly in order.
   In simulation, looking up 30 degrees while turning, the top reflector runs
   into a lower one, the split is off, and tracking goes 10-20 degrees wrong
   and is lost, for points and tabs alike; round blobs pass the same place.
+- With the top tab bent, as on the user's clip, nodding through where the
+  triangle squarely faces the camera has tracking slip 10-20 degrees onto
+  another pose that fits, for a quarter second each time the head passes,
+  and lose the clip briefly; points, and tabs with the top one unbent, pass.
+  It happens in simulation (the clip worn pitched 30 degrees forward, the
+  head pitched 20 and glancing) even with the tape drawn exactly as the
+  tracker models it, so it is the tracking near the meeting of the poses,
+  not the model of the tape. The mirror-image tests in `clipChecks` leave
+  those clips out until it is fixed.
+- On tabs, the clip's lean is more than a hint for the mirror image: it says
+  which way the tape faces from the triangle. In simulation, a post 30
+  degrees more upright than configured leaves the mirror image uncorrected
+  on the user's clip and the scalene one, and with the top tab unbent, the
+  pose 3-5 degrees and 10-35 mm off. Estimate it, or ask for it.
+- Level learnt from a minute of glancing that nods and rolls too is off by
+  up to about 2 degrees (0.6-1.8 to the right in simulation, for every clip
+  shape), from how the turns' axes mix in nods; three minutes bring it to
+  0.3. Turning left and right alone teaches it within a tenth of a degree.
 - Ground truth from a webcam: record it alongside the camera and estimate the
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.
