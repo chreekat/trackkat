@@ -340,7 +340,8 @@ renderConfig c =
     r = response c
     Knobs on s rs = smoothingKnobs (smoothing r)
 
--- | A line for the console saying which settings differ in the new config.
+-- | A line for the console saying which settings differ in the new config,
+-- leaving out the head view, which the window saves as it is clicked through.
 describeChanges :: Config -> Config -> String
 describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup n (settings old) /= Just v] of
     [] -> "Settings reloaded."
@@ -365,7 +366,6 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                    , ("updates", renderUpdates (updates c))
                    , ("startup", renderStartup (startup c))
                    , ("ignore lights", renderMasking (lightMasking c))
-                   , ("head view", renderHeadView (headView c))
                    ]
 
 parseLean :: String -> Either String Lean

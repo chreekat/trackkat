@@ -530,8 +530,8 @@ main = do
     check "bad head view" $ parseConfig "head view = side" == Left "line 1: head view is virtual, physical or camera"
     let withCamera = defaultConfig{headView = CameraView}
     check "head view round-trips" $ parseConfig (renderConfig withCamera) == Right withCamera
-    check "head view change described" $
-        describeChanges defaultConfig withCamera == "Settings reloaded: head view = camera"
+    check "head view change not described" $
+        describeChanges defaultConfig withCamera == "Settings reloaded."
     check "head view editable" $
         editSettings [("head view", "physical")] "head view = virtual\n" == Right "head view = physical\n"
 
