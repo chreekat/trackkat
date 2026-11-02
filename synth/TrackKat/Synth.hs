@@ -172,7 +172,7 @@ tapeDiscs k m (litL, litR, litT) (Pose r t) =
     [ (project k (Pose r t) centre, lit * radiusAt1m * 1000 / z)
     | (middle, axis, radiusAt1m, lit) <- [(mLeft m, upright, lowerRadius, litL), (mRight m, upright, lowerRadius, litR), (mTop m, leaning, topRadius, litT)]
     , lit > 0
-    , let facing = normalize (V3 0 0 (-1) ^+^ (dot (V3 0 0 1) axis *^ axis))
+    , let facing = normalize (((-1) *^ back) ^+^ (dot back axis *^ axis))
           across = cross axis facing
           strips =
             [ (w, at)
@@ -193,7 +193,8 @@ tapeDiscs k m (litL, litR, litT) (Pose r t) =
   where
     Tabs radius arc bend = mTabs m
     crossbar = normalize (mRight m ^-^ mLeft m)
-    upright = normalize (cross (V3 0 0 1) crossbar)
+    back = clipBack m
+    upright = normalize (cross back crossbar)
     leaning = (cos (bend * pi / 180) *^ upright) ^+^ (sin (bend * pi / 180) *^ cross crossbar upright)
 
 -- | Discs of lit pixels as the camera's stripes. Runs that touch on a line
