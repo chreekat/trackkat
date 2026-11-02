@@ -64,6 +64,15 @@ library
     include-dirs:    cbits
     extra-libraries: advapi32 bcrypt gdi32 hid ole32 shell32 user32 winhttp
 
+-- Simulated frames, for the tests: not part of trackkat itself.
+library synth
+  import:           shared
+  hs-source-dirs:   synth
+  exposed-modules:  TrackKat.Synth
+  build-depends:
+    , base
+    , trackkat
+
 executable tirprobe
   import:           shared
   hs-source-dirs:   app/tirprobe
@@ -114,5 +123,6 @@ test-suite tests
     , bytestring
     , directory
     , filepath
-    , zip-archive
     , trackkat
+    , trackkat:synth
+    , zip-archive

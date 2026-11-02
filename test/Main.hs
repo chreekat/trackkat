@@ -10,7 +10,7 @@ import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BL
 import Data.Either (isLeft)
 import Data.IORef
-import Data.List (isInfixOf, mapAccumL, nub, sortOn)
+import Data.List (isInfixOf, mapAccumL, nub)
 import Data.Maybe (isNothing)
 import Data.Word (Word64, Word8)
 import GHC.Stats (gc, gcdetails_live_bytes, getRTSStats, getRTSStatsEnabled)
@@ -36,6 +36,7 @@ import TrackKat.Response
 import TrackKat.ServedGame
 import TrackKat.Shape
 import TrackKat.Stats
+import TrackKat.Synth
 import TrackKat.Tracker
 
 main :: IO ()
@@ -110,7 +111,6 @@ main = do
 
     -- Pose: project known head poses and recover them.
     let deg = (* (pi / 180))
-        rotYXZ y p r = rodrigues (V3 0 (deg y) 0) `mulMM` rodrigues (V3 (deg p) 0 0) `mulMM` rodrigues (V3 0 0 (deg r))
         reference = Pose identity (V3 0 0 700)
         neck = V3 0 160 50
         poses =
@@ -186,11 +186,7 @@ main = do
     check "too little turning" $ isNothing (levelFromYaws [identity, rotYXZ 2 0 0])
 
     -- Tracker: requests wait for a tracked frame; losing the clip is reported.
-    let square (u, v) =
-            [ Stripe line (round u - 2) 5 (10 * 50) (5 * 50)
-            | line <- [round v - 2 .. round v + 2]
-            ]
-        clipAt pose = concatMap (square . project defaultIntrinsics pose) [mLeft headset, mRight headset, mTop headset]
+    let clipAt pose = concatMap (squareStripes . project defaultIntrinsics pose) [mLeft headset, mRight headset, mTop headset]
         facing = Pose identity (V3 0 0 700)
         turned = Pose (rotYXZ 20 0 0) (V3 0 0 700)
         t0 = newTracker defaultIntrinsics headset MaskLights defaultCalibration
@@ -300,9 +296,9 @@ main = do
         run plain (map at [0, 1, 60, 2, 3]) == [0, 1, 1, 2, 3]
     check ("persistent jump accepted: " ++ show (run plain (map at [0, 60, 61, 62, 63]))) $
         run plain (map at [0, 60, 61, 62, 63]) == [0, 0, 0, 62, 63]
-    let jitter = run smooth (map at (take 240 (cycle [0.4, -0.4])))
+    let jittery = run smooth (map at (take 240 (cycle [0.4, -0.4])))
         steady = run smooth (map at (replicate 240 10))
-    check ("smoothing settles jitter: " ++ show (maximum (map abs (drop 120 jitter)))) $ maximum (map abs (drop 120 jitter)) < 0.05
+    check ("smoothing settles jitter: " ++ show (maximum (map abs (drop 120 jittery)))) $ maximum (map abs (drop 120 jittery)) < 0.05
     check "smoothing reaches a held value" $ abs (last steady - 10) < 1e-6
 
     -- Settings for smoothing and curves.
@@ -375,14 +371,12 @@ main = do
     -- slowly nodding, then twenty of nodding alone.
     let truePivot = V3 (-60) 90 70
         neckAt = V3 0 50 800
-        wobble :: Int -> Double -> Double
-        wobble i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5
         -- The head turned as given, its pivot at the given place in level axes.
         headAt place y p r = seenFrom (rotYXZ y p r) (place ^-^ mulMV (rotYXZ y p r) truePivot)
         noisy i (Pose r t) =
             Pose
-                (rodrigues (V3 (deg 0.2 * wobble i 1) (deg 0.2 * wobble i 2) (deg 0.2 * wobble i 3)) `mulMM` r)
-                (t ^+^ V3 (wobble i 4) (wobble i 5) (2 * wobble i 6))
+                (rodrigues (V3 (deg 0.2 * noise i 1) (deg 0.2 * noise i 2) (deg 0.2 * noise i 3)) `mulMM` r)
+                (t ^+^ V3 (noise i 4) (noise i 5) (2 * noise i 6))
         glancing sway =
             [ (time, noisy i (headAt (neckAt ^+^ sway time) y p 0))
             | i <- [0 .. 120 * 110 :: Int]
@@ -822,7 +816,6 @@ main = do
         -- above the lower pair, and with its post bent, 40 px above.
         straightWorn = -49
         bentWorn = -23
-        allLit = (1, 1, 1)
         heights m pose = let ps = map (project defaultIntrinsics pose) [mLeft m, mRight m, mTop m] in (ps, identify id ps == Just (ps !! 0, ps !! 1, ps !! 2))
         summed rows = (lostCount rows, worstError rows)
 
@@ -859,18 +852,18 @@ main = do
     -- A reflection that's no reflector, while one reflector fades out.
     let reflecting = [(t, headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0, (1, if t > 1 && t < 1.6 then 0 else 1, 1)) | t <- at120 2.5]
         stray = ((340, 288), 3)
-        reflected = trackFrames clipBent [(t, pose, renderDiscs (stray : reflectorDiscs clipBent lit pose)) | (t, pose, lit) <- reflecting]
+        reflected = trackFrames clipBent [(t, pose, renderDiscs (stray : pointDiscs defaultIntrinsics clipBent lit pose)) | (t, pose, lit) <- reflecting]
     check ("a stray reflection ignored " ++ show (summed reflected)) $ lostCount reflected == 0 && fst (worstError reflected) < 1.5
     check "the stray reported" $ all ((== 1) . seenStrays) (seens reflected)
     let alone = headSeen bentWorn 0 0 0
-    check "two reflectors and a stray aren't three reflectors" $ case trackFrames clipBent [(0, alone, renderDiscs (stray : reflectorDiscs clipBent (1, 0, 1) alone))] of
+    check "two reflectors and a stray aren't three reflectors" $ case trackFrames clipBent [(0, alone, renderDiscs (stray : pointDiscs defaultIntrinsics clipBent (1, 0, 1) alone))] of
         [(_, _, Lost 3 0, _)] -> True
         _ -> False
 
     -- Lights close to the camera laid out like the clip, as a phone's can
     -- be: no head can be there, so the clip is lost, not followed there.
     let phone pose = [(project defaultIntrinsics (Pose (poseR pose) (190 *^ normalize (poseT pose))) p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
-        phoned = trackFrames clipBent [(t, pose, renderDiscs (if t < 1 then reflectorDiscs clipBent allLit pose else phone pose)) | t <- at120 3, let pose = headSeen bentWorn 0 0 0]
+        phoned = trackFrames clipBent [(t, pose, renderDiscs (if t < 1 then pointDiscs defaultIntrinsics clipBent allLit pose else phone pose)) | t <- at120 3, let pose = headSeen bentWorn 0 0 0]
     check "lights by the camera aren't the clip" $ all isLost [o | (t, _, o, _) <- phoned, t >= 1]
 
     -- Leaning in toward the camera, slowly, the clip coming straight at it
@@ -889,14 +882,14 @@ main = do
     let face = headSeen bentWorn 0 0 0
         inFront = let Pose r p = face in Pose r ((norm p - 400) *^ normalize p)
         phoneLights = [(project defaultIntrinsics inFront p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
-        withPhone = trackFrames clipBent [(t, face, renderDiscs (reflectorDiscs clipBent allLit face ++ (if t >= 1 then phoneLights else []))) | t <- at120 2]
-        phoneOnly = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then reflectorDiscs clipBent allLit face else phoneLights)) | t <- at120 3]
+        withPhone = trackFrames clipBent [(t, face, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit face ++ (if t >= 1 then phoneLights else []))) | t <- at120 2]
+        phoneOnly = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then pointDiscs defaultIntrinsics clipBent allLit face else phoneLights)) | t <- at120 3]
     check ("a phone in front of the clip in view isn't the clip " ++ show (summed withPhone)) $ lostCount withPhone == 0 && fst (worstError withPhone) < 1
     check "a phone in front of the clip gone from view isn't the clip" $ all isLost [o | (t, _, o, _) <- phoneOnly, t >= 1]
 
     -- A reflector broken in two by a line too dim, and a fleck beside
     -- another, as at a low threshold.
-    let broken = [(t, pose, (if t > 0.5 then breakAt (project defaultIntrinsics pose (mLeft clipBent)) else id) (renderDiscs (fleck pose : reflectorDiscs clipBent allLit pose))) | t <- at120 2.5, let pose = headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0]
+    let broken = [(t, pose, (if t > 0.5 then breakAt (project defaultIntrinsics pose (mLeft clipBent)) else id) (renderDiscs (fleck pose : pointDiscs defaultIntrinsics clipBent allLit pose))) | t <- at120 2.5, let pose = headSeen bentWorn (8 * sin (2 * pi * t / 2)) 0 0]
         fleck pose = let (u, v) = project defaultIntrinsics pose (mTop clipBent) in ((u + 4, v + 9), 2.5)
         pieces = trackFrames clipBent broken
     check ("a reflector in pieces " ++ show (summed pieces)) $ lostCount pieces == 0 && fst (worstError pieces) < 1
@@ -998,22 +991,8 @@ main = do
             | t < 37 = (4 * fidget 2 t, 70 * phoneDown t + 3 * fidget 3 t, 2 * fidget 4 t * phoneDown t)
             | otherwise = (glance 37 t, 0, 0)
         sway t = V3 (6 * sin (2 * pi * t / 9.3)) (3 * sin (2 * pi * t / 7.1)) (8 * sin (2 * pi * t / 11.7))
-        hash :: Int -> Double -> Double
-        hash i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5
-        inPieces i pitched j ((u0, v0), r)
-            | j < (2 :: Int) && pitched > 35 && hash i (7 + fromIntegral j) > 0 =
-                let a = 2 * pi * hash (i `div` 6) (9 + fromIntegral j)
-                    f = 0.75 + 0.3 * hash i (11 + fromIntegral j)
-                    whole = r * sqrt f
-                    piece = r * sqrt (max 0.05 (0.85 - f))
-                    gap = 0.35 * r + whole + piece + 2
-                 in [((u + 0.35 * r * cos a, v + 0.35 * r * sin a), whole), ((u - gap * cos a, v - gap * sin a), piece)]
-            | otherwise = [((u, v), r)]
-          where
-            u = u0 + 0.2 * hash i (fromIntegral j)
-            v = v0 + 0.2 * hash i (fromIntegral j + 0.5)
         phoneFrames =
-            [ (t, pose, renderDiscs (concat (zipWith (inPieces i p) [0 ..] (reflectorDiscs clipBent allLit pose))))
+            [ (t, pose, renderDiscs (concat (zipWith (inPieces i p) [0 ..] (pointDiscs defaultIntrinsics clipBent allLit pose))))
             | (i, t) <- zip [0 ..] (at120 42)
             , let (y, p, r) = phoneTurn t
                   Pose headTurned placed = headSeen bentWorn y p r
@@ -1038,7 +1017,7 @@ main = do
         withFire place rows =
             [ (t, pose, renderDiscs (heads ++ (if fire then occluded heads (fireDiscs place i) else [])))
             | (i, (t, pose, l, fire)) <- zip [0 :: Int ..] rows
-            , let heads = reflectorDiscs clipBent l pose
+            , let heads = pointDiscs defaultIntrinsics clipBent l pose
             ]
         firstTracked from rows = case [t | (t, _, Tracked{}, _) <- rows, t >= from] of
             t : _ -> Just t
@@ -1153,7 +1132,7 @@ main = do
     -- A lamp the size of a reflector is learnt as quickly as a fire while
     -- the clip is tracked elsewhere with all three reflectors in view.
     let lamp = ((156, 297), 10)
-        (_, lampRows) = trackFramesEvents clipBent [(t, fidgeting t, renderDiscs (lamp : reflectorDiscs clipBent allLit (fidgeting t))) | t <- at30 8]
+        (_, lampRows) = trackFramesEvents clipBent [(t, fidgeting t, renderDiscs (lamp : pointDiscs defaultIntrinsics clipBent allLit (fidgeting t))) | t <- at30 8]
     check ("a lamp the size of a reflector learnt beside the tracked clip " ++ show [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p <- evs]) $
         case [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p <- evs] of
             [(t, p)] -> t < 3.5 && nearFire p
@@ -1179,7 +1158,7 @@ main = do
     check "memory statistics are on, for the tests below (+RTS -T)" statsOn
     let fireLit i t pose = (t, renderDiscs (heads ++ occluded heads (fireDiscs fireAt i)))
           where
-            heads = reflectorDiscs clipBent allLit pose
+            heads = pointDiscs defaultIntrinsics clipBent allLit pose
         stillFrame i = let t = fromIntegral i / 120 in fireLit i t (fidgeting t)
         turningFrame i = let t = fromIntegral i / 120 in fireLit i t (raised (headSeen bentWorn (25 * sin (2 * pi * t / 3)) (8 * sin (2 * pi * t / 5)) 0))
         goneFrame i =
@@ -1218,6 +1197,9 @@ main = do
     -- Recording and replaying (see "TrackKat.Recording").
     recordingChecks check
 
+    -- The key simulations again, for clips of other shapes and looks.
+    clipChecks check
+
     -- Curved tabs: each reflector is tape round a tab, and the centre of
     -- its light slides round the arc toward the camera as the head turns
     -- (see Note [Curved reflectors] in TrackKat.Pose). Turning left and
@@ -1226,7 +1208,7 @@ main = do
     -- taken for tape on tabs, both come to about what tracking points
     -- drawn as discs leaves.
     let tabTurning t = (50 * sin (2 * pi * t / 4), 15 * sin (2 * pi * t / 2.7))
-        tabFrames = [(t, pose, renderDiscs (tapeDiscs pose)) | t <- at120 8, let (y, p) = tabTurning t; pose = headSeen bentWorn y p 0]
+        tabFrames = [(t, pose, renderDiscs (tapeDiscs defaultIntrinsics (clipModel (clip defaultConfig)) allLit pose)) | t <- at120 8, let (y, p) = tabTurning t; pose = headSeen bentWorn y p 0]
         asPoints = trackFrames clipBent tabFrames
         asTabs = trackFrames (clipModel (clip defaultConfig)) tabFrames
         ((pointsTurn, pointsMoved), _) = turnError asPoints
@@ -1262,7 +1244,7 @@ main = do
     -- Through the tracker, from curved tabs: learnt from clear poses only,
     -- and found as configured, or found to be so when configured with the
     -- post straight.
-    let shapeFrames = [(t, pose, renderDiscs (tapeDiscs pose)) | t <- at120 100, let pose = headSeen bentWorn (glanceYaw t) (glancePitch t) (glanceRoll t)]
+    let shapeFrames = [(t, pose, renderDiscs (tapeDiscs defaultIntrinsics (clipModel (clip defaultConfig)) allLit pose)) | t <- at120 100, let pose = headSeen bentWorn (glanceYaw t) (glancePitch t) (glanceRoll t)]
         straightened = maybe (error "shape") clipModel (clipShape 70 116 116)
     forM_ [("as configured", configured, AsConfigured), ("configured straight", straightened, Different)] $ \(name, m, want) -> do
         let (shapeTracker, shapeRows) = trackFramesEvents m shapeFrames
@@ -1307,63 +1289,17 @@ shapeSession truth configured minutes = go (0 :: Int) (seenPose 0) (newShapeLear
                         let (sl', new) = watchShape defaultIntrinsics t (V3 0 100 100) pose sl
                          in sl' `seq` go (i + 1) pose sl' (maybe told (: told) new)
                     Nothing -> go (i + 1) prev (shapeLostSight sl) told
-    -- About normally distributed, with a standard deviation of 1.
-    gaussian i k = 2 * sum [hash i (k + 0.13 * n) | n <- [1, 2, 3]]
-    hash :: Int -> Double -> Double
-    hash i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5
-
--- | Discs of lit pixels, as (centre, radius), as the camera's stripes. Runs
--- that touch on a line are one stripe, so discs that touch make one blob.
-renderDiscs :: [((Double, Double), Double)] -> [Stripe]
-renderDiscs discs = concatMap line [0 .. frameHeight - 1]
-  where
-    line y = map (stripe y) (joinRuns (sortOn fst (concatMap (run y) discs)))
-    run y ((u, v), r) =
-        let dy = fromIntegral y - v
-            halfWidth = sqrt (r * r - dy * dy)
-            a = max 0 (ceiling (u - halfWidth))
-            b = min (frameWidth - 1) (floor (u + halfWidth))
-         in [(a, b) | r * r >= dy * dy, a <= b]
-    joinRuns ((a, b) : (c, d) : rest) | c <= b + 1 = joinRuns ((a, max b d) : rest)
-    joinRuns (x : rest) = x : joinRuns rest
-    joinRuns [] = []
-    stripe y (a, b) = let n = b - a + 1 in Stripe y a n (100 * n * (n - 1) `div` 2) (100 * n)
-
--- | The pixels of one image line near a point dropped, breaking a reflector
--- there in two.
-breakAt :: (Double, Double) -> [Stripe] -> [Stripe]
-breakAt (u, v) = filter (\s -> not (stLine s == round v && abs (fromIntegral (stStart s) - u) < 15))
 
 -- | The headset clip as first made, and with its post bent.
 clipStraight, clipBent :: Model
 clipStraight = maybe (error "clipStraight") id (triangle 45 70 116 116)
 clipBent = maybe (error "clipBent") id (triangle 45 70 110 110)
 
--- | The clip seen by a camera tipped 12 degrees down, on a head about 860 mm
--- away turned by the given yaw, pitch and roll in degrees about a neck
--- 130 mm below and 90 mm behind the clip. The clip is worn pitched by the
--- given angle in degrees: how high the top reflector shows depends on it.
+-- | The clip seen by the user's camera (see 'userCamera'), worn pitched by
+-- the given degrees (see 'wornPitched'), the head turned by the given yaw,
+-- pitch and roll in degrees.
 headSeen :: Double -> Double -> Double -> Double -> Pose
-headSeen worn y p r =
-    Pose (tilt `mulMM` turned `mulMM` rotYXZ 0 worn 0) (mulMV tilt (clipAt ^+^ neck ^-^ mulMV turned neck))
-  where
-    deg = (* (pi / 180))
-    rotYXZ a b c = rodrigues (V3 0 (deg a) 0) `mulMM` rodrigues (V3 (deg b) 0 0) `mulMM` rodrigues (V3 0 0 (deg c))
-    tilt = rodrigues (V3 (deg 12) 0 0)
-    turned = rotYXZ y p r
-    neck = V3 0 130 90
-    clipAt = V3 0 180 845
-
--- | The reflectors' discs in the image for a pose, each with its radius
--- scaled by how lit it is (0 for unseen). At 830 mm the lower ones light
--- about 350 pixels and the top one 265, as on the user's camera.
-reflectorDiscs :: Model -> (Double, Double, Double) -> Pose -> [((Double, Double), Double)]
-reflectorDiscs m (litL, litR, litT) pose =
-    [ (project defaultIntrinsics pose p, lit * radiusAt1m * 1000 / z)
-    | (p, radiusAt1m, lit) <- [(mLeft m, 8.8, litL), (mRight m, 8.8, litR), (mTop m, 7.6, litT)]
-    , let V3 _ _ z = mulMV (poseR pose) p ^+^ poseT pose
-    , lit > 0
-    ]
+headSeen worn = headPose userCamera (wornPitched worn)
 
 -- | Track frames of (time, true pose, stripes) from a fresh tracker: each
 -- frame's time, true pose, outcome, and the pose tracked.
@@ -1410,27 +1346,6 @@ liveWhileStepping next = go 0
             a' <- next i a
             a' `seq` go (i + 1) a' (mark : rest)
 
--- | A lit fire's discs in the i-th frame, around its core's place: the
--- core, lighting 600 to 870 pixels, its centroid jittering by a pixel or
--- so, and up to four flames of 6 to 100 pixels flickering within 20
--- pixels of it, each there in about half the frames.
-fireDiscs :: (Double, Double) -> Int -> [((Double, Double), Double)]
-fireDiscs (u, v) i =
-    ((u + 2 * noise 0 - 1, v + 2 * noise 1 - 1), sqrt ((600 + 270 * noise 2) / pi))
-        : [ ((u + d * cos a, v + d * sin a), sqrt ((6 + 94 * noise (k + 0.4)) / pi))
-          | k <- [3 .. 6]
-          , noise (k + 0.1) > 0.5
-          , let a = negate pi * noise (k + 0.2)
-                d = 18 + 2 * noise (k + 0.3)
-          ]
-  where
-    noise k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int)
-
--- | The discs of a light not hidden by the head the given reflectors are
--- on: none within 70 pixels of one.
-occluded :: [((Double, Double), Double)] -> [((Double, Double), Double)] -> [((Double, Double), Double)]
-occluded heads = filter (\(p, _) -> all (\(q, _) -> distance p q > 70) heads)
-
 distance :: (Double, Double) -> (Double, Double) -> Double
 distance (a, b) (c, d) = sqrt ((a - c) ^ (2 :: Int) + (b - d) ^ (2 :: Int))
 
@@ -1440,17 +1355,14 @@ trackPath m path = trackFrames m (rendered m path)
 
 -- | Frames of a head along a path, as 'trackPath' sees them.
 rendered :: Model -> [(Double, Pose, (Double, Double, Double))] -> [(Double, Pose, [Stripe])]
-rendered m path = [(t, pose, renderDiscs (reflectorDiscs m lit pose)) | (t, pose, lit) <- path]
+rendered m path = [(t, pose, renderDiscs (pointDiscs defaultIntrinsics m lit pose)) | (t, pose, lit) <- path]
 
 -- | Track a head along a path as 'trackPath' does, with each reflector's
 -- centre moved by up to half the given pixels, differently each frame, as
 -- noise moves a blob's centroid.
 trackNoisy :: Model -> Double -> [(Double, Pose, (Double, Double, Double))] -> (Tracker, [((Double, Pose, Outcome, Maybe Pose), [Event])])
 trackNoisy m amp path =
-    trackFramesEvents m [(t, pose, renderDiscs (zipWith (jitter i) [0 ..] (reflectorDiscs m lit pose))) | (i, (t, pose, lit)) <- zip [0 :: Int ..] path]
-  where
-    jitter i j ((u, v), r) = ((u + amp * noise i j, v + amp * noise i (j + 0.5)), r)
-    noise i k = let x = sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453 in x - fromIntegral (floor x :: Int) - 0.5 :: Double
+    trackFramesEvents m [(t, pose, renderDiscs (jitter amp i (pointDiscs defaultIntrinsics m lit pose))) | (i, (t, pose, lit)) <- zip [0 :: Int ..] path]
 
 -- | Times of the frames where a pose was corrected.
 corrections :: [((Double, Pose, Outcome, Maybe Pose), [Event])] -> [Double]
@@ -1462,13 +1374,23 @@ corrections rows = [t | ((t, _, _, _), evs) <- rows, any isCorrected evs]
 -- | Whether the pose tracked is the mirror image of the true pose rather
 -- than the true pose.
 isMirrored :: (Double, Pose, Outcome, Maybe Pose) -> Bool
-isMirrored (_, truth, _, tracked) = case (mirrorPose defaultIntrinsics clipBent truth, tracked) of
+isMirrored = mirroredOn clipBent
+
+-- | Whether the pose tracked is the mirror image of the true pose of a
+-- clip of the given shape rather than the true pose.
+mirroredOn :: Model -> (Double, Pose, Outcome, Maybe Pose) -> Bool
+mirroredOn m (_, truth, _, tracked) = case (mirrorPose defaultIntrinsics m truth, tracked) of
     (Just other, Just p) -> fst (poseError other p) < fst (poseError truth p) && fst (poseError truth p) > 3 && fst (poseError truth other) > 10
     _ -> False
 
 -- | The time of the last frame tracked on the mirror image, or 0.
 lastMirrored :: [(Double, Pose, Outcome, Maybe Pose)] -> Double
-lastMirrored rows = maximum (0 : [t | r@(t, _, _, _) <- rows, isMirrored r])
+lastMirrored = lastMirroredOn clipBent
+
+-- | The time of the last frame tracked on the mirror image of a clip of
+-- the given shape, or 0.
+lastMirroredOn :: Model -> [(Double, Pose, Outcome, Maybe Pose)] -> Double
+lastMirroredOn m rows = maximum (0 : [t | r@(t, _, _, _) <- rows, mirroredOn m r])
 
 -- | The worst error, in degrees, of the yaw and pitch reported, against
 -- the head's true yaw and pitch at each time.
@@ -1615,7 +1537,7 @@ recordedSession =
     , let at = sessionClock + fromIntegral i * 8333333
           t = fromIntegral i / 120 :: Double
           pose = headSeen (-23) (25 * sin (2 * pi * t / 2.5)) (5 * sin (2 * pi * t / 3.7)) 0
-          heads = if t > 6 && t < 6.5 then [] else reflectorDiscs clipBent (1, 1, 1) pose
+          heads = if t > 6 && t < 6.5 then [] else pointDiscs defaultIntrinsics clipBent (1, 1, 1) pose
     ]
   where
     inputs i pressed = case i of
@@ -1645,34 +1567,152 @@ turnError rows = case [(truth, p) | (_, truth, Tracked{}, Just p) <- rows] of
     moved (Pose r0 t0) (Pose r t) = let r' = r `mulMM` transpose r0 in Pose r' (t ^-^ mulMV r' t0)
     middle (Pose r t) = mulMV r (V3 0 0 900) ^+^ t
 
--- | The reflectors' discs in the image for a pose of 'clipBent' whose
--- reflectors are tape covering 25 mm round tabs 10 mm in radius, the
--- lower ones upright and the top one leaning 37.5 degrees toward the
--- camera: each disc at the centre of its tape's light, summed over strips
--- of tape, each as bright as it is square to the camera times how much
--- light tape returns at that slant, which falls off as a gaussian of
--- 45 degrees.
-tapeDiscs :: Pose -> [((Double, Double), Double)]
-tapeDiscs (Pose r t) =
-    [ (project defaultIntrinsics (Pose r t) centre, radiusAt1m * 1000 / z)
-    | (middle, axis, radiusAt1m) <- [(mLeft clipBent, upright, 8.8), (mRight clipBent, upright, 8.8), (mTop clipBent, leaning, 7.6)]
-    , let facing = normalize (V3 0 0 (-1) ^+^ (dot (V3 0 0 1) axis *^ axis))
-          across = cross axis facing
-          strips =
-            [ (w, at)
-            | i <- [0 .. 99 :: Int]
-            , let phi = (fromIntegral i + 0.5 - 50) / 100 * 2.5
-                  normal = (cos phi *^ facing) ^+^ (sin phi *^ across)
-                  at = middle ^-^ (10 *^ facing) ^+^ (10 *^ normal)
-                  inCamera = mulMV r at ^+^ t
-                  slant = dot (mulMV r normal) (normalize ((-1) *^ inCamera))
-                  angle = acos (min 1 slant)
-                  w = slant * exp (negate ((angle / (pi / 4)) ^ (2 :: Int)))
-            , slant > 0
-            ]
-          centre = (1 / sum (map fst strips)) *^ foldr ((^+^) . uncurry (*^)) (V3 0 0 0) strips
-          V3 _ _ z = mulMV r centre ^+^ t
-    ]
+-- * Clips of other shapes
+
+-- | A clip to simulate: a name for it, the model the tracker is given,
+-- the clip as it truly is (the same model) and how its reflectors show,
+-- worn pitched 23 degrees back as the user's is (see 'wornPitched').
+data Subject = Subject String Model Look
+
+subjectClip :: Subject -> Clip
+subjectClip (Subject _ m look) = Clip m look (wornPitched (-23))
+
+-- | The clips the key simulations run with: the user's, and others that
+-- differ from it in the ways clips do. (The tests above use points.)
+userTabs, unbentTabs, scaleneTabs :: Subject
+userTabs = Subject "the user's clip, 70 110 110 on tabs, its top tab bent" (clipModel (clip defaultConfig)) AsTape
+unbentTabs = Subject "a clip 70 116 116 on tabs, its post and top tab unbent" (tabbed 0 70 116 116) AsTape
+scaleneTabs = Subject "a scalene clip, 70 130 95 on tabs" (tabbed 37.5 70 130 95) AsTape
+
+-- | A clip as 'clipShape' makes one, with its top tab bent by the given
+-- degrees.
+tabbed :: Double -> Double -> Double -> Double -> Model
+tabbed bend lr lt rt = maybe (error "tabbed") (\m -> m{mTabs = (mTabs m){postBend = bend}}) (clipModel <$> clipShape lr lt rt)
+
+-- | Frames of a clip along a path of (time, true pose, how lit each
+-- reflector is), each reflector's centre moved by up to half the given
+-- pixels.
+clipFrames :: Clip -> Double -> [(Double, Pose, Lit)] -> [(Double, Pose, [Stripe])]
+clipFrames c amp path = [(t, pose, renderDiscs (jitter amp i (clipDiscs defaultIntrinsics c lit pose))) | (i, (t, pose, lit)) <- zip [0 :: Int ..] path]
+
+-- | Times of frames at so many a second, for so many seconds.
+framesAt :: Double -> Double -> [Double]
+framesAt rate seconds = [fromIntegral i / rate | i <- [0 .. round (seconds * rate) :: Int]]
+
+-- | The key simulations, run with clips of other shapes and looks than
+-- those above, each with those clips where it shows something new; the
+-- slow ones with fewer, and at 60 frames a second where that shows as
+-- much. What they found is in the backlog.
+clipChecks :: (String -> Bool -> IO ()) -> IO ()
+clipChecks check = do
+    forM_ [userTabs, unbentTabs, scaleneTabs] sweep
+    -- With the top tab bent, nodding through where the triangle squarely
+    -- faces the camera has tracking slip onto another pose for a moment
+    -- each time, so the clips with it are left out (see the backlog).
+    forM_ [unbentTabs] mirrors
+    forM_ [userTabs, scaleneTabs] learning
+    forM_ [userTabs, scaleneTabs] lookingUp
+    forM_ [userTabs] lookingDown
+    forM_ [scaleneTabs] shapeAsConfigured
   where
-    upright = V3 0 1 0
-    leaning = V3 0 (cos (37.5 * pi / 180)) (sin (37.5 * pi / 180))
+    named (Subject name _ _) what = name ++ ": " ++ what
+    summed rows = (lostCount rows, worstError rows)
+    glance from t = if t < from then 0 else 25 * sin (2 * pi * (t - from) / 2.5)
+    seen = headPose userCamera
+    -- A slow sweep through everything a head does, at 60 frames a second.
+    sweep s@(Subject _ m _) = do
+        let c = subjectClip s
+            sweeping = [(t, seen (clipWear c) (40 * sin (2 * pi * t / 7)) (25 * sin (2 * pi * t / 5.3)) (20 * sin (2 * pi * t / 4.1)), allLit) | t <- framesAt 60 20]
+            (_, sweptRows) = trackFramesEvents m (clipFrames c 0 sweeping)
+            swept = map fst sweptRows
+            stepSizes = zipWith (\(_, _, _, a) (_, _, _, b) -> maybe 0 fst (poseError <$> a <*> b)) swept (drop 1 swept)
+        check (named s ("sweep " ++ show (summed swept, maximum stepSizes, corrections sweptRows))) $
+            null (corrections sweptRows)
+                && lostCount swept == 0
+                && fst (worstError (unmerged swept)) < 1
+                && fst (worstError swept) < 4
+                && snd (worstError swept) < 20
+                && maximum stepSizes < 3
+    -- Mirror images: found again on one after a moment out of sight while
+    -- nodding through where the triangle squarely faces the camera, and
+    -- started on one, the clip worn so its top reflector is nearer the
+    -- camera than the lower ones; glancing about corrects both.
+    mirrors s@(Subject _ m _) = do
+        let worn by = (subjectClip s){clipWear = wornPitched by}
+            slipTurn t = (glance 3 t, max 0 (min 20 (20 * (t - 1) / 1.5)))
+            slipping = [(t, uncurry (seen (wornPitched 30)) (slipTurn t) 0, if t > 1.5 && t < 2.2 then unlit else allLit) | t <- framesAt 120 12]
+            (_, slipRows) = trackFramesEvents m (clipFrames (worn 30) 0.2 slipping)
+            slipped = map fst slipRows
+            slipFixed = lastMirroredOn m slipped
+        check (named s ("found again on the mirror image, corrected after " ++ show (slipFixed - 3) ++ " s of glancing, then " ++ show (summed (after (slipFixed + 0.1) slipped)))) $
+            any (mirroredOn m) (after 2.2 slipped)
+                && slipFixed < 3 + 2.5
+                && lostCount (after 2.3 slipped) == 0
+                && fst (worstError (after (slipFixed + 0.1) slipped)) < 1.5
+        let uprightTurn t = (glance 0.5 t, 5 * sin (2 * pi * t / 4))
+            upright = [(t, uncurry (seen (wornPitched 60)) (uprightTurn t) 0, allLit) | t <- framesAt 120 10]
+            uprighted = trackFrames m (clipFrames (worn 60) 0.2 upright)
+            uprightFixed = lastMirroredOn m uprighted
+            followed = after (uprightFixed + 0.1) uprighted
+        check (named s ("started on the mirror image, corrected after " ++ show (uprightFixed - 0.5) ++ " s of glancing, then " ++ show (summed followed, outputError uprightTurn followed))) $
+            all (mirroredOn m) (take 60 uprighted)
+                && uprightFixed < 0.5 + 2.5
+                && lostCount uprighted == 0
+                && fst (worstError followed) < 1.5
+                && outputError uprightTurn followed < 3
+    -- The level and the pivot learnt from a minute of glancing about, at
+    -- 60 frames a second. Glancing that also nods and rolls teaches the
+    -- level less well than turning left and right does (see the backlog):
+    -- in a minute, to within a degree or two.
+    learning s@(Subject _ m _) = do
+        let c = subjectClip s
+            glancing = [(t, seen (clipWear c) (glanceYaw t) (glancePitch t) (glanceRoll t), allLit) | t <- framesAt 60 60]
+            cal = trackerCalibration (fst (trackFramesEvents m (clipFrames c 0.2 glancing)))
+            (down, right) = cameraTilt (estimatedLevel cal)
+            pivotOff = estimatedPivot cal ^-^ pivotInClip (clipWear c)
+        check (named s ("level and pivot learnt: camera " ++ show (down, right) ++ " down and right, pivot off by " ++ show pivotOff)) $
+            abs (down - camDown userCamera) < 1 && abs right < 2 && norm pivotOff < 5
+    -- Looking up, the top reflector out of sight beside a lower one: lost
+    -- after a while, and followed when all three are back.
+    lookingUp s@(Subject _ m _) = do
+        let c = subjectClip s
+            raised (Pose r p) = Pose r (p ^+^ V3 (-26) (-165) 0)
+            held t
+                | t < 2 = (raised (seen (clipWear c) 0 0 0), allLit)
+                | t < 22 = (raised (seen (clipWear c) 5 (-25) 0), (1, 1, 0))
+                | otherwise = (raised (seen (clipWear c) (glance 0 (t - 22)) 0 0), allLit)
+            pairRows = trackFrames m (clipFrames c 1 [(t, pose, l) | t <- framesAt 30 26, let (pose, l) = held t])
+            pairTracked = [t | (t, _, Tracked{}, _) <- after 5 pairRows, t < 22]
+            pairBack = after 23 pairRows
+        check (named s ("looking up with the lower pair in view, tracked for " ++ show (length pairTracked) ++ " frames, then " ++ show (summed pairBack))) $
+            null pairTracked && lostCount pairBack == 0 && fst (worstError pairBack) < 1.5
+    -- Looking down at a phone in the lap, the lower reflectors in pieces,
+    -- and back, at 60 frames a second.
+    lookingDown s@(Subject _ m _) = do
+        let c = subjectClip s
+            eased t = let x = max 0 (min 1 (t / 1.5)) in x * x * (3 - 2 * x)
+            phoneDown t = eased (t - 20) - eased (t - 35)
+            fidget phase t = 0.5 * sin (2 * pi * t / 1.3 + phase) + 0.3 * sin (2 * pi * t / 0.7 + 2 * phase) + 0.2 * sin (2 * pi * t / 3.1 + 3 * phase)
+            phoneTurn t
+                | t < 20 = (glance 0 t + 2 * fidget 0 t, 8 * sin (2 * pi * t / 7) + 2 * fidget 1 t, 0)
+                | t < 37 = (4 * fidget 2 t, 70 * phoneDown t + 3 * fidget 3 t, 2 * fidget 4 t * phoneDown t)
+                | otherwise = (glance 37 t, 0, 0)
+            phoneFrames =
+                [ (t, pose, renderDiscs (concat (zipWith (inPieces i p) [0 ..] (clipDiscs defaultIntrinsics c allLit pose))))
+                | (i, t) <- zip [0 ..] (framesAt 60 42)
+                , let (y, p, r) = phoneTurn t
+                      pose = seen (clipWear c) y p r
+                ]
+            (_, phoneRows) = trackFramesEvents m phoneFrames
+            faced = after 39 (map fst phoneRows)
+        check (named s ("looking down at a phone, corrected at " ++ show (corrections phoneRows) ++ ", then " ++ show (summed faced))) $
+            all (>= 35) (corrections phoneRows) && lostCount faced == 0 && fst (worstError faced) < 3
+    -- The shape found as configured from glancing, through the tracker, at
+    -- 60 frames a second.
+    shapeAsConfigured s@(Subject _ m _) = do
+        let c = subjectClip s
+            shapeFrames = [(t, pose, renderDiscs (clipDiscs defaultIntrinsics c allLit pose)) | t <- framesAt 60 85, let pose = seen (clipWear c) (glanceYaw t) (glancePitch t) (glanceRoll t)]
+            learnt = trackerShape (fst (trackFramesEvents m shapeFrames))
+            estimated = shapeEstimate learnt
+        check (named s ("the shape through the tracker: " ++ describeShapeSoFar learnt)) $
+            fmap confidence estimated == Just Sure && fmap difference estimated == Just AsConfigured
