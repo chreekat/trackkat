@@ -606,7 +606,8 @@ watchSettings paths path s = go
                             rebindHotkeys (hotkeyBindings new)
                             when (npclient new /= npclient config) $ pointGames (exeDir paths) (npclient new)
                             when (startup new /= startup config) $ setStartup say paths (startup new)
-                            say (describeChanges config new)
+                            -- Clicking through the head view saves it; that is no news.
+                            unless (new == config{headView = headView new}) $ say (describeChanges config new)
                             when (lightMasking new /= lightMasking config) $
                                 atomicModifyIORef' (sTracker s) (\t -> (setMasking (lightMasking new) t, ()))
                             when (clip new /= clip config) $ do
