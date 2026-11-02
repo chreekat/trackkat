@@ -51,6 +51,12 @@ Roughly in order.
 
 ## Low priority
 
+- Predict which reflectors are out of sight in tracking: `TrackKat.Visibility`
+  says which tape faces away and which the head hides, but in simulation
+  leaving those out of matching, and following two reflectors longer while
+  the third is predicted hidden, didn't help (see Note [Seeing the
+  reflectors]). Try again once merged blobs split well looking up, where it
+  made poses wrong less often but lost the clip more.
 - Tune the RTS only if the status line's latency and GC figures show a need.
 - Apply the clip shape estimated from movement (see docs/details.md), once
   it has proven itself on real clips: re-solve its linearisation about the

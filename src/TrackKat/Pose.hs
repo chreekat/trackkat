@@ -20,6 +20,7 @@ module TrackKat.Pose (
     project,
     Reflector (..),
     seenAt,
+    tapeFacesAway,
     identify,
     solvePose,
     alternatives,
@@ -263,6 +264,22 @@ seenAt k m pose@(Pose r t) which = project k pose (litCentre (mTabs m) (tab m wh
   where
     p = reflectorPoint m which
     toCamera = mulMV (transpose r) ((-1) *^ (mulMV r p ^+^ t))
+
+-- | Whether none of a reflector's tape faces the camera at a pose: the
+-- camera, seen along the tab's axis, is round it from where the tape
+-- faces by more than the tape's half arc and a quarter turn. Points face
+-- every way. See Note [Curved reflectors].
+tapeFacesAway :: Model -> Pose -> Reflector -> Bool
+tapeFacesAway m (Pose r t) which
+    | tabRadius tabs <= 0 = False
+    | otherwise = toFacing < 0 && atan2 (abs toAcross) (negate toFacing) < pi / 2 - half
+  where
+    tabs = mTabs m
+    (axis, facing) = tab m which
+    toCamera = mulMV (transpose r) ((-1) *^ (mulMV r (reflectorPoint m which) ^+^ t))
+    toFacing = dot toCamera facing
+    toAcross = dot toCamera (cross axis facing)
+    half = 0.5 * tapeArc tabs / tabRadius tabs
 
 -- | A reflector's tab, in the model's axes: its axis, and the way its tape
 -- faces, square to the axis.
