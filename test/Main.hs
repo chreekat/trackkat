@@ -1638,7 +1638,8 @@ clipChecks check = do
     -- faces the camera has tracking slip onto another pose for a moment
     -- each time, so the clips with it are left out (see the backlog).
     forM_ [unbentTabs] mirrors
-    forM_ [userTabs, scaleneTabs] learning
+    -- (The user's clip learns them in 'mountChecks', mounted otherwise.)
+    forM_ [scaleneTabs] learning
     forM_ [userTabs, scaleneTabs] lookingUp
     forM_ [userTabs] lookingDown
     forM_ [scaleneTabs] shapeAsConfigured
