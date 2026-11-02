@@ -233,7 +233,7 @@ evidence logOdds (Belief tt tm mt mm) = normalise (Belief tt tm (e * mt) (e * mm
     e = exp logOdds
 
 -- | Take in a tracked pose seen at the given time in seconds, given the
--- pivot in the clip's axes, the reference if there is one, how clearly
+-- pivot in the model's axes, the reference if there is one, how clearly
 -- the reflectors were seen, and the other poses that fit what was seen if
 -- all three reflectors were seen (see 'alternatives'). Its mirror image is
 -- the one nearest the mirror image in the last frame, or nearest the pose

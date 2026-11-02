@@ -159,7 +159,7 @@ newShapeLearner :: Model -> ShapeLearner
 newShapeLearner m = ShapeLearner m Nothing Nothing Nothing Nothing (replicate groups noEvidence) 0 Nothing
 
 -- | Learn from a pose seen clearly at the given time, surely the head's,
--- given the pivot it turns about, in the clip's axes. The estimate is
+-- given the pivot it turns about, in the model's axes. The estimate is
 -- returned too when it is newly sure, or has moved since it was.
 watchShape :: Intrinsics -> Double -> V3 -> Pose -> ShapeLearner -> (ShapeLearner, Maybe ShapeEstimate)
 watchShape k now pivot pose sl = case maybe (Block 1 pose (V3 0 0 0) (poseT pose)) (addToBlock pose) (slBlock sl) of

@@ -10,7 +10,7 @@ import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BL
 import Data.Either (isLeft)
 import Data.IORef
-import Data.List (isInfixOf, mapAccumL, nub)
+import Data.List (isInfixOf, isPrefixOf, mapAccumL, nub)
 import Data.Maybe (isNothing)
 import Data.Word (Word64, Word8)
 import GHC.Stats (gc, gcdetails_live_bytes, getRTSStats, getRTSStatsEnabled)
@@ -451,6 +451,15 @@ main = do
     case learntClip headset (Just (Pose (rodrigues (V3 0 (pi / 2) 0)) (V3 0 0 700))) (calibrated "0 -1 0") of
         Nothing -> check "turned clip on the head" False
         Just placed -> check ("clip turned 90 degrees is on the wearer's right " ++ show placed) $ closeTo (middle placed) (V3 100 100 0)
+    -- A pivot learnt 192 mm below the clip, 26 behind it and 1 to the
+    -- left, as the user's was: the lower pair sits that far above and in
+    -- front of it.
+    let lowPivot = either error id (parseCalibration "up = 0 -1 0\nturning = 900\npivot = 1 192 26\npivot windows = 40\n")
+    check ("a low pivot described " ++ describePivotBriefly (Just facing) lowPivot) $
+        "Neck pivot 192 ± 40 mm below the clip, 26 ± 40 behind, 1 ± 40 to your left," `isPrefixOf` describePivotBriefly (Just facing) lowPivot
+    case learntClip headset (Just facing) lowPivot of
+        Nothing -> check "clip on the head with a low pivot" False
+        Just placed -> check ("the clip 192 mm above a low pivot and 26 in front " ++ show placed) $ closeTo (middle placed) (V3 1 192 26)
     -- With the camera tipped down, up on the head is the learnt up, not the
     -- camera's.
     let tipped = V3 0 (negate (cos (deg 20))) (negate (sin (deg 20)))
@@ -459,6 +468,18 @@ main = do
         Just placed ->
             check ("clip on the head with the camera tipped " ++ show placed) $
                 let V3 _ y _ = middle placed in abs (y - dot (V3 0 (-100) (-100)) tipped) < 1e-3
+
+    -- How the clip sits on the head: the standard way, as before; mounted
+    -- otherwise and back, as it was; and the prior pivot following it.
+    check "the standard mounting turns nothing" $
+        let m = mounted standardMounting headset in all (uncurry closeTo) [(mLeft m, mLeft headset), (mRight m, mRight headset), (mTop m, mTop headset)]
+    let sideways = Mounting (rotYXZ 0 0 90) (V3 (-60) 100 60)
+        remounted = mounted standardMounting (mounted sideways headset)
+    check "a clip mounted otherwise and back is as it was" $
+        all (uncurry closeTo) [(mLeft remounted, mLeft headset), (mRight remounted, mRight headset), (mTop remounted, mTop headset)]
+    check "the pivot looked for where the mounting puts it" $
+        closeTo (appliedPivot (newLearner (mounted sideways headset) defaultCalibration)) (V3 (-60) 100 60)
+            && closeTo (appliedPivot (newLearner headset defaultCalibration)) (V3 0 100 100)
 
     -- Swaying the body while glancing mustn't drag the pivot far.
     let (swaying, _) = runLearner (glancing (\time -> V3 (30 * sin (2 * pi * time / 3.7)) 0 (20 * sin (2 * pi * time / 5.3))))
@@ -644,7 +665,7 @@ main = do
     check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
     check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
 
-    check "identify" $ identify id [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
+    check "identify" $ identify trackClip id [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 
     -- The clip's sides are the wearer's; the model's are the camera's.
     case clipShape 70 100 120 of
@@ -816,7 +837,7 @@ main = do
         -- above the lower pair, and with its post bent, 40 px above.
         straightWorn = -49
         bentWorn = -23
-        heights m pose = let ps = map (project defaultIntrinsics pose) [mLeft m, mRight m, mTop m] in (ps, identify id ps == Just (ps !! 0, ps !! 1, ps !! 2))
+        heights m pose = let ps = map (project defaultIntrinsics pose) [mLeft m, mRight m, mTop m] in (ps, identify m id ps == Just (ps !! 0, ps !! 1, ps !! 2))
         summed rows = (lostCount rows, worstError rows)
 
     -- The label swap seen at pitch -8: with the camera above, the top
@@ -1199,6 +1220,9 @@ main = do
 
     -- The key simulations again, for clips of other shapes and looks.
     clipChecks check
+
+    -- Clips mounted otherwise on the head.
+    mountChecks check
 
     -- Curved tabs: each reflector is tape round a tab, and the centre of
     -- its light slides round the arc toward the camera as the head turns
@@ -1716,3 +1740,47 @@ clipChecks check = do
             estimated = shapeEstimate learnt
         check (named s ("the shape through the tracker: " ++ describeShapeSoFar learnt)) $
             fmap confidence estimated == Just Sure && fmap difference estimated == Just AsConfigured
+
+-- * Clips mounted otherwise
+
+-- | A clip mounted otherwise than the standard way, on a head glancing about
+-- in front of a level camera, its neck pivot some way from where the
+-- mounting says it usually is: once recentered, the head's turning is
+-- reported as it turns, its pivot is learnt where it is, and the clip is
+-- drawn on the head where it sits. For points, and for tape on tabs, which
+-- face the way the mounting turns them.
+mountChecks :: (String -> Bool -> IO ()) -> IO ()
+mountChecks check =
+    forM_
+        [ ("rolled 90 degrees about the head's forward axis", rotYXZ 0 0 90, AsTape)
+        , ("turned 45 degrees about the head's vertical", rotYXZ 45 0 0, AsPoints)
+        ]
+        $ \(how, turn, look) -> do
+            let mount = Mounting turn (V3 (-40) 100 80)
+                tabbedClip = clipModel (clip defaultConfig)
+                m = mounted mount (if look == AsTape then tabbedClip else tabbedClip{mTabs = pointReflectors})
+                neck = V3 (-30) 115 70
+                level = userCamera{camDown = 0}
+                c = Clip m look (Wear identity neck)
+                turned t = if t < 1 then (0, 0, 0) else (glanceYaw (t - 1), glancePitch (t - 1), glanceRoll (t - 1))
+                path = [(t, headPose level (clipWear c) y p r, allLit) | t <- framesAt 60 40, let (y, p, r) = turned t]
+                (tracker, rows) = trackFramesEvents m (clipFrames c 0.2 path)
+                poseOff = (fst (worstError (unmerged (map fst rows))), fst (worstError (map fst rows)))
+                -- Reported about the level learnt, which is off by a
+                -- degree or two (see the backlog), and after recentering on
+                -- the head facing the camera.
+                angleOff = maximum (0 : [maximum (map abs [yaw hp - y, pitch hp - p, roll hp - r]) | ((t, _, Tracked{outPose = hp}, _), _) <- rows, let (y, p, r) = turned t])
+                cal = trackerCalibration tracker
+                pivotOff = norm (estimatedPivot cal ^-^ neck)
+                drawn = learntClip m (trackerCentre tracker) cal
+                -- The window draws the clip from the pivot along the head's
+                -- axes mirrored: x to the wearer's right, y up, z forward.
+                expected = (neck ^-^ mLeft m, neck ^-^ mRight m, neck ^-^ mTop m)
+                drawnOff = case drawn of
+                    Just (l, r, t) -> let (l', r', t') = expected in maximum [norm (l ^-^ l'), norm (r ^-^ r'), norm (t ^-^ t')]
+                    Nothing -> 1 / 0
+                name = "a clip " ++ how ++ (if look == AsTape then ", on tabs" else ", points")
+            check (name ++ ": followed, its pose off by at most " ++ show poseOff ++ " degrees (reflectors apart, and all), its turning reported off by " ++ show angleOff) $
+                lostCount (map fst rows) == 0 && fst poseOff < 1.5 && snd poseOff < 4 && angleOff < 4
+            check (name ++ ": its pivot learnt " ++ show pivotOff ++ " mm off, and drawn on the head " ++ show drawnOff ++ " mm off") $
+                pivotOff < 8 && drawnOff < 10

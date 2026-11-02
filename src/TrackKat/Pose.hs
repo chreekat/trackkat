@@ -1,13 +1,17 @@
 -- | Head pose from the three reflectors of a TrackClip.
 --
 -- Frames: the camera frame has x right, y down (as in the image) and z out
--- of the lens. The model frame is the clip's own, chosen so that a head
--- squarely facing the camera has the identity rotation. A pose maps model to
--- camera: @p_cam = R p_model + t@.
+-- of the lens. The model frame is the head's (see Note [Mounting]), so that
+-- a head squarely facing the camera has the identity rotation. A pose maps
+-- model to camera: @p_cam = R p_model + t@.
 module TrackKat.Pose (
     Intrinsics (..),
     defaultIntrinsics,
     Model (..),
+    Mounting (..),
+    standardMounting,
+    mounted,
+    clipBack,
     Tabs (..),
     pointReflectors,
     trackClip,
@@ -58,6 +62,8 @@ data Intrinsics = Intrinsics
 defaultIntrinsics :: Intrinsics
 defaultIntrinsics = Intrinsics{focal = 320 / tan (51.7 / 2 * pi / 180), cx = 320, cy = 240}
 
+-- | A clip as it sits on the head. Its reflectors are in the head's axes,
+-- mm (see Note [Mounting]).
 data Model = Model
     { mLeft :: V3
     -- ^ lower reflector that appears on the left of the image
@@ -67,8 +73,66 @@ data Model = Model
     -- ^ the raised reflector
     , mTabs :: Tabs
     -- ^ what the reflectors' tape is on
+    , mMount :: Mounting
+    -- ^ how the clip sits on the head
     }
     deriving (Show)
+
+-- Note [Mounting]
+-- ~~~~~~~~~~~~~~~
+-- The head's axes have x to the wearer's left, y down and z back, from the
+-- middle of the clip's two lower reflectors: the camera's axes when the
+-- head squarely faces it, upright. Poses are the head's, and the pivot and
+-- the reference are kept in those axes, so what the head does doesn't
+-- depend on how the clip sits on it.
+--
+-- The clip's own axes have x along the line from the left reflector to the
+-- right, y down and z back, z being the way its reflectors face away from:
+-- on a TrackClip, square to the crossbar's tabs. The triangle leans in
+-- them as its post leans (see 'triangle'), and the tabs stand in them as
+-- in Note [Curved reflectors]. A mounting is the turn from the clip's axes
+-- to the head's, and where the neck pivot is from the clip on most heads.
+-- The standard mounting is the TrackClip's on a headset or cap: facing
+-- forward, its crossbar level, so that its axes are the head's.
+--
+-- Recentering takes the head to face the camera however the clip sits, so
+-- the mounting matters for where the head's pivot is first looked for and
+-- for which way the reflectors face: what makes tape seen where it is, a
+-- pivot plausible (it is behind the reflectors), and which reflector is
+-- which when finding the clip afresh.
+
+-- | How a clip sits on the head. See Note [Mounting].
+data Mounting = Mounting
+    { mountTurn :: M33
+    -- ^ from the clip's axes to the head's
+    , mountPivot :: V3
+    -- ^ where the neck pivot is on most heads, from the clip, in the head's
+    -- axes, mm
+    }
+    deriving (Show)
+
+-- | A TrackClip on a headset clip or cap, facing forward with its
+-- crossbar level. A headset clip sits on the side of the head at about the
+-- temple, its reflectors a few cm forward of the ear. Turning left and
+-- right happens mostly between the top two vertebrae, which lie on the
+-- midline about level with the ear lobe; nodding uses the rest of the neck
+-- too, so its centre is lower still. That puts the pivot about 100 mm below
+-- the clip and 100 behind, and up to 100 to one side, depending on the
+-- side the clip is worn.
+standardMounting :: Mounting
+standardMounting = Mounting identity (V3 0 100 100)
+
+-- | A clip mounted otherwise: its reflectors turned from where its mounting
+-- puts them to where the given one does.
+mounted :: Mounting -> Model -> Model
+mounted mount m = m{mLeft = moved (mLeft m), mRight = moved (mRight m), mTop = moved (mTop m), mMount = mount}
+  where
+    turn = mountTurn mount `mulMM` transpose (mountTurn (mMount m))
+    moved = mulMV turn
+
+-- | The way, in the head's axes, the clip's reflectors face away from.
+clipBack :: Model -> V3
+clipBack m = mulMV (mountTurn (mMount m)) (V3 0 0 1)
 
 -- | The curved tabs that the reflectors' tape is on. See Note [Curved
 -- reflectors].
@@ -96,12 +160,15 @@ trackClip =
         , mRight = V3 67 0 0
         , mTop = V3 0 (-54) 96
         , mTabs = pointReflectors
+        , mMount = standardMounting
         }
 
 -- | A headset clip from the three distances between reflectors, in mm: left
 -- to right, left to top, right to top. The top reflector is on a post that
--- leans back (away from the camera) by @lean@ degrees from vertical. The
--- reflectors are points (see 'pointReflectors').
+-- leans back, away from where the reflectors face, by @lean@ degrees from
+-- square to the crossbar. The reflectors are points (see
+-- 'pointReflectors'), and the clip is mounted the standard way (see
+-- 'standardMounting'), facing forward.
 --
 -- Only the triangle's shape affects the angles, and its size only scales
 -- the distance estimate. For points, the lean doesn't need to be accurate:
@@ -120,6 +187,7 @@ triangle lean lr lt rt
                 , mRight = V3 a 0 0
                 , mTop = V3 x (negate (h * cos theta)) (h * sin theta)
                 , mTabs = pointReflectors
+                , mMount = standardMounting
                 }
   where
     a = lr / 2
@@ -168,7 +236,8 @@ project k (Pose r t) p =
 -- so that telling the two apart compares like with like.
 --
 -- The tabs on the crossbar stand square to the line between them and to
--- the line of sight of a camera the clip squarely faces. The top tab is on
+-- the line of sight of a camera the clip squarely faces (along the clip's
+-- z; see Note [Mounting]). The top tab is on
 -- the end of the post, which is bent up and back, and stands square to it,
 -- so it leans toward the camera by the bend: its axis is the lower tabs'
 -- turned that far about the line between them. A tab's tape faces the way,
@@ -198,12 +267,13 @@ seenAt k m pose@(Pose r t) which = project k pose (litCentre (mTabs m) (tab m wh
 -- | A reflector's tab, in the model's axes: its axis, and the way its tape
 -- faces, square to the axis.
 tab :: Model -> Reflector -> (V3, V3)
-tab m which = (axis, normalize (V3 0 0 (-1) ^+^ (z *^ axis)))
+tab m which = (axis, normalize (((-1) *^ back) ^+^ (dot back axis *^ axis)))
   where
+    back = clipBack m
     crossbar = normalize (mRight m ^-^ mLeft m)
-    upright = normalize (cross (V3 0 0 1) crossbar)
+    upright = normalize (cross back crossbar)
     bend = postBend (mTabs m) * pi / 180
-    axis@(V3 _ _ z) = case which of
+    axis = case which of
         TopReflector -> (cos bend *^ upright) ^+^ (sin bend *^ cross crossbar upright)
         _ -> upright
 
@@ -249,18 +319,31 @@ litCentre (Tabs radius arc _) (axis, facing) view p
     cubed x = x - x ^ (3 :: Int) / 3
     b = (cosLo ^ (3 :: Int) - cosHi ^ (3 :: Int)) / 3
 
--- | Match three blobs, given their centroids, to (left, right, top): the
--- highest in the image is the top reflector, the other two go by x.
+-- | Match three blobs, given their centroids, to (left, right, top) of a
+-- clip, as it shows with the head squarely facing the camera: the one
+-- furthest the way the top reflector is from the lower ones is the top
+-- one, and the other two go by the way from the left one to the right. For
+-- a clip mounted the standard way, the highest in the image is the top
+-- reflector, and the other two go by x.
 --
 -- This is only a guess for when there is no recent pose to predict from:
 -- with the camera above the head, the top reflector can appear level with
 -- or below a lower one.
-identify :: (a -> (Double, Double)) -> [a] -> Maybe (a, a, a)
-identify at blobs = case sortOn (snd . at) blobs of
+identify :: Model -> (a -> (Double, Double)) -> [a] -> Maybe (a, a, a)
+identify m at blobs = case sortOn (negate . along up) blobs of
     [top, a, b]
-        | fst (at a) <= fst (at b) -> Just (a, b, top)
+        | along across a <= along across b -> Just (a, b, top)
         | otherwise -> Just (b, a, top)
     _ -> Nothing
+  where
+    -- Directions in the image, from the model's axes, which are the
+    -- camera's with the head squarely facing it: the way to the top
+    -- reflector from the lower ones' middle, and from left to right.
+    V3 upU upV _ = mTop m ^-^ (0.5 *^ (mLeft m ^+^ mRight m))
+    V3 acrossU acrossV _ = mRight m ^-^ mLeft m
+    up = (upU, upV)
+    across = (acrossU, acrossV)
+    along (du, dv) b = let (u, v) = at b in du * u + dv * v
 
 -- | Find the pose that projects the model onto the observed points
 -- (left, right, top), refining from the given guess, or from a guess that
@@ -430,9 +513,9 @@ fitThree k m (nearestLeft, farthestLeft) (a, b, c) =
 -- | The unit normal to the reflectors' plane, in the model's axes, on the
 -- side away from where they face: toward the head that wears them.
 towardHead :: Model -> V3
-towardHead m = if z < 0 then (-1) *^ n else n
+towardHead m = if dot n (clipBack m) < 0 then (-1) *^ n else n
   where
-    n@(V3 _ _ z) = normalize (cross (mRight m ^-^ mLeft m) (mTop m ^-^ mLeft m))
+    n = normalize (cross (mRight m ^-^ mLeft m) (mTop m ^-^ mLeft m))
 
 -- | A reflector seen in the image: which it is, how much its
 -- position counts (1 for a clearly seen reflector, less for a dim or
@@ -585,15 +668,15 @@ cameraTilt :: Level -> (Double, Double)
 cameraTilt (Level (M33 _ (V3 dx dy dz) _)) =
     (atan2 dz (sqrt (dx * dx + dy * dy)) * 180 / pi, atan2 (negate dx) dy * 180 / pi)
 
--- | A direction given in the clip's axes, in level axes while the clip is in
--- the given pose.
+-- | A direction given in the model's axes, in level axes while the head is
+-- in the given pose.
 inLevelAxes :: Level -> Pose -> V3 -> V3
 inLevelAxes (Level toLevel) (Pose r _) v = mulMV toLevel (mulMV r v)
 
--- | A direction given in the clip's axes, in the head's axes while the clip
--- is in the given pose and the head faces the camera: x to the wearer's
--- right, y up, z out of the face. They are level axes seen in a mirror, as
--- trackkat's window draws the head.
+-- | A direction given in the model's axes, in the head's axes as
+-- trackkat's window draws the head, while it is in the given pose, as when
+-- recentered, facing the camera: x to the wearer's right, y up, z out of
+-- the face. They are level axes seen in a mirror.
 inHeadAxes :: Level -> Pose -> V3 -> V3
 inHeadAxes l pose v = (-1) *^ inLevelAxes l pose v
 

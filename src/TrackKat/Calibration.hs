@@ -19,6 +19,7 @@ module TrackKat.Calibration (
     -- * What has been learnt
     Calibration,
     defaultCalibration,
+    mountedCalibration,
     estimatedLevel,
     estimatedPivot,
     pivotSpreadAlong,
@@ -81,11 +82,15 @@ data Calibration = Calibration
     -- ^ the right-hand side to 'pivotInfo''s normal equations
     , pivotWindows :: !Double
     -- ^ windows of turning learnt from, older ones faded
+    , pivotPrior :: !V3
+    -- ^ where the pivot is on most heads, for the clip as it is mounted
+    -- (see 'mountPivot'), in the head's axes
     }
     deriving (Show)
 
 -- | Nothing learnt yet: the camera is taken to be level, and the pivot is
--- where it is on most heads.
+-- where it is on most heads, for a clip mounted the standard way (see
+-- 'standardMounting').
 defaultCalibration :: Calibration
 defaultCalibration =
     Calibration
@@ -94,7 +99,16 @@ defaultCalibration =
         , pivotInfo = zeroM
         , pivotMoment = V3 0 0 0
         , pivotWindows = 0
+        , pivotPrior = prior
         }
+  where
+    prior = mountPivot standardMounting
+
+-- | A calibration for a clip mounted as given: what was learnt kept, the
+-- pivot held near where it is on most heads for that mounting along what
+-- turning hasn't shown (see Note [Learning the pivot]).
+mountedCalibration :: Mounting -> Calibration -> Calibration
+mountedCalibration mount c = c{pivotPrior = mountPivot mount}
 
 -- | The camera's own up, used until a turn is seen.
 cameraUp :: V3
@@ -109,17 +123,18 @@ estimatedUp c
 estimatedLevel :: Calibration -> Level
 estimatedLevel = levelFromUp . estimatedUp
 
--- | The point the head turns about, in the clip's axes (x to the wearer's
--- left, y down, z back, from the middle of the two lower reflectors), mm.
+-- | The point the head turns about, in the head's axes (x to the wearer's
+-- left, y down, z back, from the middle of the clip's two lower
+-- reflectors; see Note [Mounting] in "TrackKat.Pose"), mm.
 estimatedPivot :: Calibration -> V3
-estimatedPivot c = fromMaybe priorPivot (solve3 (pivotPrecision c) (priorInfo `mulMV` priorPivot ^+^ pivotMoment c))
+estimatedPivot c = fromMaybe (pivotPrior c) (solve3 (pivotPrecision c) (priorInfo `mulMV` pivotPrior c ^+^ pivotMoment c))
 
 -- | All that is known of the pivot: the prior's information and the
 -- windows', per mm squared.
 pivotPrecision :: Calibration -> M33
 pivotPrecision c = priorInfo `addM` pivotInfo c
 
--- | The pivot's standard error, mm, along a direction in the clip's axes.
+-- | The pivot's standard error, mm, along a direction in the head's axes.
 pivotSpreadAlong :: Calibration -> V3 -> Double
 pivotSpreadAlong c u = maybe priorSpread (sqrt . max 0 . dot u) (solve3 (pivotPrecision c) u)
 
@@ -217,15 +232,15 @@ pivotInLevelAxes :: Pose -> Calibration -> (V3, V3)
 pivotInLevelAxes centre c = (inLevelAxes level centre (estimatedPivot c), V3 (along (V3 1 0 0)) (along (V3 0 1 0)) (along (V3 0 0 1)))
   where
     level = estimatedLevel c
-    -- The clip's direction that is the given level direction at the
+    -- The head's direction that is the given level direction at the
     -- centre, the turn from one set of axes to the other being orthogonal.
     along e = pivotSpreadAlong c (V3 (dot e (toLevel (V3 1 0 0))) (dot e (toLevel (V3 0 1 0))) (dot e (toLevel (V3 0 0 1))))
     toLevel = inLevelAxes level centre
 
 -- | Where the clip's reflectors (left, right, top) sit on the head once
--- both the level and the pivot have been learnt, given the clip's pose at
--- the centre: in mm from the neck pivot, along the head's axes as it faces
--- the camera there (see 'inHeadAxes').
+-- both the level and the pivot have been learnt, given the head's pose at
+-- the centre: in mm from the neck pivot, along the head's axes as the
+-- window draws it (see 'inHeadAxes').
 learntClip :: Model -> Maybe Pose -> Calibration -> Maybe (V3, V3, V3)
 learntClip m (Just centre) c
     | levelTurning c > 0 && pivotTurns c > 0 = Just (onHead (mLeft m), onHead (mRight m), onHead (mTop m))
@@ -279,17 +294,7 @@ withLevel l c = c{upSum = (upMemory / 2) *^ levelUp l, upWeight = upMemory / 2}
 
 -- * Pivot
 
--- | Where the pivot is on most heads, in the clip's axes, mm. A headset clip
--- sits on the side of the head at about the temple, its reflectors a few
--- cm forward of the ear. Turning left and right happens mostly between the
--- top two vertebrae, which lie on the midline about level with the ear
--- lobe; nodding uses the rest of the neck too, so its centre is lower
--- still. That puts the pivot about 100 mm below the clip and 100 behind,
--- and up to 100 to one side, depending on the side the clip is worn.
-priorPivot :: V3
-priorPivot = V3 0 100 100
-
--- | Whether a pivot, in the clip's axes, is where a neck can be: behind the
+-- | Whether a pivot, in the head's axes, is where a neck can be: behind the
 -- reflectors, on the side away from where they face, and within a head's
 -- reach of them. However the clip sits on the head, and however its post
 -- is bent, the head is behind the reflectors; a pivot in front of them was
@@ -316,7 +321,7 @@ screenCalibration m c
 -- Note [Learning the pivot]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~
 -- Each window of turning is a least-squares problem: the point p, in the
--- clip's axes, that stayed most still (see 'addWindow'). Its normal
+-- model's axes, that stayed most still (see 'addWindow'). Its normal
 -- equations A p = b say how well it shows each direction of p. Turning
 -- left and right about a vertical axis leaves every point on that axis
 -- still, so it shows where the axis is, behind the clip and to one side,
@@ -358,7 +363,7 @@ screenCalibration m c
 -- and slow deep ones low, in the neck; while it is little shown, the prior
 -- holds it between.
 
--- | How far, mm, the pivot is from 'priorPivot' on most heads, in any
+-- | How far, mm, the pivot is from 'pivotPrior' on most heads, in any
 -- direction: the standard deviation of the prior.
 priorSpread :: Double
 priorSpread = 40
@@ -440,7 +445,7 @@ addPose (Pose r t) w =
 -- explains its movement, and that point and the estimate with it are where
 -- a neck can be on the given clip. See Note [Learning the pivot].
 --
--- With rotations R_i and translations t_i, a point p in the clip's axes is
+-- With rotations R_i and translations t_i, a point p in the model's axes is
 -- at R_i p + t_i. Fitting p and the still position c to R_i p + t_i = c by
 -- least squares, and eliminating c, leaves normal equations A p = b, with
 -- A = n I - S^T S / n, b = S^T T / n - sum R_i^T t_i, S and T the sums of
@@ -487,7 +492,7 @@ normalEquations w = (a, b)
     a = scaleM n identity `addM` scaleM (-1 / n) (transpose s `mulMM` s)
     b = (1 / n) *^ mulMV (transpose s) (wTrans w) ^-^ wRotT w
 
--- | The point, in the clip's axes, that moved least during a window, held
+-- | The point, in the model's axes, that moved least during a window, held
 -- toward the given point with the given strength (against 1 for each pose
 -- and squared mm moved); and the RMS distance, mm, it moved.
 fixedPoint :: Double -> V3 -> TurnWindow -> (V3, Double)
@@ -504,7 +509,7 @@ windowTurn :: TurnWindow -> Double
 windowTurn w = wSpan w * 180 / pi
 
 -- | How badly a window's poses fit turning about a point near the given
--- one, in the clip's axes: the mean square, mm squared, of how far the best
+-- one, in the model's axes: the mean square, mm squared, of how far the best
 -- such point moved, plus the given weight times its squared distance from
 -- the given point.
 turnFit :: Double -> V3 -> TurnWindow -> Double
@@ -588,10 +593,11 @@ data Learner = Learner
 -- | Start learning about a head wearing the given clip from a calibration,
 -- applying it at once.
 newLearner :: Model -> Calibration -> Learner
-newLearner m c = Learner m c Nothing Nothing Nothing up pivot up pivot
+newLearner m c = Learner m mc Nothing Nothing Nothing up pivot up pivot
   where
-    up = estimatedUp c
-    pivot = estimatedPivot c
+    mc = mountedCalibration (mMount m) c
+    up = estimatedUp mc
+    pivot = estimatedPivot mc
 
 learnerCalibration :: Learner -> Calibration
 learnerCalibration = lCalibration
@@ -599,7 +605,7 @@ learnerCalibration = lCalibration
 appliedLevel :: Learner -> Level
 appliedLevel = levelFromUp . lUp
 
--- | The pivot applied, in the clip's axes, mm.
+-- | The pivot applied, in the model's axes, mm.
 appliedPivot :: Learner -> V3
 appliedPivot = lPivot
 
@@ -680,7 +686,7 @@ lostSight l = l{lTurn = Nothing, lWindow = Nothing, lLast = Nothing}
 
 -- | Learn about a head wearing a different clip from now on.
 changeClip :: Model -> Learner -> Learner
-changeClip m l = l{lModel = m}
+changeClip m l = l{lModel = m, lCalibration = mountedCalibration (mMount m) (lCalibration l)}
 
 -- | Take an explicitly calibrated level, applying it at once.
 calibrateLevel :: Level -> Learner -> Learner
@@ -758,13 +764,15 @@ parseCalibration str = do
         weight = fromMaybe 0 (fTurning s)
         info = maybe zeroM windowInfo (fInfo s)
         pivot = fromMaybe (estimatedPivot defaultCalibration) (fPivot s)
+        prior = pivotPrior defaultCalibration
     pure
         Calibration
             { upSum = weight *^ up
             , upWeight = weight
             , pivotInfo = info
-            , pivotMoment = mulMV (priorInfo `addM` info) pivot ^-^ mulMV priorInfo priorPivot
+            , pivotMoment = mulMV (priorInfo `addM` info) pivot ^-^ mulMV priorInfo prior
             , pivotWindows = fromMaybe 0 (fWindows s)
+            , pivotPrior = prior
             }
   where
     line acc (n, l) =

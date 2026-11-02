@@ -228,7 +228,7 @@ request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
 
 -- | Track a differently shaped clip from the next frame, recentering then,
--- since the clip's axes move with its shape.
+-- since the model's axes move with its shape.
 setModel :: Model -> Tracker -> Tracker
 setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLearner = changeClip m (trLearner t), trShape = newShapeLearner m, trBranch = newBranch m}
 
@@ -506,7 +506,7 @@ step now stripes t =
         -- reflectors would there.
         bigEnough pose = and . liftA2 (\size b -> fromIntegral (blobPoints b) * 8 * metres pose ^ (2 :: Int) >= sizeUsual size) (trSizes t)
         attempt extra = do
-            (l, r, top) <- identify at (bigShown ++ extra)
+            (l, r, top) <- identify m at (bigShown ++ extra)
             (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
             if plausible pose && bigEnough pose (Three l r top)
                 then Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra), extra)
