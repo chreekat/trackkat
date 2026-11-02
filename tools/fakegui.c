@@ -1,8 +1,10 @@
 /* fakegui: drive trackkat's window and tray icon (cbits/gui.c) with a
  * scripted pose and status, for working on the GUI without a camera. Prints
  * what the user asks for. Keys chosen for the bindings are all Ctrl+F7. A
- * second game, unnamed, comes and goes; Check for updates finds a newer
- * version the second time, which Restart to update takes back.
+ * second game, unnamed, comes and goes; the clip is calibrated, and every
+ * twelve seconds its top reflector is out of sight for two, then the clip
+ * for two more; Check for updates finds a newer version the second time,
+ * which Restart to update takes back.
  *
  * usage: fakegui [seconds] */
 
@@ -14,9 +16,10 @@
 int hts_gui_start(int show);
 void hts_gui_stop(void);
 void hts_gui_log(const wchar_t *line);
-void hts_gui_frame(int blobs, float yaw, float pitch, float roll, float x, float y, float z, float vyaw,
+void hts_gui_frame(int blobs, int reflectors_seen, float yaw, float pitch, float roll, float x, float y, float z, float vyaw,
                    float vpitch, float vroll, float vx, float vy, float vz);
 void hts_gui_camera(int camera, const wchar_t *text);
+void hts_gui_clip(int shown, const float *points);
 void hts_gui_paused(int paused);
 void hts_gui_trim(int trimmed, float yaw, float pitch, int moves);
 void hts_gui_games(int games, const wchar_t *name);
@@ -56,6 +59,10 @@ int main(int argc, char **argv)
     hts_gui_log(L"Tracking.");
     hts_gui_calibration(L"Camera tipped 12.4\u00b0 down and 0.8\u00b0 to its right, from 1460\u00b0 of head turning.\n"
                         L"Neck pivot 92 mm below the clip, 71 behind it and 3 to your left, from 214 head turns.");
+    /* That calibration, with the default clip squarely facing the camera at
+     * the centre: its left, right and top reflectors, from the neck pivot. */
+    static const float clip[] = {38, 92, 71, -32, 92, 71, 3, 148.2f, -16.9f};
+    hts_gui_clip(1, clip);
     hts_gui_camera(1, L"");
     int paused = 0, checking = 0, checks = 0;
     for (int i = 0; i < seconds * 60; i++) {
@@ -63,10 +70,11 @@ int main(int argc, char **argv)
         float yaw = (float)(14 * sin(t * 0.9)), pitch = (float)(-6 + 5 * sin(t * 1.3));
         float roll = (float)(3 * sin(t * 0.7)), x = (float)(10 * sin(t * 0.5));
         float y = (float)(-4 * sin(t * 0.8)), z = (float)(15 * sin(t * 0.4));
-        int lost = fmod(t, 12) > 10;
+        int lost = fmod(t, 12) > 10, top_hidden = fmod(t, 12) > 8;
         if (i % 60 == 0)
             hts_gui_games(fmod(t, 20) > 15 ? 2 : 1, L"DCS");
-        hts_gui_frame(lost ? 2 : -1, yaw, pitch, roll, x, y, z, yaw * 6, pitch * 7, roll * 4, x * 3, y * 4, z * 2.5f);
+        hts_gui_frame(lost ? 2 : -1, lost ? 0 : top_hidden ? 3 : 7, yaw, pitch, roll, x, y, z, yaw * 6, pitch * 7,
+                      roll * 4, x * 3, y * 4, z * 2.5f);
         if (i % 60 == 0)
             hts_gui_stats(L"latency 0.11 ms (max 0.42)  gap max 9 ms  stripes max 31  GC 3 (max 0.21 ms)");
         if (i % 600 == 300)

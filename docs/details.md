@@ -145,6 +145,10 @@ console), then turn your head left and right for five seconds. **Clear
 calibration**, under the same cover, forgets what was learnt. Delete `trackkat.calibration` to start afresh; it explains
 its own format.
 
+Once both are learnt, the head view also shows, dotted yellow, your own
+head as the camera measures it, with the clip where the learnt pivot puts
+it; a reflector out of sight is drawn hollow. This is experimental.
+
 Single-frame jumps no head could make are ignored.
 
 ### Mirror images

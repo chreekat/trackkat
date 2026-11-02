@@ -51,7 +51,7 @@ tooltip saying what it does.
 ![trackkat's window, numbered](docs/window.png)
 
 1. The version, and whether it is up to date; **Check for updates** looks now. Amber, with **Restart to update** once a new version is ready, or **Install trackkat** while it runs from where you unzipped it.
-2. Your head as games see it; in the corner, what the camera sees: the clip's reflectors blue, other bright things amber, still lights ignored grey.
+2. Your head as games see it; in the corner, what the camera sees: the clip's reflectors blue, other bright things amber, still lights ignored grey. Once calibration is learnt, dotted yellow, your own head with the clip on it, each reflector hollow while out of sight (experimental).
 3. Each axis: your head, what games see after the curves, and a bar.
 4. Rest the mouse on anything for help.
 5. Camera, clip and games (by name): green is good.
