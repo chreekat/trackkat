@@ -13,6 +13,18 @@ Roughly in order.
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.
 
+- For a second kind of clip (e.g. the side-mounted, LED TrackClip PRO),
+  once one is in hand to check against:
+  - markers named by place on the clip, told apart by the triangle's
+    geometry, not by where they appear in the image (`Model`'s left, right
+    and top);
+  - one appearance model per kind of marker (point, tape on a curved tab, LED
+    that dims off-axis), used alike by the solver, matching, the still-light
+    mask's size rule and the camera view;
+  - the shape estimate as "hold one edge, place the other points";
+  - clip presets as data (`clip = trackclip`, `trackclip-pro left`, or
+    points and a mounting).
+
 ## Low priority
 
 - Tune the RTS only if the status line's latency and GC figures show a need.
