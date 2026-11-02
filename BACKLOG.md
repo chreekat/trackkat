@@ -9,6 +9,12 @@ Roughly in order.
   In simulation, looking up 30 degrees while turning, the top reflector runs
   into a lower one, the split is off, and tracking goes 10-20 degrees wrong
   and is lost, for points and tabs alike; round blobs pass the same place.
+- The level learner can lock onto a wrong axis: each turn is accepted only
+  within 30 degrees of the current estimate, so an early wrong estimate keeps
+  confirming itself (in simulation, heavy quick nodding and tilting settled
+  near 40 degrees right, true 4, in 2 of 4 runs), and roll that goes with
+  yaw reads about 8 degrees too far down. Estimate up as the main axis of the
+  spread of head orientations instead, with no acceptance cone.
 - Ground truth from a webcam: record it alongside the camera and estimate the
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.
