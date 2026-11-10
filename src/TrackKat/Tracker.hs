@@ -373,7 +373,9 @@ step now stripes t =
                 -- lights that look like the clip. If it was, and the light
                 -- is learnt, it is no longer followed.
                 confirmed = now - since >= confirmSeconds
-                (lights, news) = learnt (View (toList sights) (if confirmed then reflectorDiscs seenPose sights else []))
+                (lights, news)
+                    | confirmed = learnt (View (toList sights) (reflectorDiscs seenPose sights) (usualAt sizes))
+                    | otherwise = learnt (View (toList sights) [] Nothing)
                 wasLight = not confirmed && holding [p | LightIgnored p <- news] (toList (seenAt k m seenPose <$> reflectors)) lights
                 -- See Note [Which pose is the head's] in TrackKat.Branch.
                 others = if allSeen then Just (alternatives k m seenPose) else Nothing
@@ -480,37 +482,58 @@ step now stripes t =
     pivot = appliedPivot (trLearner t)
     metres pose = norm (poseT pose) / 1000
     sighting = maybe (fst <$> findAfresh (mask, (masked, visible))) follow following
+    -- The pixels the biggest reflector, of the given sizes, lights where
+    -- the head was recentered.
+    usualAt sizes = case (maximum (sizeUsual <$> sizes), trReference t) of
+        (biggest, Just ref) | biggest > 0 -> Just (biggest / metres ref ^ (2 :: Int))
+        _ -> Nothing
+    -- Of more than three big blobs, the only three of the heaviest few
+    -- that would be taken for the clip, if just three would: the clip
+    -- beside something else. Not before the clip has been seen: nothing
+    -- then tells it from a fire and its flames laid out like it.
+    onlyClipLike bs
+        | any ((> 0) . sizeUsual) (trSizes t)
+        , length (bigAmong bs) > 3 = case filter (isJust . asClip) (choose 3 (take 5 (bigAmong bs))) of
+            [three] -> Just three
+            _ -> Nothing
+        | otherwise = Nothing
+    -- Big enough to be a reflector, of the given blobs: of a fair size, and
+    -- not tiny beside the biggest blob, as other reflections often are.
+    bigAmong bs = let biggest = maximum (0 : map blobPoints bs) in filter (\b -> blobPoints b >= minBlobPixels && blobPoints b * 25 >= biggest * 3) bs
+    -- The pose of the clip, if the given blobs are its three reflectors,
+    -- laid out as the clip is, at a pose a head can be at.
+    asClip three = do
+        (l, r, top) <- identify m at three
+        (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
+        if plausible pose && bigEnough pose (Three l r top) then Just (pose, fit, (l, r, top)) else Nothing
+    -- None of the blobs far smaller than its reflector has lately been,
+    -- at the pose's distance: lights much nearer the camera than the
+    -- head, laid out like the clip, light far fewer pixels than its
+    -- reflectors would there.
+    bigEnough pose = and . liftA2 (\size b -> fromIntegral (blobPoints b) * 8 * metres pose ^ (2 :: Int) >= sizeUsual size) (trSizes t)
     -- With nothing to predict from, three big blobs by their layout,
     -- solved from where the clip was last seen if anywhere, given a mask
     -- and the blobs it masks and doesn't; and the masked blobs taken as
     -- reflectors. With fewer than three big blobs unmasked, the heaviest
     -- in each of a few masked areas are tried too, those that make the
     -- three most alike in size first: a clip held still can be learnt as
-    -- lights (see Note [Still lights] in TrackKat.Lights).
+    -- lights (see Note [Still lights] in TrackKat.Lights). With more, the
+    -- only three that would be taken for the clip, if just three would.
     findAfresh (areas, (hidden, shown)) = listToMaybe (mapMaybe attempt choices)
       where
-        -- Big enough to be a reflector: of a fair size, and not tiny
-        -- beside the biggest blob, as other reflections often are.
-        big b = blobPoints b >= minBlobPixels && blobPoints b * 25 >= biggest * 3
         biggest = maximum (0 : map blobPoints shown)
-        bigShown = filter big shown
+        big b = blobPoints b >= minBlobPixels && blobPoints b * 25 >= biggest * 3
+        bigShown = bigAmong shown
+        -- Three blobs to try, and those of them masked.
         choices = case compare (length bigShown) 3 of
-            EQ -> [[]]
-            LT -> sortOn alike (choose (3 - length bigShown) (take 4 (filter big (heaviestIn areas hidden))))
-            GT -> []
+            EQ -> [(bigShown, [])]
+            LT -> [(bigShown ++ extra, extra) | extra <- sortOn alike (choose (3 - length bigShown) (take 4 (filter big (heaviestIn areas hidden))))]
+            GT -> [(three, []) | Just three <- [onlyClipLike shown]]
         alike extra = let ps = map blobPoints (bigShown ++ extra) in fromIntegral (maximum ps) / fromIntegral (max 1 (minimum ps)) :: Double
         whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
-        -- None of the blobs far smaller than its reflector has lately been,
-        -- at the pose's distance: lights much nearer the camera than the
-        -- head, laid out like the clip, light far fewer pixels than its
-        -- reflectors would there.
-        bigEnough pose = and . liftA2 (\size b -> fromIntegral (blobPoints b) * 8 * metres pose ^ (2 :: Int) >= sizeUsual size) (trSizes t)
-        attempt extra = do
-            (l, r, top) <- identify m at (bigShown ++ extra)
-            (pose, fit) <- solvePose k m (recentPose <$> trRecent t) (at l, at r, at top)
-            if plausible pose && bigEnough pose (Three l r top)
-                then Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra), extra)
-                else Nothing
+        attempt (three, extra) = do
+            (pose, fit, (l, r, top)) <- asClip three
+            Just (Sighting FoundAfresh pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra), extra)
     -- The best match to the prediction, unless its pose is an impossible
     -- jump; then, of the next few that see as many reflectors, the one whose
     -- pose is nearest. (Fewer reflectors can always be fitted by a pose

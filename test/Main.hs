@@ -1160,6 +1160,71 @@ main = do
             [(t, p)] -> t < 3.5 && nearFire p
             _ -> False
 
+    -- The clip taken off for 15 minutes, out of view, and put back on: held
+    -- still for 5 s while the headset settles, looking down with only the
+    -- lower pair in view or with all three, or nearer the camera than
+    -- before beside a stray reflection moving about. Its reflectors look as
+    -- they did before it was taken off, and aren't learnt as lights; it is
+    -- tracked as soon as all three show.
+    let between from to rate = [from + fromIntegral i / rate | i <- [0 .. round ((to - from) * rate) - 1 :: Int]]
+        -- (time, true pose, discs) to frames, each centroid wandering by
+        -- up to half a pixel
+        wandering rows = [(t, pose, renderDiscs (jitter 1 i discs)) | (i, (t, pose, discs)) <- zip [0 :: Int ..] rows]
+        clipLit l pose = pointDiscs defaultIntrinsics clipBent l pose
+        gone = 15 * 60
+        -- Tracked for 10 s, then gone, then back on.
+        putBack back =
+            wandering $
+                [(t, fidgeting t, clipLit allLit (fidgeting t)) | t <- between 0 10 30]
+                    ++ [(t, fidgeting 0, []) | t <- between 10 (10 + gone) 5]
+                    ++ [(t, pose, discs) | t <- between (10 + gone) (20 + gone) 30, let (pose, discs) = back (t - 10 - gone)]
+        nearer = let Pose r p = fidgeting 0 in Pose r (p ^+^ V3 0 0 (-300))
+        glint t = ((300 + 120 * cos (2 * pi * t / 2), 250 + 40 * sin (2 * pi * t / 2)), 9)
+        -- (how it is put back, the head and discs since it was, when all
+        -- three show)
+        returns =
+            [ ("all three in view", \t -> if t < 5 then (fidgeting 0, clipLit allLit (fidgeting 0)) else (glancingAt (t - 5), clipLit allLit (glancingAt (t - 5))), 0)
+            , ("looking down, the lower pair in view", \t -> if t < 5 then (lookingDown, clipLit (1, 1, 0) lookingDown) else (glancingAt (t - 5), clipLit allLit (glancingAt (t - 5))), 5)
+            , ("nearer, beside a stray reflection", \t -> (nearer, glint t : clipLit allLit nearer), 0)
+            ]
+    forM_ returns $ \(name, back, showing) -> do
+        let (_, backRows) = trackFramesEvents clipBent (putBack back)
+            shown = 10 + gone + showing
+        check ("put back on after 15 minutes, held still with " ++ name ++ ", no light learnt " ++ show (ignored backRows)) $ null (ignored backRows)
+        check ("and tracked " ++ show (fmap (subtract shown) (firstTracked shown (map fst backRows))) ++ " s after all three show, then followed " ++ show (summed (after (shown + 1) (map fst backRows)))) $
+            maybe False (< 1) (fmap (subtract shown) (firstTracked shown (map fst backRows))) && lostCount (after (shown + 1) (map fst backRows)) == 0
+
+    -- The clip lying still in view for 10 minutes, as on the desk, beside
+    -- a fire, then picked up and worn. Lying with two reflectors run
+    -- together, it can't be the clip, and is learnt; once worn, it is seen
+    -- to have gone from there, and is forgotten, but the fire isn't. Lying
+    -- with all three apart, at a pose a head can be at, it is tracked
+    -- there, and not learnt.
+    let lyingFor = 600
+        lyingDown place =
+            wandering $
+                [(t, fidgeting t, heads ++ occluded heads (fireDiscs fireAt i)) | (i, t) <- zip [0 ..] (between 0 10 30), let heads = clipLit allLit (fidgeting t)]
+                    ++ [(t, place, clipLit allLit place ++ fireDiscs fireAt i) | (i, t) <- zip [0 ..] (between 10 (10 + lyingFor) 10)]
+                    ++ [(t, fidgeting 0, fireDiscs fireAt i) | (i, t) <- zip [0 ..] (between (10 + lyingFor) (11 + lyingFor) 30)]
+                    ++ [(t, pose, heads ++ occluded heads (fireDiscs fireAt i)) | (i, t) <- zip [0 ..] (between (11 + lyingFor) (16 + lyingFor) 30), let pose = glancingAt (t - 11 - lyingFor); heads = clipLit allLit pose]
+        wornAt = 11 + lyingFor
+        runTogether = Pose (rotYXZ 30 (-70) 10) (V3 120 200 650)
+        (_, desked) = trackFramesEvents clipBent (lyingDown runTogether)
+        deskLights = filter (not . nearFire) (ignored desked)
+    check ("lying on the desk, learnt as lights " ++ show (ignored desked) ++ ", forgotten once worn " ++ show (moved desked, forgotten desked)) $
+        length deskLights == 2
+            && length (filter nearFire (ignored desked)) == 1
+            && map snd (moved desked) == deskLights
+            && all (\(t, _) -> t > wornAt && t < wornAt + 1) (moved desked)
+            && null (forgotten desked)
+    check ("and the clip worn followed " ++ show (summed (after (wornAt + 1) (map fst desked)))) $ lostCount (after (wornAt + 1) (map fst desked)) == 0
+    let (_, flat) = trackFramesEvents clipBent (lyingDown (Pose (rotYXZ 10 (-40) 0) (V3 120 200 650)))
+        onDesk = after 10.5 (filter (\(t, _, _, _) -> t < 10 + lyingFor) (map fst flat))
+    check ("lying on the desk at a pose a head can be at, mostly tracked there " ++ show (lostCount onDesk, length onDesk)) $
+        lostCount onDesk * 5 < length onDesk
+    check ("and not learnt " ++ show (ignored flat, moved flat) ++ ", then worn and followed " ++ show (summed (after (wornAt + 1) (map fst flat)))) $
+        map nearFire (ignored flat) == [True] && null (moved flat) && lostCount (after (wornAt + 1) (map fst flat)) == 0
+
     -- From a cold start, nothing tells a reflector from a light: the lower
     -- pair held still in view is learnt. Then the top reflector shows, the
     -- clip is found in what was learnt, and as the head turns, the lights
