@@ -898,6 +898,13 @@ main = do
         lostAt = [round (leanDistance t) :: Int | (t, _, Lost{}, _) <- leant]
     check ("leaning in to 270 mm " ++ show (take 3 lostAt, summed leant)) $ null lostAt && fst (worstError leant) < 1
 
+    -- Put back on 500 mm farther back than where it was recentered, as after
+    -- sitting back during a break: found again.
+    let sitBack t = if t < 1 then leantTo 870 else leantTo 1370
+        returned = trackFrames clipBent [(t, sitBack t, renderDiscs (if t >= 1 && t < 3 then [] else pointDiscs defaultIntrinsics clipBent allLit (sitBack t))) | t <- at120 5]
+    check ("sat back after a break " ++ show (summed returned)) $
+        not (any isLost [o | (t, _, o, _) <- returned, t >= 3.1]) && fst (worstError [r | r@(t, _, _, _) <- returned, t >= 3.1]) < 1
+
     -- A phone's lights laid out like the clip, 400 mm in front of the face,
     -- toward the camera, are not the clip leaning in: not while the clip
     -- is in view, nor once it has gone from view.

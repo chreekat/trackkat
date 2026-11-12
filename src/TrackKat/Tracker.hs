@@ -295,10 +295,11 @@ maxTurn dt = 15 + 100 * dt
 maxMove dt = 40 + 200 * dt
 
 -- | The farthest a head turns (degrees) and moves (mm, at its pivot) from
--- where it was recentered: the move to either side, up or down, or back,
--- as the camera sees it. Toward the camera a head leans in much farther,
--- as near as 'nearest'. Beyond that the blobs aren't the clip, but
--- something like a phone's light.
+-- where it was recentered: the move to either side, or up or down, as the
+-- camera sees it. Toward or away from the camera it goes as near as
+-- 'nearest' or as far as 'farthest': people lean in, and sit back after a
+-- break. Beyond that the blobs aren't the clip, but something like a
+-- phone's light.
 maxReachTurn, maxReachMove :: Double
 maxReachTurn = 120
 maxReachMove = 400
@@ -556,8 +557,8 @@ step now stripes t =
                         let alike = [a | a <- cs, seenCount a == seenCount c]
                          in fmap snd (listToMaybe (sortOn fst (mapMaybe attempt (take 5 alike))))
     -- Somewhere a head can be: at a sane distance from the camera, and not
-    -- too far from where it was recentered, though as far toward the
-    -- camera as it likes.
+    -- too far to the side of where it was recentered, though as near or as
+    -- far from the camera as it likes.
     plausible pose =
         let distance = norm (poseT pose)
             pivotAt (Pose r p) = mulMV r pivot ^+^ p
@@ -567,7 +568,7 @@ step now stripes t =
                     moved = pivotAt pose ^-^ pivotAt ref
                     back = dot moved fromCamera
                     aside = norm (moved ^-^ back *^ fromCamera)
-                 in turn <= maxReachTurn && aside <= maxReachMove && back <= maxReachMove
+                 in turn <= maxReachTurn && aside <= maxReachMove
          in distance >= nearest && distance <= farthest && maybe True reach (trReference t)
     seenCount c = length (catMaybes (toList (matchSights c)))
     observations z c = catMaybes (toList (observe z <$> reflectors <*> trSizes t <*> matchSights c))
