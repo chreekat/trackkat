@@ -1,9 +1,10 @@
 -- | Learning the setup from everyday head movement: which way is up as the
 -- camera sees it, and the point the neck turns the head about.
 --
--- Up is the axis of the head's left and right turns. Each brisk turn whose
--- axis is near the current estimate adds that axis, weighted by the angle
--- turned; old turns fade, so a camera that has been moved is learnt again.
+-- Up is the axis of the head's left and right turns: of the main axes of
+-- all its brisk turns, nods and tilts alike, the one nearest the camera's
+-- own up, with old turns fading, so a camera that has been moved is learnt
+-- again (see Note [Learning up]).
 --
 -- The pivot is the point in the head that stays still while the head turns
 -- and the body doesn't. Each half second of tracking with enough turning
@@ -61,7 +62,9 @@ module TrackKat.Calibration (
 ) where
 
 import Data.Char (isSpace)
+import Data.List (maximumBy)
 import Data.Maybe (fromMaybe)
+import Data.Ord (comparing)
 import Text.Printf (printf)
 
 import TrackKat.Linear
@@ -70,11 +73,11 @@ import TrackKat.Pose
 
 -- | Estimates of up and of the neck pivot, with the evidence for each.
 data Calibration = Calibration
-    { upSum :: !V3
-    -- ^ turns' axes in camera axes, pointing up, each times its angle in
-    -- degrees, older turns faded
+    { upScatter :: !M33
+    -- ^ the sum of turns' axes, in camera axes, each times itself and the
+    -- degrees it counts for, older turns faded (see Note [Learning up])
     , upWeight :: !Double
-    -- ^ degrees of turning in 'upSum'
+    -- ^ degrees of turning in 'upScatter'
     , pivotInfo :: !M33
     -- ^ information about the pivot from windows of turning, per mm
     -- squared, faded as in Note [Learning the pivot]; the prior's isn't in it
@@ -94,7 +97,7 @@ data Calibration = Calibration
 defaultCalibration :: Calibration
 defaultCalibration =
     Calibration
-        { upSum = V3 0 0 0
+        { upScatter = zeroM
         , upWeight = 0
         , pivotInfo = zeroM
         , pivotMoment = V3 0 0 0
@@ -114,11 +117,14 @@ mountedCalibration mount c = c{pivotPrior = mountPivot mount}
 cameraUp :: V3
 cameraUp = V3 0 (-1) 0
 
--- | Up, in camera axes.
+-- | Up, in camera axes: of the main axes of turning, the one nearest the
+-- camera's own up, pointing up (see Note [Learning up]).
 estimatedUp :: Calibration -> V3
 estimatedUp c
-    | norm (upSum c) > 0 = normalize (upSum c)
+    | upWeight c > 0 = if dot nearest cameraUp < 0 then (-1) *^ nearest else nearest
     | otherwise = cameraUp
+  where
+    nearest = snd (maximumBy (comparing (abs . dot cameraUp . snd)) (eigenSymmetric (upScatter c)))
 
 estimatedLevel :: Calibration -> Level
 estimatedLevel = levelFromUp . estimatedUp
@@ -255,42 +261,85 @@ turnDegrees, turnSeconds :: Double
 turnDegrees = 10
 turnSeconds = 0.6
 
--- | Turns whose axis is further than this many degrees from the current up
--- are nods, tilts or a mix, and don't count. A camera moved by more needs
--- an explicit calibration.
-upCone :: Double
-upCone = 30
+-- | A turn counts for at most this many degrees, so that a pose the
+-- tracker got wrong for a moment, which looks like a big quick turn, counts
+-- for little.
+turnMost :: Double
+turnMost = 2 * turnDegrees
 
--- | Degrees of turning remembered: about a hundred and fifty glances.
+-- | Degrees of turning remembered: a couple of minutes of looking about.
 upMemory :: Double
-upMemory = 3600
+upMemory = 1800
 
 -- | Degrees of turning before the learnt up is used.
 upConfident :: Double
 upConfident = 180
 
--- | Add a turn, a rotation of the head in camera axes, unless it isn't
--- a left or right turn.
+-- Note [Learning up]
+-- ~~~~~~~~~~~~~~~~~~
+-- Up is the axis the head turns about when it looks left and right. Every
+-- brisk turn, of at least 'turnDegrees' within 'turnSeconds', adds its axis
+-- to a scatter matrix, the sum of each axis times itself, weighted by the
+-- degrees turned (up to 'turnMost'), so that which way a turn went doesn't
+-- matter. Its eigenvectors are the main axes of the head's turning: left
+-- and right, nodding and tilting. A head nods about an axis across it and
+-- tilts about one through its face, both square to the axis it turns left
+-- and right about however far it has turned, so nods and tilts that go as
+-- often one way as the other don't pull that axis aside: they make the
+-- other two. Up is the one of the three nearest the camera's own up, which
+-- is the left and right turning's for any camera tipped or rolled less than
+-- 45 degrees, however much more the head nods or tilts than it turns.
+--
+-- Every turn counts, wherever its axis is, so no estimate, a wrong one
+-- from a few odd turns or one from before the camera moved, can keep out
+-- the evidence against it: beyond 'upMemory' degrees older turns fade as
+-- new ones come, and the main axes follow. (Counting only turns near the
+-- current up, as was done before, held on to a wrong up for good.) An
+-- explicit calibration is taken as half of what is remembered, so that
+-- everyday turning goes on refining it.
+--
+-- A head that rolls a little as it turns, the same way each time, turns
+-- about an axis leaning toward the face or away from it, as does one whose
+-- neck's turning axis leans back. That axis is up all the same: it is what
+-- the head turns about, so a glance left or right is yaw alone to a game,
+-- with no roll or pitch from how the neck happens to turn. So up isn't
+-- quite the way gravity pulls, which turning can't show, and the camera's
+-- tip told is from that axis.
+--
+-- The pivot lies on this axis (see Note [Learning the pivot]), so it is
+-- described along it: with up wrong by some angle about the line of sight,
+-- a pivot below the clip would be told as off to one side by its height
+-- times the sine of that angle.
+
+-- | Add a turn, a rotation of the head in camera axes, if it is brisk enough
+-- to show an axis. See Note [Learning up].
 addTurn :: M33 -> Calibration -> Maybe Calibration
 addTurn rot c
-    | degrees < turnDegrees || angleBetween axis up > upCone * pi / 180 = Nothing
+    | turned < turnDegrees = Nothing
     | otherwise =
         let fade = if upWeight c + degrees > upMemory then (upMemory - degrees) / upWeight c else 1
          in Just
                 c
-                    { upSum = fade *^ upSum c ^+^ degrees *^ axis
+                    { upScatter = scaleM fade (upScatter c) `addM` scaleM degrees (outer axis axis)
                     , upWeight = fade * upWeight c + degrees
                     }
   where
     v = rotationVector rot
-    degrees = norm v * 180 / pi
-    up = estimatedUp c
-    axis = normalize (if dot v up < 0 then (-1) *^ v else v)
+    turned = norm v * 180 / pi
+    degrees = min turnMost turned
+    axis = normalize v
 
 -- | Take an explicitly calibrated level as half of what is remembered, so
 -- that everyday turning goes on refining it.
 withLevel :: Level -> Calibration -> Calibration
-withLevel l c = c{upSum = (upMemory / 2) *^ levelUp l, upWeight = upMemory / 2}
+withLevel l = turnedAbout (upMemory / 2) (levelUp l)
+
+-- | A calibration whose turning, so many degrees of it, was all about the
+-- given up.
+turnedAbout :: Double -> V3 -> Calibration -> Calibration
+turnedAbout weight up c = c{upScatter = scaleM weight (outer u u), upWeight = weight}
+  where
+    u = normalize up
 
 -- * Pivot
 
@@ -761,19 +810,24 @@ parseCalibration :: String -> Either String Calibration
 parseCalibration str = do
     s <- foldl' line (Right emptyFile) (zip [1 :: Int ..] (lines str))
     let up = maybe cameraUp normalize (fUp s)
-        weight = fromMaybe 0 (fTurning s)
+        -- Earlier builds remembered twice as much turning.
+        weight = min upMemory (fromMaybe 0 (fTurning s))
         info = maybe zeroM windowInfo (fInfo s)
         pivot = fromMaybe (estimatedPivot defaultCalibration) (fPivot s)
         prior = pivotPrior defaultCalibration
     pure
-        Calibration
-            { upSum = weight *^ up
-            , upWeight = weight
-            , pivotInfo = info
-            , pivotMoment = mulMV (priorInfo `addM` info) pivot ^-^ mulMV priorInfo prior
-            , pivotWindows = fromMaybe 0 (fWindows s)
-            , pivotPrior = prior
-            }
+        ( turnedAbout
+            weight
+            up
+            Calibration
+                { upScatter = zeroM
+                , upWeight = 0
+                , pivotInfo = info
+                , pivotMoment = mulMV (priorInfo `addM` info) pivot ^-^ mulMV priorInfo prior
+                , pivotWindows = fromMaybe 0 (fWindows s)
+                , pivotPrior = prior
+                }
+        )
   where
     line acc (n, l) =
         acc >>= \s -> case break (== '=') (takeWhile (/= '#') l) of
