@@ -10,7 +10,7 @@ import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, wit
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
 import Control.Monad (forM_, forever, unless, void, when, (<=<))
-import Data.Functor (($>))
+import Data.Functor (($>), (<&>))
 import Data.IORef
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (UTCTime)
@@ -301,6 +301,9 @@ data Looking
 -- last worked.
 data FailureLogged = FailureLogged | NoFailureLogged
 
+-- | Whether a look for a newer version reached GitHub at all.
+data Reach = Reached | Unreached
+
 -- | Keep an installed trackkat tidy and up to date: delete older versions
 -- once games have let go of them, and look for a newer one now and then,
 -- unless updates are off, and whenever the user asks with 'sCheckAsked'.
@@ -315,7 +318,12 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
         wanted <- (== UpdatesOn) . updates <$> readIORef (sSettings s)
         (checked', logged') <-
             if wanted && maybe True (\t -> now - t >= updateEvery) checked
-                then (Just now,) <$> look self Due logged
+                then
+                    look self Due logged <&> \case
+                        -- Not yet online, as just after waking from sleep:
+                        -- again on the next round, in ten minutes.
+                        (Reached, logged') -> (Just now, logged')
+                        (Unreached, logged') -> (Just (now - updateEvery), logged')
                 else pure (checked, logged)
         -- Read, not taken, so a click the timeout cuts off is still there
         -- next time round; emptied once a look has answered it, along with
@@ -323,7 +331,7 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
         timeout (10 * 60 * 1000000) (readMVar (sCheckAsked s)) >>= \case
             Nothing -> go self checked' logged'
             Just () -> do
-                logged'' <- look self Asked logged'
+                (_, logged'') <- look self Asked logged'
                 _ <- tryTakeMVar (sCheckAsked s)
                 looked <- getMonotonicTime
                 go self (Just looked) logged''
@@ -341,7 +349,16 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
             -- Offline, or behind a proxy that won't let it through: the log
             -- says so when asked, and otherwise once until a look works, so
             -- a lasting failure shows; the terminal, if any, every time.
+            -- Offline, as just after waking from sleep, is no news unless
+            -- asked: the next round tries again.
+            (Left (Offline err), _) -> do
+                let line = "Can't reach GitHub to look for a newer trackkat; is the network up? (" ++ err ++ ")"
+                case why of
+                    Due -> consoleLine line
+                    Asked -> say line >> answer (UpdateNote "No network; try later.")
+                pure (Unreached, logged)
             (Left failure, _) -> do
+                -- Offline is answered above.
                 let (line, short) = case failure of
                         Unavailable err ->
                             ( "No update information on GitHub just now (a new build may be being published); try again in a few minutes. (" ++ err ++ ")"
@@ -352,24 +369,24 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
                     (Due, FailureLogged) -> consoleLine line
                     _ -> say line
                 answer (UpdateNote short)
-                pure FailureLogged
+                pure (Reached, FailureLogged)
             (Right (Just v), _) -> do
                 say (ready v)
                 answer (UpdateNote (readyShort v))
-                pure NoFailureLogged
+                pure (Reached, NoFailureLogged)
             -- Fetched by an earlier look, and waiting for a restart.
             (Right Nothing, OfferUpdate v) -> do
                 case why of
                     Asked -> say (ready v)
                     Due -> pure ()
                 answer (UpdateNote (readyShort v))
-                pure NoFailureLogged
+                pure (Reached, NoFailureLogged)
             (Right Nothing, _) -> do
                 case why of
                     Asked -> say ("trackkat is up to date (" ++ versionFolder self ++ ").")
                     Due -> pure ()
                 answer (UpToDate ("Up to date (" ++ versionFolder self ++ ")."))
-                pure NoFailureLogged
+                pure (Reached, NoFailureLogged)
     ready v = "trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time."
     readyShort v = versionFolder v ++ " is ready."
 
