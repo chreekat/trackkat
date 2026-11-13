@@ -9,12 +9,6 @@ Roughly in order.
   In simulation, looking up 30 degrees while turning, the top reflector runs
   into a lower one, the split is off, and tracking goes 10-20 degrees wrong
   and is lost, for points and tabs alike; round blobs pass the same place.
-- The level learner can lock onto a wrong axis: each turn is accepted only
-  within 30 degrees of the current estimate, so an early wrong estimate keeps
-  confirming itself (in simulation, heavy quick nodding and tilting settled
-  near 40 degrees right, true 4, in 2 of 4 runs), and roll that goes with
-  yaw reads about 8 degrees too far down. Estimate up as the main axis of the
-  spread of head orientations instead, with no acceptance cone.
 - With the top tab bent, as on the user's clip, nodding through where the
   triangle squarely faces the camera has tracking slip 10-20 degrees onto
   another pose that fits, for a quarter second each time the head passes,
@@ -29,10 +23,6 @@ Roughly in order.
   degrees more upright than configured leaves the mirror image uncorrected
   on the user's clip and the scalene one, and with the top tab unbent, the
   pose 3-5 degrees and 10-35 mm off. Estimate it, or ask for it.
-- Even without locking on, level learnt from a minute of glancing that nods
-  and rolls too is off by up to about 2 degrees (0.6-1.8 to the right in simulation, for every clip
-  shape), from how the turns' axes mix in nods; three minutes bring it to
-  0.3. Turning left and right alone teaches it within a tenth of a degree.
 - Ground truth from a webcam: record it alongside the camera and estimate the
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.
@@ -50,6 +40,12 @@ Roughly in order.
     points and a mounting).
 
 ## Low priority
+
+- Everyday learning takes up as the main axis of turning nearest the
+  camera's own up (see Note [Learning up]), so a camera tipped or rolled
+  more than 45 degrees, which Calibrate now can still level, has its level
+  pulled onto the axis of nods or tilts as turning goes on. Keep the
+  calibrated up as the axis to stay nearest, if such cameras turn up.
 
 - Predict which reflectors are out of sight in tracking: `TrackKat.Visibility`
   says which tape faces away and which the head hides, but in simulation

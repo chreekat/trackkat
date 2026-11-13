@@ -127,8 +127,8 @@ it left off:
 
 - **Which way is up.** The camera is usually tipped down at you, so its own
   axes would mix some of a left-right turn into roll. trackkat takes up to
-  be the axis your head turns about when you glance left and right. Nods,
-  tilts and slow drifts don't count.
+  be the axis your head turns about when you glance left and right, told
+  apart from the axes it nods and tilts about; slow drifts don't count.
 - **Where your neck pivots.** The clip sits in front of, above and to one
   side of the point your head turns about, so turning your head also moves
   the clip. trackkat finds the point that stays still while you turn (and
@@ -137,7 +137,7 @@ it left off:
 
 Both keep being refined while you play, with older movement counting less,
 so if you move the camera they follow within a few minutes of looking
-around (if you tip it by more than about 30 degrees, calibrate level). Changes
+around, for any camera tipped or rolled less than about 45 degrees. Changes
 apply slowly enough not to move the view, and trackkat logs a line when one
 is worth mentioning:
 
