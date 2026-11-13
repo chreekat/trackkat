@@ -705,6 +705,8 @@ main = do
     check "nothing published yet passes" $ httpFailure "u" 404 == Unavailable "u: HTTP status 404"
     check "server errors pass" $ all (\s -> httpFailure "u" s == Unavailable ("u: HTTP status " ++ show s)) [500, 502, 503, 599]
     check "other statuses don't" $ all (\s -> httpFailure "u" s == LookFailed ("u: HTTP status " ++ show s)) [400, 403, 410, 600]
+    check "no network is offline" $ all (\c -> windowsFailure "u" c == Offline ("u: Windows error " ++ show c)) [12002, 12007, 12029, 12030, 12031]
+    check "other Windows errors aren't" $ windowsFailure "u" 12175 == LookFailed "u: Windows error 12175"
 
     -- The game served through NaturalPoint's NPClient, remembered across
     -- restarts.

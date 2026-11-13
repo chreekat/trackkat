@@ -28,6 +28,7 @@ module TrackKat.Release (
     sameDigest,
     LookFailure (..),
     httpFailure,
+    windowsFailure,
 
     -- * Files
     releaseFiles,
@@ -164,7 +165,10 @@ data LookFailure
       -- likely while a new build is being published, so worth trying again
       -- in a few minutes
       Unavailable String
-    | -- | anything else, as being offline or a download that doesn't check
+    | -- | GitHub couldn't be reached at all: no network, as just after
+      -- waking from sleep, so worth trying again soon
+      Offline String
+    | -- | anything else, as a download that doesn't check
       LookFailed String
     deriving (Eq, Show)
 
@@ -176,6 +180,18 @@ httpFailure url status
     | otherwise = LookFailed described
   where
     described = url ++ ": HTTP status " ++ show status
+
+-- | What a WinHTTP error means, for a URL: the server's name not found, or
+-- no connection to it made or kept, is 'Offline'; others 'LookFailed'.
+windowsFailure :: String -> Int -> LookFailure
+windowsFailure url code
+    | code `elem` unreachable = Offline described
+    | otherwise = LookFailed described
+  where
+    -- timed out, name not resolved, can't connect, connection aborted or
+    -- reset
+    unreachable = [12002, 12007, 12029, 12030, 12031]
+    described = url ++ ": Windows error " ++ show code
 
 -- | The files of a release, as its zip has them and as installing copies
 -- them from a folder it was unzipped to. CI checks the zip against this.

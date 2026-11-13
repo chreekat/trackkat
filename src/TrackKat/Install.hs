@@ -286,7 +286,7 @@ fetch (Web url) to = withCWString url $ \u -> withCWString to $ \t ->
         0 -> pure (Right ())
         rc
             | rc < 0 -> pure (Left (httpFailure url (fromIntegral (negate rc))))
-            | otherwise -> pure (Left (LookFailed (url ++ ": Windows error " ++ show rc)))
+            | otherwise -> pure (Left (windowsFailure url (fromIntegral rc)))
 
 sha256 :: FilePath -> IO (Either String String)
 sha256 f = withCWString f $ \path -> allocaBytes 65 $ \out ->
