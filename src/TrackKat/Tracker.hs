@@ -846,7 +846,9 @@ step now stripes t =
                     (_, _, recent') -> (Just (trBranch t), maybe now recentSince recent')
                 -- A pose still predicting that is left for one found
                 -- afresh is kept while it predicts, unless one left
-                -- before it still does.
+                -- before it still does. What was believed of it was
+                -- believed of the centre too, so it isn't kept past a
+                -- correction or a recentering.
                 leaving = case (way, left, following) of
                     (Resumed, _, _) -> Nothing
                     (FoundAfresh, Nothing, Just r) -> Just (LeftBehind r (trBranch t))
@@ -897,7 +899,7 @@ step now stripes t =
                         , trShape = if correcting then shapeLostSight (trShape t) else trShape t
                         , trSweep = if correcting then fmap (\(Sweep deadline _) -> Sweep deadline []) (trSweep t) else trSweep t
                         , trLights = lights
-                        , trLeft = leaving
+                        , trLeft = if correcting then Nothing else leaving
                         , trBlobs = roles [s | Just s <- toList sights]
                         }
                 (t1, requested) = foldl (handle pose) (restarted, []) (trPending t)
@@ -1293,7 +1295,7 @@ step now stripes t =
                 Just s | sightKind s /= Merged -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
                 _ -> size{sizeUsual = usual}
     at b = (blobX b, blobY b)
-    handle pose (acc, evs) Recenter = (acc{trReference = Just pose, trBranch = recentered (trBranch acc)}, Recentered : evs)
+    handle pose (acc, evs) Recenter = (acc{trReference = Just pose, trBranch = recentered (trBranch acc), trLeft = Nothing}, Recentered : evs)
     handle _ (acc, evs) Calibrate =
         (acc{trSweep = Just (Sweep (now + calibrationSeconds) [])}, CalibrationStarted : evs)
     calibrate pose ref acc = case trSweep acc of
