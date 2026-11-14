@@ -231,14 +231,17 @@ the clip elsewhere, such a light must stay put for five minutes to be
 learnt. The log says so:
 
 ```
-Ignoring a bright light at (156, 297).
+Ignoring a bright light at (156, 297): it stayed put for 3 seconds, and at 813 pixels is bigger than the clip's reflectors (349).
 No longer ignoring the light at (156, 297): it has been gone a while.
-No longer ignoring the light at (300, 95): it moved.
+No longer ignoring the light at (300, 95): it moved off with the clip.
 ```
 
-The second line comes once the light has been out of sight for 45
-seconds, the third when a light turns out to have been one of the clip's
-reflectors, moving off with it. The status line notes blobs ignored, such as `+2 masked`, the
+The first line says why the light was taken for one: here for being
+bigger than a reflector; otherwise for staying put before the clip was
+seen, while the clip was tracked elsewhere, or for longer than a head is
+held still. The second line comes once the light has been out of sight for
+45 seconds, the third when a light turns out to have been one of the clip's
+reflectors, moving off with it, or going as the clip came into view. The status line notes blobs ignored, such as `+2 masked`, the
 window's head view shows them grey among what the camera sees, its
 camera view with the area ignored around each light dashed, and `tirprobe --blobs` marks them `masked`.
 

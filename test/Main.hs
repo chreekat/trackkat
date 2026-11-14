@@ -28,6 +28,7 @@ import TrackKat.Config
 import TrackKat.Frame
 import TrackKat.GamePose
 import TrackKat.Linear
+import TrackKat.Match (Match (..), matchScore, matches, noSize)
 import TrackKat.Pose
 import TrackKat.Protocol
 import TrackKat.Recording
@@ -205,7 +206,7 @@ main = do
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
     check ("one blob is lost: " ++ show (lostOut, lostEvents)) $ case (lostOut, lostEvents) of
-        (Lost 1 0, []) -> True
+        (Lost 1 0 _, []) -> True
         _ -> False
     check ("pending recenter waits for tracking: " ++ show (laterOut, laterEvents)) $ case (laterOut, laterEvents) of
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
@@ -888,7 +889,7 @@ main = do
     check "the stray reported" $ all ((== 1) . seenStrays) (seens reflected)
     let alone = headSeen bentWorn 0 0 0
     check "two reflectors and a stray aren't three reflectors" $ case trackFrames clipBent [(0, alone, renderDiscs (stray : pointDiscs defaultIntrinsics clipBent (1, 0, 1) alone))] of
-        [(_, _, Lost 3 0, _)] -> True
+        [(_, _, Lost 3 0 _, _)] -> True
         _ -> False
 
     -- Lights close to the camera laid out like the clip, as a phone's can
@@ -1060,9 +1061,9 @@ main = do
         firstTracked from rows = case [t | (t, _, Tracked{}, _) <- rows, t >= from] of
             t : _ -> Just t
             [] -> Nothing
-        ignored rows = [p | (_, evs) <- rows, LightIgnored p <- evs]
+        ignored rows = [p | (_, evs) <- rows, LightIgnored p _ <- evs]
         forgotten rows = [(t, p) | ((t, _, _, _), evs) <- rows, LightForgotten p <- evs]
-        moved rows = [(t, p) | ((t, _, _, _), evs) <- rows, LightMoved p <- evs]
+        moved rows = [(t, p) | ((t, _, _, _), evs) <- rows, LightMoved p _ <- evs]
         nearFire p = distance p fireAt < 10
         coldFrames = withFire fireAt [(t, fidgeting t, allLit, True) | t <- at120 8]
         coldWith masking = trackFramesEventsWith masking clipBent coldFrames
@@ -1092,7 +1093,7 @@ main = do
         passFire = project defaultIntrinsics (leaning 1) (mLeft clipBent)
         (_, passRows) = trackFramesEvents clipBent (withFire passFire [(t, passPose t, allLit, True) | t <- at120 10.5])
         passed = map fst passRows
-        passIgnored = [p | ((t, _, _, _), evs) <- passRows, t < 5, LightIgnored p <- evs]
+        passIgnored = [p | ((t, _, _, _), evs) <- passRows, t < 5, LightIgnored p _ <- evs]
     check ("the fire at " ++ show passFire ++ " learnt before the head passes " ++ show passIgnored) $
         length passIgnored == 1 && all (\p -> distance p passFire < 10) passIgnored
     check ("the head passing in front of the fire " ++ show (summed (after 4 passed), maximum (0 : map (length . seenMissing) (seens (after 4 passed))))) $
@@ -1171,8 +1172,8 @@ main = do
     -- the clip is tracked elsewhere with all three reflectors in view.
     let lamp = ((156, 297), 10)
         (_, lampRows) = trackFramesEvents clipBent [(t, fidgeting t, renderDiscs (lamp : pointDiscs defaultIntrinsics clipBent allLit (fidgeting t))) | t <- at30 8]
-    check ("a lamp the size of a reflector learnt beside the tracked clip " ++ show [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p <- evs]) $
-        case [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p <- evs] of
+    check ("a lamp the size of a reflector learnt beside the tracked clip " ++ show [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p _ <- evs]) $
+        case [(t, p) | ((t, _, _, _), evs) <- lampRows, LightIgnored p _ <- evs] of
             [(t, p)] -> t < 3.5 && nearFire p
             _ -> False
 
@@ -1483,7 +1484,7 @@ trackNoisy m amp path =
 corrections :: [((Double, Pose, Outcome, Maybe Pose), [Event])] -> [Double]
 corrections rows = [t | ((t, _, _, _), evs) <- rows, any isCorrected evs]
   where
-    isCorrected Corrected = True
+    isCorrected Corrected{} = True
     isCorrected _ = False
 
 -- | Whether the pose tracked is the mirror image of the true pose rather
@@ -1547,7 +1548,9 @@ after t0 = filter (\(t, _, _, _) -> t >= t0)
 
 -- * Recording and replaying
 
--- | Check that terms judge and explain as they should.
+-- | Check that terms judge and explain as they should, and that tracking
+-- says why it does what it does: why the clip is lost, why a light is
+-- learnt, and what became of windows of turning.
 explainingChecks :: (String -> Bool -> IO ()) -> IO ()
 explainingChecks check = do
     -- Terms: gates and soft terms add up, and say what each found.
@@ -1576,6 +1579,98 @@ explainingChecks check = do
         Term.tallyCounts counted == [("taken", 2), ("small", 2), ("positive", 1)]
             && Term.tallyRejected counted == 3
             && map (brief . findingName) (Term.tallyLast counted) == ["small"]
+
+    -- A match's cost is what its terms come to.
+    let face = headSeen bentWorn 0 0 0
+        blobsOf = findBlobs . renderDiscs
+        found = matches defaultIntrinsics clipBent face (pure noSize) (blobsOf (((340, 288), 3) : pointDiscs defaultIntrinsics clipBent allLit (headSeen bentWorn 3 1 0)))
+    check ("a match's terms are its cost " ++ show (map (Term.renderFindings . matchJudged) (take 2 found))) $
+        not (null found)
+            && and [abs (sum (map (nats . findingScore) (matchJudged m)) - nats (matchScore m)) < 1e-9 && nats (matchScore m) == negate (matchCost m) / 2 | m <- found]
+            && map (map (brief . findingName) . matchJudged) (take 1 found) == [["places", "sizes", "unseen"]]
+
+    -- Why the clip is lost. Moved slowly aside, beyond where a seated
+    -- head goes: the reach from the centre says so, by name.
+    let aside d = let Pose r p = face in Pose r (p ^+^ V3 d 0 0)
+        whys rows = [(t, w) | (t, _, Lost{outWhy = w}, _) <- rows]
+        rejecting rows = nub (map (whyRejectedBy . snd) (whys rows))
+        asideRows = trackPath clipBent [(t, aside (120 * t), allLit) | t <- at120 4.2]
+    check ("moved aside beyond reach, lost for that " ++ show (take 1 (whys asideRows))) $
+        take 1 (rejecting asideRows) == [["aside"]]
+            && and [looking == Following | (_, Why looking _) <- take 1 (whys asideRows)]
+            && and [measureValue m > 400 && measureLimit m == 400 | (_, Why _ (Unfit [Finding (Name "aside" _) _ (Just m)])) <- whys asideRows]
+    check ("and said plainly: " ++ concat (take 1 (map (describeWhy . snd) (whys asideRows)))) $
+        take 1 (map (describeWhy . snd) (whys asideRows)) == ["too far to the side of where you recentered"]
+    check ("and to a developer: " ++ concat (take 1 (map (explainWhy . snd) (whys asideRows)))) $
+        any ("following the clip, rejected: aside 40" `isPrefixOf`) (take 1 (map (explainWhy . snd) (whys asideRows)))
+
+    -- Lights by the camera laid out like the clip: following, they don't
+    -- fit where the clip was; found afresh, they are too near.
+    let phone pose = [(project defaultIntrinsics (Pose (poseR pose) (190 *^ normalize (poseT pose))) p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
+        phoned = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then pointDiscs defaultIntrinsics clipBent allLit face else phone face)) | t <- at120 2]
+    check ("lights by the camera don't fit, then are too near " ++ show (rejecting phoned)) $
+        and ["fit" `elem` whyRejectedBy w | (t, w) <- whys phoned, t < 1.4]
+            && and [looking == Afresh && "near" `elem` whyRejectedBy w | (t, w@(Why looking _)) <- whys phoned, t > 1.6]
+
+    -- Lights laid out like the clip where the clip was, but far smaller
+    -- than its reflectors were: too small.
+    let smallRows = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then lit else if t < 2 then [] else [(p, 0.3 * r) | (p, r) <- lit])) | t <- at120 3, let lit = pointDiscs defaultIntrinsics clipBent allLit face]
+    check ("lights too small for the clip " ++ show (rejecting (after 2 smallRows))) $ rejecting (after 2 smallRows) == [["size"]]
+
+    -- Too few and too many big blobs, and none at all.
+    let countRows n = trackFrames clipBent [(t, face, renderDiscs (take n (((100, 100), 9) : ((500, 400), 9) : pointDiscs defaultIntrinsics clipBent allLit face))) | t <- at120 0.1]
+        counts n = [(measureValue m, measureBound m, measureLimit m) | (_, Why Afresh (Unfit [Finding (Name "big blobs" _) _ (Just m)])) <- whys (countRows n)]
+    check ("fewer than three big blobs, and more " ++ show (map (take 1 . counts) [0, 2, 5])) $
+        map (take 1 . counts) [0, 2, 5] == [[(0, AtLeast, 3)], [(2, AtLeast, 3)], [(5, AtMost, 3)]]
+
+    -- A reflector out of sight for too long: lost for that.
+    let hidden = trackPath clipBent [(t, face, (1, 1, if t > 1 then 0 else 1)) | t <- at120 2.4]
+    check ("a reflector gone too long " ++ show (rejecting hidden)) $ take 1 (rejecting hidden) == [["partly seen"]]
+
+    -- An impossible jump: the head would have turned too fast.
+    let jumped = trackPath clipBent [(t, headSeen bentWorn (if t < 0.5 then 0 else 40) 0 0, allLit) | t <- at120 0.6]
+    check ("a jump " ++ show (rejecting jumped)) $ rejecting jumped == [["turn"]]
+
+    -- A tracked frame says what it was judged by.
+    check "a tracked frame's findings" $ case [map (brief . findingName) (outJudged o) | (_, _, o@Tracked{}, _) <- take 3 jumped] of
+        [afresh, following, _] -> afresh == ["near", "far", "size"] && following == ["places", "sizes", "unseen", "fit", "turn", "move", "near", "far", "turned", "aside"]
+        _ -> False
+
+    -- Why a light is learnt: a lamp bigger than the reflectors, beside
+    -- the clip tracked; and a fire before the clip was ever seen.
+    let glancing t = headSeen bentWorn (20 * sin (2 * pi * t / 2.5)) (5 * sin (2 * pi * t / 3.7)) 0
+        learnings rows = [why | (_, evs) <- rows, LightIgnored _ why <- evs]
+        (_, lampRows) = trackFramesEvents clipBent [(t, glancing t, renderDiscs ([((500, 100), 14) | t >= 1] ++ pointDiscs defaultIntrinsics clipBent allLit (glancing t))) | t <- at120 5]
+        (_, fireRows) = trackFramesEvents clipBent [(t, face, renderDiscs [((500, 100), 14)]) | t <- at120 5]
+    check ("a lamp learnt for staying put and being big " ++ show (learnings lampRows)) $ case learnings lampRows of
+        [Learning still size (BiggerThanReflectors biggest)] -> still >= 3 && still < 3.1 && size > 1.5 * biggest && biggest > 200
+        _ -> False
+    check ("a light learnt before the clip was seen " ++ show (learnings fireRows)) $ case learnings fireRows of
+        [Learning still _ NoReflectorSeen] -> still >= 3 && still < 3.1
+        _ -> False
+    check "and told why" $
+        [describeLightIgnored (500, 100) why | why <- learnings fireRows] == ["Ignoring a bright light at (500, 100): it stayed put for 3 seconds, before the clip was seen."]
+
+    -- Windows of turning are counted as taken, by each thing that learns
+    -- from them, and those of a head then held still as left out for too
+    -- little turning.
+    let turnedThenStill = rendered clipBent [(t, if t < 8 then glancing t else glancing 8, allLit) | t <- at120 13]
+        (turnedTracker, _) = trackFramesEvents clipBent (takeWhile (\(t, _, _) -> t < 8) turnedThenStill)
+        (stillTracker, _) = trackFramesEvents clipBent turnedThenStill
+        taken w = sum [n | ("taken", n) <- Term.tallyCounts w]
+        leftOut w = sum [n | ("turn", n) <- Term.tallyCounts w]
+        tallies tracker = [(what, Term.renderTally w) | (what, w) <- trackerWindows tracker]
+    check ("windows of a turning head are taken " ++ show (tallies turnedTracker)) $
+        map fst (trackerWindows turnedTracker) == ["pivot", "clip shape", "mirror image"] && and [taken w > 2 | (_, w) <- trackerWindows turnedTracker]
+    check ("and of a head then still, left out for too little turning " ++ show (tallies stillTracker)) $
+        and
+            [ taken after <= taken before + 1 && leftOut after >= leftOut before + 3 && map (brief . findingName) (Term.tallyLast after) == ["turn"]
+            | ((_, before), (_, after)) <- zip (trackerWindows turnedTracker) (trackerWindows stillTracker)
+            ]
+  where
+    bentWorn = -23
+    at120 :: Double -> [Double]
+    at120 = framesAt 120
 
 -- | Check that a session recorded as tirprobe records one replays to the
 -- very same outcomes, events and poses, and that the recordings of real
@@ -1646,7 +1741,7 @@ recordingChecks check = do
 -- recording whose view turned to its mirror image just before its first
 -- mark, which a fix stops:
 --
--- > ("no mirror image before the mark", "test/recordings/flip.txt", \rs -> null [() | (_, Corrected) <- eventsBeforeMark 1 2 rs])
+-- > ("no mirror image before the mark", "test/recordings/flip.txt", \rs -> null [() | (_, Corrected{}) <- eventsBeforeMark 1 2 rs])
 recordingRegressions :: [(String, FilePath, [Replayed] -> Bool)]
 recordingRegressions = []
 
