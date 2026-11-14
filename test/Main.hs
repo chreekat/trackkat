@@ -1636,6 +1636,30 @@ explainingChecks check = do
         [afresh, following, _] -> afresh == ["near", "far", "size"] && following == ["places", "sizes", "unseen", "fit", "turn", "move", "near", "far", "turned", "aside"]
         _ -> False
 
+    -- Told to the user once it has lasted a second, and not again for a
+    -- while, unless the clip came back meanwhile and the quiet has passed.
+    let lostFor why = Lost 3 0 why
+        because name = Why Following (Unfit [Finding (Name name ("it is " ++ name)) Term.impossible Nothing])
+        tracked = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) []
+        tellings = snd . mapAccumL (\a (t, o) -> let (a', said) = absence t o a in (a', (,) t <$> said)) noAbsence
+        outcomeAt t
+            | t < 2 = tracked
+            | t < 8 = lostFor (because "aside")
+            | t < 20 = lostFor (because "far")
+            | t < 21 = tracked
+            | t < 40 = lostFor (because "far")
+            | otherwise = Lost 2 0 (because "far")
+        told = [said | Just said <- tellings [(t, outcomeAt t) | t <- at120 50]]
+    check ("out of sight is told once a second in, then seldom " ++ show told) $ case told of
+        [(a, first), (b, second), (c, third)] ->
+            abs (a - 3) < 0.02
+                && first == "The clip is out of sight, though 3 lights are in view: it is aside."
+                && abs (b - 13) < 0.02
+                && second == "The clip is out of sight, though 3 lights are in view: it is far."
+                && abs (c - 23) < 0.02
+                && third == second
+        _ -> False
+
     -- Why a light is learnt: a lamp bigger than the reflectors, beside
     -- the clip tracked; and a fire before the clip was ever seen.
     let glancing t = headSeen bentWorn (20 * sin (2 * pi * t / 2.5)) (5 * sin (2 * pi * t / 3.7)) 0
