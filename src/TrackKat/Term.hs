@@ -232,9 +232,9 @@ accepts t h = termScore t h /= never
 findings :: Term h -> h -> [Finding]
 findings t h = termFindings t h []
 
--- | What each term scored, by its brief name.
-explain :: Term h -> h -> [(String, Score)]
-explain t h = [(brief (findingName f), findingScore f) | f <- findings t h]
+-- | What each term scored, by name, in the order they were added.
+explain :: Term h -> h -> [(Name, Score)]
+explain t h = [(findingName f, findingScore f) | f <- findings t h]
 
 -- | Whether a hypothesis is accepted, with what its terms come to, or
 -- rejected, with what the terms that made it impossible found.

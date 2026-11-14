@@ -1559,8 +1559,9 @@ explainingChecks check = do
         likely = Term.gaussian (Name "likely" "unlikely") "degrees" 2 snd
         dear = Term.cost (Name "dear" "costly") snd
         both = small <> positive <> likely <> dear
-    check ("terms add up " ++ show (Term.explain both (4, 3))) $
-        Term.explain both (4, 3) == [("small", Score 0), ("positive", Score 0), ("likely", Score (-1.125)), ("dear", Score (-3))]
+    let explained h = [(brief name, s) | (name, s) <- Term.explain both h]
+    check ("terms add up " ++ show (explained (4, 3))) $
+        explained (4, 3) == [("small", Score 0), ("positive", Score 0), ("likely", Score (-1.125)), ("dear", Score (-3))]
             && Term.score both (4, 3) == Score (-4.125)
             && Term.accepts both (4, 3)
             && Term.verdict both (4, 3) == Accepted (Score (-4.125))
