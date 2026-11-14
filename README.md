@@ -97,6 +97,10 @@ Either way they apply at once, while you play.
 - **No camera?** Check the WinUSB setup above, and that NaturalPoint's
   software isn't running. [`tirprobe`](docs/tirprobe.md) talks to the camera
   directly.
+- **Clip out of sight with its reflectors in view?** After a second the log
+  says why, such as `The clip is out of sight, though 3 lights are in view:
+  too far to the side of where you recentered.` Recenter if you have moved
+  your seat.
 - **Tracking goes wrong?** [Record it](docs/tirprobe.md#recording-a-problem)
   with tirprobe, so it can be replayed exactly.
 - **A game doesn't move?** `npclient.log`, in `%APPDATA%\trackkat`, records

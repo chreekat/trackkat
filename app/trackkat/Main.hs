@@ -781,6 +781,7 @@ track s cam = do
     lastArrival <- newIORef Nothing
     window <- newIORef emptyWindow
     gcsSeen <- newIORef =<< gcCount
+    absent <- newIORef noAbsence
     withLights cam $ \lights -> withPackets cam $ \next -> forever $ do
         (arrived, packets) <- next
         forM_ packets $ \case
@@ -807,6 +808,7 @@ track s cam = do
                             let (p, sh') = shape r t now hp sh in (sh', p)
                         writeIORef (sLatest s) shaped
                     Lost{} -> writeIORef (sClip s) ClipLost
+                mapM_ say =<< atomicModifyIORef' absent (absence now outcome)
                 paused <- readIORef (sPaused s)
                 sent <- maybe (readIORef (sLatest s)) pure paused
                 publish (toGamePose sent)
@@ -940,8 +942,8 @@ status outcome paused gameConnected =
             Tracked{outPose = hp, outSeen = seen} ->
                 printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
                     ++ describeSeen seen
-            Lost n masked _ ->
-                "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ ")"
+            Lost n masked why ->
+                "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ "): " ++ describeWhy why
         , maybe "" (const "   PAUSED") paused
         , if gameConnected then "   game connected" else ""
         ]
