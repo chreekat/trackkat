@@ -35,6 +35,7 @@ import TrackKat.Number (parseNumber, renderNumber)
 import TrackKat.Pose
 import TrackKat.Recording
 import TrackKat.Shape
+import TrackKat.Term (Tally, renderFindings, renderTally, tallyLast, tallyRejected)
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 
@@ -51,6 +52,7 @@ data Options = Options
     , optRecord :: Maybe FilePath
     , optReplay :: Maybe FilePath
     , optEveryFrame :: Bool
+    , optExplain :: Bool
     }
 
 usage :: String
@@ -58,9 +60,9 @@ usage =
     unlines
         [ "usage: tirprobe [--blobs] [--clip LR,LT,RT] [--focal F] [--threshold N]"
         , "                [--ir 5|6|7] [--no-status-led] [--no-mask] [--raw]"
-        , "                [--record FILE]"
+        , "                [--record FILE] [--explain]"
         , "       tirprobe --replay FILE [--blobs] [--every-frame] [--clip LR,LT,RT]"
-        , "                [--no-mask]"
+        , "                [--no-mask] [--explain]"
         , "       tirprobe --list"
         , ""
         , "Shows head pose relative to where you were when you last pressed Enter."
@@ -97,6 +99,11 @@ usage =
         , "                    recording used"
         , "  --every-frame     with --replay, print every frame's line, not ten"
         , "                    a second"
+        , "  --explain         after each frame's line, what tracking judged it"
+        , "                    by: each term's figure against its limit; and a"
+        , "                    line for each window of head turning that the"
+        , "                    neck pivot, the clip's shape or the mirror image"
+        , "                    wasn't learnt from, with what ruled it out"
         , "  --list            list all USB devices and whether we can open them"
         , ""
         , "Press Ctrl-C to stop."
@@ -110,6 +117,7 @@ parseArgs ("--blobs" : r) o = parseArgs r o{optBlobs = True}
 parseArgs ("--record" : path : r) o = parseArgs r o{optRecord = Just path}
 parseArgs ("--replay" : path : r) o = parseArgs r o{optReplay = Just path}
 parseArgs ("--every-frame" : r) o = parseArgs r o{optEveryFrame = True}
+parseArgs ("--explain" : r) o = parseArgs r o{optExplain = True}
 parseArgs ("--focal" : n : r) o | Just v <- readMaybe n, v > 0 = parseArgs r o{optFocal = v}
 parseArgs ("--clip" : spec : r) o
     | [Just lr, Just lt, Just rt] <- map parseNumber (splitOn ',' spec)
@@ -126,7 +134,7 @@ main :: IO ()
 main = do
     hSetBuffering stdout LineBuffering
     args <- getArgs
-    opts <- case parseArgs args (Options defaultSettings False False False Nothing (focal defaultIntrinsics) Nothing Nothing Nothing False) of
+    opts <- case parseArgs args (Options defaultSettings False False False Nothing (focal defaultIntrinsics) Nothing Nothing Nothing False False) of
         Right o -> pure o
         Left err -> hPutStrLn stderr (err ++ "\n\n" ++ usage) >> exitFailure
     let logger = putStrLn . ("# " ++)
@@ -244,6 +252,7 @@ track opts cam rec tracker0 = do
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
     tracker <- newIORef tracker0
+    told <- newIORef (nothingTold tracker0)
     -- What the user did since the last frame, newest first.
     inputs <- newIORef []
     marks <- newIORef (0 :: Int)
@@ -269,6 +278,7 @@ track opts cam rec tracker0 = do
             (t', outcome, events) <- trackLive rec pending now n stripes =<< readIORef tracker
             writeIORef tracker $! t'
             mapM_ (putStrLn . describeEvent (trackerCentre t')) events
+            mapM_ putStrLn =<< atomicModifyIORef' told (\was -> let (now', said) = tell opts t' outcome was in (now', said))
             pure (outcome, trackerBlobs t')
     let loop lights next = do
             (_, pkts) <- next
@@ -290,7 +300,7 @@ track opts cam rec tracker0 = do
                             putStrLn $
                                 if optBlobs opts
                                     then summary n fps blobs
-                                    else showOutcome tracked
+                                    else showOutcome opts tracked
                     Corrupt why bytes -> do
                         now <- getMonotonicTimeNSec
                         record rec (CorruptEntry now why)
@@ -321,27 +331,63 @@ replayFile opts path = do
     let at t line = printf "%10.3f  %s" (secondsSince start t) line :: String
         -- As live: a frame's line ten times a second, counting the frames
         -- since the last. Returns the last frame's tracker.
-        go _ latest [] = pure latest
-        go printed@(lastPrint, frames) latest (Replayed e result : rest) = case (e, result) of
+        go _ _ latest [] = pure latest
+        go printed@(lastPrint, frames) was latest (Replayed e result : rest) = case (e, result) of
             (FrameEntry t n _, Just (tracker, outcome, events)) -> do
                 mapM_ (putStrLn . at t . describeEvent (trackerCentre tracker)) events
+                let (now', said) = tell opts tracker outcome was
+                mapM_ (putStrLn . at t) said
                 let now = secondsSince start t
                     due = optEveryFrame opts || now - lastPrint >= 0.1
                     fps = fromIntegral (frames + 1) / (now - lastPrint) :: Double
                 when due . putStrLn . at t $
                     if optBlobs opts
                         then summary n fps (trackerBlobs tracker)
-                        else showOutcome outcome
-                go (if due then (now, 0) else (lastPrint, frames + 1)) (Just tracker) rest
-            (FrameEntry{}, Nothing) -> go printed latest rest
-            (InputEntry t (Press Recenter), _) -> putStrLn (at t "# Enter pressed") >> go printed latest rest
-            (InputEntry t (Press Calibrate), _) -> putStrLn (at t "# c Enter pressed") >> go printed latest rest
-            (InputEntry t (Mark m), _) -> putStrLn (at t ("# mark " ++ show m)) >> go printed latest rest
-            (CorruptEntry t why, _) -> putStrLn (at t ("# corrupt packet: " ++ why)) >> go printed latest rest
+                        else showOutcome opts outcome
+                go (if due then (now, 0) else (lastPrint, frames + 1)) now' (Just tracker) rest
+            (FrameEntry{}, Nothing) -> go printed was latest rest
+            (InputEntry t (Press Recenter), _) -> putStrLn (at t "# Enter pressed") >> go printed was latest rest
+            (InputEntry t (Press Calibrate), _) -> putStrLn (at t "# c Enter pressed") >> go printed was latest rest
+            (InputEntry t (Mark m), _) -> putStrLn (at t ("# mark " ++ show m)) >> go printed was latest rest
+            (CorruptEntry t why, _) -> putStrLn (at t ("# corrupt packet: " ++ why)) >> go printed was latest rest
             (Unreadable n why, _) -> hPutStrLn stderr (path ++ ": line " ++ show n ++ ": " ++ why ++ "; stopping there") >> pure latest
-    final <- go (-1 / 0, 0 :: Int) Nothing replayed
-    -- What the recording says of the clip's shape, sure or not.
-    forM_ final $ \tracker -> putStrLn ("# " ++ describeShapeSoFar (trackerShape tracker))
+    final <- go (-1 / 0, 0 :: Int) (either (const (Told Nothing [])) nothingTold (startTracker start)) Nothing replayed
+    -- What the recording says of the clip's shape, sure or not, and what
+    -- became of its windows of head turning.
+    forM_ final $ \tracker -> do
+        putStrLn ("# " ++ describeShapeSoFar (trackerShape tracker))
+        forM_ (trackerWindows tracker) $ \(what, windows) ->
+            putStrLn ("# windows of turning for the " ++ what ++ ": " ++ renderTally windows)
+
+-- | What has been said of why tracking stands as it does: why the clip was
+-- lost, if it is, and the windows of turning counted so far.
+data Told = Told (Maybe Why) [(String, Tally)]
+
+-- | Nothing said yet, of a tracker that hasn't tracked.
+nothingTold :: Tracker -> Told
+nothingTold = Told Nothing . trackerWindows
+
+-- | Lines on what changed with a frame: the clip lost, or lost for another
+-- reason than it was; and, if explaining, each window of turning not
+-- learnt from, with what ruled it out.
+tell :: Options -> Tracker -> Outcome -> Told -> (Told, [String])
+tell opts tracker outcome (Told was windows) = (Told why windows', lost ++ ruledOut)
+  where
+    why = case outcome of
+        Lost{outWhy = w} -> Just w
+        Tracked{} -> Nothing
+    lost = case (was, outcome) of
+        (before, Lost{outBlobs = n, outWhy = w})
+            | maybe True (not . sameWhy w) before ->
+                ["# lost, with " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ": " ++ explainWhy w]
+        _ -> []
+    windows' = trackerWindows tracker
+    ruledOut =
+        [ "# a window of turning not used for the " ++ what ++ ": " ++ renderFindings (tallyLast now')
+        | optExplain opts
+        , ((what, now'), (_, before)) <- zip windows' windows
+        , tallyRejected now' > tallyRejected before
+        ]
 
 isTracked :: Outcome -> Bool
 isTracked Tracked{} = True
@@ -358,15 +404,16 @@ describeEvent _ (Calibrated c) =
 describeEvent _ (Refined LevelRefined c) = "# " ++ describeLevel c
 describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
 describeEvent _ (ShapeEstimated est) = "# " ++ describeShape est
-describeEvent _ Corrected{} = "# corrected a mirror-image pose"
+describeEvent _ (Corrected evidence) = "# corrected a mirror-image pose: " ++ describeEvidence evidence
 describeEvent _ (LightIgnored p why) = "# " ++ describeLightIgnored p why
 describeEvent _ (LightForgotten p) = "# " ++ describeLightForgotten p
 describeEvent _ (LightMoved p how) = "# " ++ describeLightMoved p how
 
-showOutcome :: Outcome -> String
-showOutcome (Lost n masked _) =
-    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "")
-showOutcome (Tracked hp dist err seen _) =
+-- | A frame's line; if explaining, with what tracking judged it by.
+showOutcome :: Options -> Outcome -> String
+showOutcome opts (Lost n masked why) =
+    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ (if optExplain opts then "   " ++ explainWhy why else "")
+showOutcome opts (Tracked hp dist err seen judged) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
         (yaw hp)
@@ -378,6 +425,7 @@ showOutcome (Tracked hp dist err seen _) =
         dist
         err
         ++ describeSeen seen
+        ++ (if optExplain opts then "   " ++ renderFindings judged else "")
 
 -- | A frame's blobs, those masked as part of a still light marked.
 summary :: (Integral a) => a -> Double -> [(Blob, BlobRole)] -> String
