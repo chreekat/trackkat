@@ -32,6 +32,7 @@ module TrackKat.Calibration (
     describePivotBriefly,
     learntClip,
     plausiblePivot,
+    neckCanBeAt,
     plausibleCalibration,
     screenCalibration,
 
@@ -39,6 +40,7 @@ module TrackKat.Calibration (
     Learner,
     newLearner,
     learnerCalibration,
+    learnerWindows,
     appliedLevel,
     appliedPivot,
     Refinement (..),
@@ -70,6 +72,7 @@ import Text.Printf (printf)
 import TrackKat.Linear
 import TrackKat.Number
 import TrackKat.Pose
+import TrackKat.Term (Bound (..), Finding, Measure (..), Name (..), Tally, Term, Verdict (..), about, accepts, atLeast, atMost, gate, noTally, possible, rejections, tally)
 import TrackKat.World (World (..), inMillimetres, inPerSecond, times, world)
 
 -- | Estimates of up and of the neck pivot, with the evidence for each.
@@ -345,13 +348,21 @@ turnedAbout weight up c = c{upScatter = scaleM weight (outer u u), upWeight = we
 -- * Pivot
 
 -- | Whether a pivot, in the head's axes, is where a neck can be: behind the
--- reflectors, on the side away from where they face, by at least the
--- world's 'neckBehindClip', and within its 'neckWithin' of them. However the clip sits on the head, and however its post
+-- reflectors, on the side away from where they face, and within a head's
+-- reach of them. However the clip sits on the head, and however its post
 -- is bent, the head is behind the reflectors; a pivot in front of them was
 -- learnt from mirror-image poses (see 'mirrorPose'), on which the head
 -- seems to turn about a point in front of the clip.
 plausiblePivot :: Model -> V3 -> Bool
-plausiblePivot m p = dot p (towardHead m) >= inMillimetres (neckBehindClip world) && norm p <= inMillimetres (neckWithin world)
+plausiblePivot m = accepts (neckCanBeAt "pivot" m)
+
+-- | Whether a pivot, called as given, is where a neck can be on the given
+-- clip (see 'plausiblePivot'): at least the world's 'neckBehindClip'
+-- behind the reflectors, and within its 'neckWithin' of the clip.
+neckCanBeAt :: String -> Model -> Term V3
+neckCanBeAt what m =
+    atLeast (Name (what ++ " behind") ("the " ++ what ++ " would be in front of the clip, where no neck is")) "mm" (inMillimetres (neckBehindClip world)) (\p -> dot p (towardHead m))
+        <> atMost (Name (what ++ " away") ("the " ++ what ++ " would be further from the clip than a neck is")) "mm" (inMillimetres (neckWithin world)) norm
 
 -- | Whether what was learnt of the pivot is plausible for the given clip.
 -- A calibration whose pivot isn't came from mirror-image poses, and its
@@ -412,6 +423,13 @@ screenCalibration m c
 -- on how the head nods: quick small nods put it high, at the skull's base,
 -- and slow deep ones low, in the neck; while it is little shown, the prior
 -- holds it between.
+--
+-- Which windows are learnt from is decided by terms ('usable'; see
+-- "TrackKat.Term"): the head turned enough, one point explains the
+-- movement, and that point and the estimate are where a neck can be
+-- ('neckCanBeAt'). The learner counts windows by what took or rejected
+-- them ('learnerWindows'), so that a pivot that won't settle can be seen
+-- to be starved of turning, or of a still body.
 
 -- | How far, mm, the pivot is from 'pivotPrior' on most heads, in any
 -- direction: the standard deviation of the prior, the world's
@@ -494,7 +512,8 @@ addPose (Pose r t) w =
 
 -- | Add a window if the head turned enough during it, a fixed point
 -- explains its movement, and that point and the estimate with it are where
--- a neck can be on the given clip. See Note [Learning the pivot].
+-- a neck can be on the given clip; or what the terms that reject it found
+-- ('usable'). See Note [Learning the pivot].
 --
 -- With rotations R_i and translations t_i, a point p in the model's axes is
 -- at R_i p + t_i. Fitting p and the still position c to R_i p + t_i = c by
@@ -502,12 +521,12 @@ addPose (Pose r t) w =
 -- A = n I - S^T S / n, b = S^T T / n - sum R_i^T t_i, S and T the sums of
 -- R_i and t_i. A fit of the window alone, held near the current estimate
 -- along the axis it can't see, must explain it within 'windowFit'.
-addWindow :: Model -> TurnWindow -> Calibration -> Maybe Calibration
+addWindow :: Model -> TurnWindow -> Calibration -> Either [Finding] Calibration
 addWindow m w c
-    | wSpan w < windowSpan * pi / 180 || fit > windowFit || not (plausiblePivot m own) = Nothing
-    | not (plausiblePivot m (estimatedPivot added)) = Nothing
-    | otherwise = Just added
+    | accepts (usable m) fitted = Right added
+    | otherwise = Left (rejections (usable m) fitted)
   where
+    fitted = Fitted w own fit (estimatedPivot added)
     (a, b) = normalEquations w
     (own, fit) = fixedPoint holdStrength (estimatedPivot c) w
     weight = windowPoses / (fromIntegral (wCount w) * (fit * fit + windowNoise * windowNoise))
@@ -519,6 +538,28 @@ addWindow m w c
             , pivotMoment = rememberedMoment
             , pivotWindows = pivotWindows c * (1 - 1 / countMemory) + 1
             }
+
+-- | A window of turning as fitted: the window, the point that moved least
+-- during it and the RMS distance, mm, it moved, and what the pivot would
+-- be estimated as with the window added.
+data Fitted = Fitted TurnWindow V3 Double V3
+
+-- | Whether a window says anything of the pivot: the head turned through
+-- 'windowSpan', the point that moved least moved within 'windowFit', and
+-- that point and the estimate with the window added are where a neck can
+-- be.
+usable :: Model -> Term Fitted
+usable m =
+    gate
+        (Name "turn" "the head turned too little")
+        (\(Fitted w _ _ _) -> not (wSpan w < windowSpan * pi / 180))
+        (\(Fitted w _ _ _) -> Measure (windowTurn w) AtLeast windowSpan "degrees")
+        <> gate
+            (Name "fit" "the body moved while the head turned")
+            (\(Fitted _ _ fit _) -> not (fit > windowFit))
+            (\(Fitted _ _ fit _) -> Measure fit AtMost windowFit "mm")
+        <> about (\(Fitted _ own _ _) -> own) (neckCanBeAt "window's pivot" m)
+        <> about (\(Fitted _ _ _ estimate) -> estimate) (neckCanBeAt "pivot" m)
 
 -- | Information about the pivot from windows, and its moment, with
 -- evidence taken away along any direction where there is more than
@@ -639,12 +680,15 @@ data Learner = Learner
     -- ^ up as last reported
     , lToldPivot :: !V3
     -- ^ pivot as last reported
+    , lWindows :: !Tally
+    -- ^ windows of turning taken for the pivot, and those not, by what
+    -- rejected them
     }
 
 -- | Start learning about a head wearing the given clip from a calibration,
 -- applying it at once.
 newLearner :: Model -> Calibration -> Learner
-newLearner m c = Learner m mc Nothing Nothing Nothing up pivot up pivot
+newLearner m c = Learner m mc Nothing Nothing Nothing up pivot up pivot noTally
   where
     mc = mountedCalibration (mMount m) c
     up = estimatedUp mc
@@ -652,6 +696,12 @@ newLearner m c = Learner m mc Nothing Nothing Nothing up pivot up pivot
 
 learnerCalibration :: Learner -> Calibration
 learnerCalibration = lCalibration
+
+-- | How many windows of turning the pivot has been learnt from since the
+-- learner was made, and how many were left out, by the term that rejected
+-- them (see 'usable'), with what the last one left out was rejected for.
+learnerWindows :: Learner -> Tally
+learnerWindows = lWindows
 
 appliedLevel :: Learner -> Level
 appliedLevel = levelFromUp . lUp
@@ -697,6 +747,7 @@ learn now pose l =
         , lPivot = towards (pivotRate * dt) (lPivot l) pivotEst
         , lToldUp = if levelNews then upEst else lToldUp l
         , lToldPivot = if pivotNewsNow then pivotEst else lToldPivot l
+        , lWindows = windows'
         }
     , [LevelRefined | levelNews] ++ [PivotRefined | pivotNewsNow]
     )
@@ -713,10 +764,12 @@ learn now pose l =
           where
             turned = r `mulMM` transpose r0
         Nothing -> (lCalibration l, Just (now, r))
-    (c2, window') = case maybe (startWindow now pose) (addPose pose) (lWindow l) of
+    (c2, window', windows') = case maybe (startWindow now pose) (addPose pose) (lWindow l) of
         w
-            | now - windowStart w >= windowSeconds -> (fromMaybe c1 (addWindow (lModel l) w c1), Nothing)
-            | otherwise -> (c1, Just w)
+            | now - windowStart w >= windowSeconds -> case addWindow (lModel l) w c1 of
+                Right added -> (added, Nothing, tally (Accepted possible) (lWindows l))
+                Left failed -> (c1, Nothing, tally (Rejected failed) (lWindows l))
+            | otherwise -> (c1, Just w, lWindows l)
     upEst = estimatedUp c2
     pivotEst = estimatedPivot c2
     levelNews = upWeight c2 >= upConfident && angleBetween upEst (lToldUp l) >= upNews * pi / 180
