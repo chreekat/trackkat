@@ -151,14 +151,20 @@ data World = World
     -- a pixel, and the clip's shape and tabs to the rest
     , headStepTurn :: Degrees
     , headStepMove :: Millimetres
-    -- ^ the most a head turns, and its pivot moves, from one frame to the
-    -- next: far more than a head does (1800 degrees and nearly 5 m a second
-    -- at 'frameRate'), but less than blobs matched to the wrong reflectors
-    -- make it seem to
+    -- ^ the most a pose followed from one frame to the next turns, and its
+    -- pivot moves: not how fast a head goes (that is 'headTurnSpeed' and
+    -- 'headMoveSpeed', and this is 1800 degrees and nearly 5 m a second at
+    -- 'frameRate') but an allowance, set below what blobs matched to the
+    -- wrong reflectors make a head seem to do
     , headTurnRate :: DegreesPerSecond
     , headMoveRate :: MillimetresPerSecond
-    -- ^ how much further a head turns and moves for each second between
-    -- two sightings of it
+    -- ^ how much more that allowance is for each second between two
+    -- sightings of the clip
+    , headTurnSpeed :: DegreesPerSecond
+    , headMoveSpeed :: MillimetresPerSecond
+    -- ^ the spreads of how fast a head turns, and its pivot moves: a quick
+    -- glance or lean is at about one, and the fastest a head goes, some 600
+    -- degrees and 1 m a second, at two
     , headTurnSpread :: Degrees
     -- ^ the spread of how far a head is turned from where it was centred
     , headReachAside :: Millimetres
@@ -188,8 +194,9 @@ data World = World
     deriving (Show)
 
 -- | The world as trackkat takes it to be: a TrackIR 5 on a monitor, and
--- someone seated in front of it. Every value is the one tracking used
--- before the facts were gathered here.
+-- someone seated in front of it. Every value but a head's speed
+-- ('headTurnSpeed', 'headMoveSpeed') is the one tracking used before the
+-- facts were gathered here.
 world :: World
 world =
     World
@@ -201,6 +208,8 @@ world =
         , headStepMove = millimetres 40
         , headTurnRate = perSecond 100
         , headMoveRate = perSecond 200
+        , headTurnSpeed = perSecond 300
+        , headMoveSpeed = perSecond 500
         , headTurnSpread = degrees 40
         , headReachAside = millimetres 400
         , bodySway = millimetres 5
