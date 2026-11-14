@@ -2,6 +2,16 @@
 
 Roughly in order.
 
+- Straighten tracking's heuristics, the last two steps of four (see
+  [docs/heuristics.md](docs/heuristics.md), which lists every number and
+  thirteen contradictions among them): choose among a frame's candidates by
+  their terms' scores, with the gates that have bitten softened into
+  likelihoods and one term for a blob's size; then one way of remembering,
+  evidence that fades at a stated rate, in place of six.
+- Show why the clip is out of sight in the window, not only the log: the
+  Clip light's "Out of sight (3 of 3)" has no room for "too far to the side
+  of where you recentered" (`describeWhy`), so it wants a second line or
+  the head view's note.
 - Once ignoring still lights has proven itself, make it always on and drop
   the `ignore lights` setting and its checkbox.
 - Split merged blobs of elongated reflectors: `splitMerged` takes each
