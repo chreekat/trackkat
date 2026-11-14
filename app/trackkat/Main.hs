@@ -942,7 +942,7 @@ status outcome paused gameConnected =
             Tracked{outPose = hp, outSeen = seen} ->
                 printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
                     ++ describeSeen seen
-            Lost n masked why ->
+            Lost n masked why _ ->
                 "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ "): " ++ describeWhy why
         , maybe "" (const "   PAUSED") paused
         , if gameConnected then "   game connected" else ""

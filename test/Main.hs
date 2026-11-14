@@ -206,7 +206,7 @@ main = do
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
     check ("one blob is lost: " ++ show (lostOut, lostEvents)) $ case (lostOut, lostEvents) of
-        (Lost 1 0 _, []) -> True
+        (Lost 1 0 _ _, []) -> True
         _ -> False
     check ("pending recenter waits for tracking: " ++ show (laterOut, laterEvents)) $ case (laterOut, laterEvents) of
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
@@ -861,11 +861,15 @@ main = do
     check ("height labelling swaps while nodding: " ++ show swapped) $ swapped > 100
     check ("nodding through the swap " ++ show (summed nodded)) $ lostCount nodded == 0 && fst (worstError nodded) < 1 && snd (worstError nodded) < 10
 
-    -- An impossible jump is not believed: a frame of the head 40 degrees
-    -- away is lost, until enough time has passed for the head to get there.
+    -- An impossible jump is not followed: the head 40 degrees away from
+    -- one frame to the next is lost at first, while it is likelier where
+    -- it was with a reflector out of sight, and within a few frames is
+    -- found afresh there. (It used to be lost until enough time had
+    -- passed for the head to get there: a quarter of a second.)
     let jumping = [(t, headSeen bentWorn (if t < 0.5 then 0 else 40) 0 0, allLit) | t <- at120 1.2]
         jumped = trackPath clipBent jumping
-    check "a jump is lost at first" $ all isLost [o | (t, _, o, _) <- jumped, t >= 0.5, t < 0.6]
+    check ("a jump is lost at first, for " ++ show (lostCount jumped) ++ " frames") $
+        all isLost [o | (t, _, o, _) <- jumped, t >= 0.5, t < 0.51] && lostCount jumped <= 3
     check ("then believed " ++ show (summed (after 1 jumped))) $ lostCount (after 1 jumped) == 0 && fst (worstError jumped) < 1
 
     -- The top reflector fading from view for a moment while the head
@@ -889,7 +893,7 @@ main = do
     check "the stray reported" $ all ((== 1) . seenStrays) (seens reflected)
     let alone = headSeen bentWorn 0 0 0
     check "two reflectors and a stray aren't three reflectors" $ case trackFrames clipBent [(0, alone, renderDiscs (stray : pointDiscs defaultIntrinsics clipBent (1, 0, 1) alone))] of
-        [(_, _, Lost 3 0 _, _)] -> True
+        [(_, _, Lost 3 0 _ _, _)] -> True
         _ -> False
 
     -- Lights close to the camera laid out like the clip, as a phone's can
@@ -1634,14 +1638,16 @@ explainingChecks check = do
 
     -- A tracked frame says what it was judged by.
     check "a tracked frame's findings" $ case [map (brief . findingName) (outJudged o) | (_, _, o@Tracked{}, _) <- take 3 jumped] of
-        [afresh, following, _] -> afresh == ["near", "far", "size"] && following == ["places", "sizes", "unseen", "fit", "turn", "move", "near", "far", "turned", "aside"]
+        [afresh, following, _] -> afresh == ["near", "far", "size"] && following == ["places", "sizes", "unseen", "fit", "turn", "move", "near", "far", "turned", "aside", "usual size", "misfit", "turning", "moving"]
         _ -> False
+
+    followOrFindChecks check
 
     -- Told to the user once it has lasted a second, and not again for a
     -- while, unless the clip came back meanwhile and the quiet has passed.
-    let lostFor why = Lost 3 0 why
+    let lostFor why = Lost 3 0 why Nothing
         because name = Why Following (Unfit [Finding (Name name ("it is " ++ name)) Term.impossible Nothing])
-        tracked = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) []
+        tracked = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Followed Nothing)
         tellings = snd . mapAccumL (\a (t, o) -> let (a', said) = absence t o a in (a', (,) t <$> said)) noAbsence
         outcomeAt t
             | t < 2 = tracked
@@ -1649,7 +1655,7 @@ explainingChecks check = do
             | t < 20 = lostFor (because "far")
             | t < 21 = tracked
             | t < 40 = lostFor (because "far")
-            | otherwise = Lost 2 0 (because "far")
+            | otherwise = Lost 2 0 (because "far") Nothing
         told = [said | Just said <- tellings [(t, outcomeAt t) | t <- at120 50]]
     check ("out of sight is told once a second in, then seldom " ++ show told) $ case told of
         [(a, first), (b, second), (c, third)] ->
@@ -1692,6 +1698,113 @@ explainingChecks check = do
             [ taken after <= taken before + 1 && leftOut after >= leftOut before + 3 && map (brief . findingName) (Term.tallyLast after) == ["turn"]
             | ((_, before), (_, after)) <- zip (trackerWindows turnedTracker) (trackerWindows stillTracker)
             ]
+  where
+    bentWorn = -23
+    at120 :: Double -> [Double]
+    at120 = framesAt 120
+
+-- | Check that following the clip and finding it by layout are weighed
+-- against each other in the same frame: that a pose following can't
+-- continue costs a few frames and not half a second, that a pose followed
+-- onto a wrong blob gives way to a better one found by layout, and that
+-- what goes by continuity carries on for a pose found where the clip
+-- was, and starts over for one found elsewhere.
+followOrFindChecks :: (String -> Bool -> IO ()) -> IO ()
+followOrFindChecks check = do
+    let ways rows = [(t, way) | (t, _, Tracked{outChosen = Chosen way (Just _)}, _) <- rows]
+        windowsOf what tracker = concat [Term.tallyCounts tally | (name, tally) <- trackerWindows tracker, name == what]
+        taken what tracker = sum [n | ("taken", n) <- windowsOf what tracker]
+        glancing t = headSeen bentWorn (25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0
+        tracking frames = let (tracker, rows) = trackFramesEvents clipBent frames in (tracker, map fst rows)
+        (undisturbed, _) = tracking [(t, glancing t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (glancing t))) | t <- at120 9]
+
+    -- The scores hypotheses are compared by: a frame after a pose, finding
+    -- afresh gives up some 22 nats to following.
+    let judgedBy name rows = [nats (findingScore f) | (_, _, Tracked{outJudged = judged}, _) <- rows, f <- judged, brief (findingName f) == name]
+
+    -- A fast turn, 200 degrees a second, with one frame showing the clip
+    -- where it was 15 degrees back: that frame is followed, and from its
+    -- pose the next is an impossible jump, the head turning on faster
+    -- than the allowance for a jump grows. Following used to be all that
+    -- was tried until the pose stopped predicting; now the clip is found
+    -- by layout as soon as that is likelier than its being where it was.
+    let turning t = headSeen bentWorn (-40 + 200 * max 0 (min 0.4 (t - 1))) 0 0
+        stale = trackFrames clipBent [(t, turning t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (turning (if i == 150 then t - 0.075 else t)))) | (i, t) <- zip [0 :: Int ..] (at120 3)]
+    check ("a frame followed to a wrong pose in a fast turn costs " ++ show (lostCount stale) ++ " frames, then found afresh " ++ show (take 1 (ways (after 1.25 stale)))) $
+        lostCount stale <= 3
+            && map snd (take 1 (ways (after 1.25 stale))) == [FoundAfresh]
+            && fst (worstError (after 1.3 stale)) < 1
+    check ("finding afresh a frame on gives up " ++ show (take 1 (judgedBy "afresh" (after 1.25 stale))) ++ " nats") $
+        case judgedBy "afresh" (after 1.25 stale) of
+            cost : _ -> cost < -10 && cost > -23
+            [] -> False
+
+    -- A head jumping 40 degrees: found afresh there, and what was known
+    -- of the mirror image starts over, so fewer windows of turning teach
+    -- the pivot than undisturbed.
+    let leaping t = if t < 6 then glancing t else headSeen bentWorn (40 + 25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0
+        (leapt, leaptRows) = tracking [(t, leaping t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (leaping t))) | t <- at120 9]
+    check ("a jump found afresh " ++ show (ways leaptRows) ++ " starts the mirror image's belief over: windows for the pivot " ++ show (taken "pivot" leapt, taken "pivot" undisturbed)) $
+        map snd (ways leaptRows) == [FoundAfresh]
+            && lostCount leaptRows <= 3
+            && taken "pivot" leapt < taken "pivot" undisturbed
+
+    -- The clip seen elsewhere for three frames, none of its reflectors
+    -- where they were, and then back: tracked there, and resumed where it
+    -- was with what was known of the mirror image kept, as when those
+    -- frames were lost.
+    let elsewhere = let Pose r p = headSeen bentWorn 40 0 0 in Pose r (p ^+^ V3 150 0 0)
+        shown i t = if i >= 720 && i < 723 then elsewhere else glancing t
+        (visited, visitedRows) = tracking [(t, shown i t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (shown i t))) | (i, t) <- zip [0 :: Int ..] (at120 9)]
+    check ("the clip elsewhere for three frames and back " ++ show (ways visitedRows) ++ " keeps the mirror image's belief: windows for the pivot " ++ show (taken "pivot" visited, taken "pivot" undisturbed)) $
+        map snd (ways visitedRows) == [FoundAfresh, Resumed]
+            && lostCount visitedRows == 0
+            && taken "pivot" visited >= taken "pivot" undisturbed - 1
+            && taken "mirror image" visited >= taken "mirror image" undisturbed - 1
+            && fst (worstError visitedRows) < 1
+
+    -- One frame of the clip 40 degrees away, two of its reflectors'
+    -- places still lit: likelier where it was, a reflector out of sight,
+    -- and lost for that frame, as it always was.
+    let (_, blinkRows) = tracking [(t, glancing t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (if i == 720 then headSeen bentWorn 40 0 0 else glancing t))) | (i, t) <- zip [0 :: Int ..] (at120 7)]
+        heldBack = [held | (_, _, Lost{outHeld = Just held}, _) <- blinkRows]
+    check ("a frame of the clip turned away with reflectors still in their places is lost, not found there " ++ show (map explainHeld heldBack)) $
+        lostCount blinkRows == 1
+            && null (ways blinkRows)
+            && and [found < kept && missing == 1 | Held found missing kept <- heldBack]
+            && length heldBack == 1
+            && fst (worstError blinkRows) < 1
+
+    -- Dim reflectors, half their usual width. As the top one goes dark
+    -- for six frames, a light three quarters its width comes on 8 pixels
+    -- from it: following takes the light for the reflector, a blob being
+    -- there and big enough, and keeps to it when the reflector shows
+    -- again, since the light is where the pose predicts the reflector.
+    -- Found by layout, the three reflectors are the sizes they were, and
+    -- that outscores following: the clip is refound, and since the pose
+    -- continues the one followed, what is known of the mirror image is
+    -- kept. Following alone stayed on the light.
+    let dim lit pose = [(p, 0.5 * r) | (p, r) <- pointDiscs defaultIntrinsics clipBent lit pose]
+        (topAt, topWidth) = dim allLit (glancing 6) !! 2
+        light t = [((fst topAt + 8, snd topAt), 0.74 * topWidth) | t >= 6]
+        (dimUndisturbed, _) = tracking [(t, glancing t, renderDiscs (dim allLit (glancing t))) | t <- at120 9]
+        (caught, caughtRows) = tracking [(t, glancing t, renderDiscs (light t ++ dim (1, 1, if t >= 6 && t < 6.05 then 0 else 1) (glancing t))) | t <- at120 9]
+        outscored = [(t, way, won, lost) | (t, _, Tracked{outChosen = Chosen way (Just (Tried (Outscored won lost) _))}, _) <- caughtRows, way /= Followed]
+    check ("followed onto a light by a reflector gone dark " ++ show (worstError [r | r@(t, _, _, _) <- caughtRows, t >= 6, t < 6.05]) ++ ", refound when the reflector shows " ++ show outscored) $
+        fst (worstError [r | r@(t, _, _, _) <- caughtRows, t >= 6, t < 6.05]) > 5
+            && [(way, t < 6.06, won > lost) | (t, way, won, lost) <- outscored] == [(Refound, True, True)]
+            && fst (worstError (after 6.06 caughtRows)) < 1
+            && lostCount caughtRows == 0
+    check ("and refound keeps the mirror image's belief: windows " ++ show ((taken "mirror image" caught, taken "pivot" caught), (taken "mirror image" dimUndisturbed, taken "pivot" dimUndisturbed))) $
+        taken "mirror image" caught == taken "mirror image" dimUndisturbed
+            && taken "pivot" caught >= taken "pivot" dimUndisturbed - 1
+    check ("said to a developer: " ++ concat (take 1 [said | (_, _, Tracked{outChosen = chosen}, _) <- caughtRows, Just said <- [explainChosen chosen]])) $
+        any ("refound: following the clip scored " `isPrefixOf`) [said | (_, _, Tracked{outChosen = chosen}, _) <- caughtRows, Just said <- [explainChosen chosen]]
+
+    -- A lamp coming on beside a glancing head: following is never weak,
+    -- so nothing is looked for by layout.
+    let (_, lampRows) = tracking [(t, glancing t, renderDiscs ([((500, 100), 14) | t >= 1] ++ pointDiscs defaultIntrinsics clipBent allLit (glancing t))) | t <- at120 4]
+    check ("glancing beside a lamp, only following is tried " ++ show (length (ways lampRows))) $ null (ways lampRows) && lostCount lampRows == 0
   where
     bentWorn = -23
     at120 :: Double -> [Double]
