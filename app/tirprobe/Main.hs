@@ -358,15 +358,15 @@ describeEvent _ (Calibrated c) =
 describeEvent _ (Refined LevelRefined c) = "# " ++ describeLevel c
 describeEvent centre (Refined PivotRefined c) = "# " ++ describePivot centre c
 describeEvent _ (ShapeEstimated est) = "# " ++ describeShape est
-describeEvent _ Corrected = "# corrected a mirror-image pose"
-describeEvent _ (LightIgnored p) = "# " ++ describeLightIgnored p
+describeEvent _ Corrected{} = "# corrected a mirror-image pose"
+describeEvent _ (LightIgnored p why) = "# " ++ describeLightIgnored p why
 describeEvent _ (LightForgotten p) = "# " ++ describeLightForgotten p
-describeEvent _ (LightMoved p) = "# " ++ describeLightMoved p
+describeEvent _ (LightMoved p how) = "# " ++ describeLightMoved p how
 
 showOutcome :: Outcome -> String
-showOutcome (Lost n masked) =
+showOutcome (Lost n masked _) =
     "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "")
-showOutcome (Tracked hp dist err seen) =
+showOutcome (Tracked hp dist err seen _) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
         (yaw hp)

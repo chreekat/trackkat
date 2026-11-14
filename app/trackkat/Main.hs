@@ -900,10 +900,10 @@ describeEvent _ (Calibrated c) =
 describeEvent _ (Refined LevelRefined c) = describeLevel c
 describeEvent centre (Refined PivotRefined c) = describePivot centre c
 describeEvent _ (ShapeEstimated est) = describeShape est
-describeEvent _ Corrected = "Corrected a mirror-image pose."
-describeEvent _ (LightIgnored p) = describeLightIgnored p
+describeEvent _ Corrected{} = "Corrected a mirror-image pose."
+describeEvent _ (LightIgnored p why) = describeLightIgnored p why
 describeEvent _ (LightForgotten p) = describeLightForgotten p
-describeEvent _ (LightMoved p) = describeLightMoved p
+describeEvent _ (LightMoved p how) = describeLightMoved p how
 
 -- | A calibration to save.
 learnt :: Event -> [Calibration]
@@ -922,10 +922,10 @@ calibrationNews centre _ estimate (Calibrated c) =
      in Just (printf "Calibrated: camera tipped %.1f° down and %.1f° to its right." down right ++ "\n" ++ describePivotBriefly centre c ++ maybe "" (("\n" ++) . describeShapeBriefly) estimate)
 calibrationNews centre _ estimate (Refined _ c) = Just (describeCalibration centre c estimate)
 calibrationNews centre c estimate (ShapeEstimated _) = Just (describeCalibration centre c estimate)
-calibrationNews _ _ _ Corrected = Nothing
-calibrationNews _ _ _ (LightIgnored _) = Nothing
+calibrationNews _ _ _ Corrected{} = Nothing
+calibrationNews _ _ _ LightIgnored{} = Nothing
 calibrationNews _ _ _ (LightForgotten _) = Nothing
-calibrationNews _ _ _ (LightMoved _) = Nothing
+calibrationNews _ _ _ LightMoved{} = Nothing
 calibrationNews centre _ _ e = Just (describeEvent centre e)
 
 -- | The window's account of a calibration, on two lines, and a third for
@@ -940,7 +940,7 @@ status outcome paused gameConnected =
             Tracked{outPose = hp, outSeen = seen} ->
                 printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
                     ++ describeSeen seen
-            Lost n masked ->
+            Lost n masked _ ->
                 "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ ")"
         , maybe "" (const "   PAUSED") paused
         , if gameConnected then "   game connected" else ""
