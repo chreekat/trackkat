@@ -35,6 +35,7 @@ library
     TrackKat.ServedGame
     TrackKat.Shape
     TrackKat.Stats
+    TrackKat.Term
     TrackKat.Tracker
     TrackKat.Visibility
     TrackKat.USB
