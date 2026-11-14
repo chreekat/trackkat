@@ -475,9 +475,9 @@ step now stripes t =
             | otherwise = StrayBlob
         reflectorReach b = 3 + 2 * sqrt (fromIntegral (blobPoints b) / pi)
     distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
-    toEvent (Learnt p) = LightIgnored p
+    toEvent (Learnt p _) = LightIgnored p
     toEvent (Forgotten p) = LightForgotten p
-    toEvent (Moved p) = LightMoved p
+    toEvent (Moved p _) = LightMoved p
     -- Where each reflector is, or would be, in the image at a pose, out to
     -- a margin that takes in the pieces of the biggest seen, such as a
     -- reflector broken in two.
