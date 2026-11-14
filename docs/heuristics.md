@@ -69,13 +69,23 @@ Duplicates that collapsed to one source:
 
 Each is a candidate to reconcile. None was changed.
 
-1. **A head's speed is stated two ways that disagree.** `headStepTurn` lets
-   a head turn 15° between two frames (1800°/s at 120 fps), and
-   `headTurnRate` adds 100°/s for the time between them. At one frame apart
-   the rate adds 0.8° to the 15°: the limit is nearly all allowance, and
-   the allowance is not a head's speed but what a wrong match looks like.
-   Likewise 40 mm a frame (4.8 m/s) beside 200 mm/s. A real head does
-   perhaps 600°/s and 1 m/s.
+1. **A head's speed was stated two ways that disagreed, and neither was
+   a head's speed.** `headStepTurn` lets a followed pose turn 15° between
+   two frames (1800°/s at 120 fps), and `headTurnRate` adds 100°/s for the
+   time between them. At one frame apart the rate adds 0.8° to the 15°:
+   the limit is nearly all allowance, and the allowance is not a head's
+   speed but what a wrong match looks like. Likewise 40 mm a frame
+   (4.8 m/s) beside 200 mm/s. *Split, not yet reconciled:* how fast a
+   head goes is now its own fact, `headTurnSpeed` and `headMoveSpeed`
+   (spreads of 300°/s and 500 mm/s, the fastest at two), and the step and
+   rate are named as the allowance they are. The gates `turn` and `move`
+   still stand on the allowance, unchanged; what scores how likely a pose
+   continues the last goes by the speed (see
+   [Following or finding afresh](#following-or-finding-afresh)). The speed
+   says where the allowance should be, which is close to where it is:
+   a pose 16.7° or 28 mm from the last, a frame on, is as likely found
+   anywhere as followed. Putting the gates there is the softening of
+   step 3.
 2. **`Response` ignores the time between frames.** Its jump limit is 15° and
    40 mm *per frame* whatever the frame rate, while `Tracker`'s grows with
    the gap. At 60 fps `Response` allows half the speed it does at 120.
@@ -144,8 +154,9 @@ How heads, necks and the camera are. `World` fields first.
 | --- | --- | --- | --- | --- |
 | `World.frameRate` | 120 /s | `Calibration.olderWindowPoses` (60) | the TrackIR 5 | frame-counted constants assume it (11) |
 | `World.cameraNearest`, `cameraFarthest` | 250, 2500 mm | `Tracker.nearest`, `farthest`: a pose outside isn't the clip (terms `near`, `far`) | tuned; leaning in to 270 mm is tested | `maxBlobPixels` is sized for `nearest` |
-| `World.headStepTurn`, `headStepMove` | 15°, 40 mm | `Tracker.maxTurn`, `maxMove` at no gap (terms `turn`, `move`); `Response.maxStepDegrees`, `maxStepMm` | tuned | (1), (2) |
-| `World.headTurnRate`, `headMoveRate` | 100 °/s, 200 mm/s | how `Tracker.maxTurn`, `maxMove` grow with the gap between sightings | tuned | (1) |
+| `World.headStepTurn`, `headStepMove` | 15°, 40 mm | `Tracker.maxTurn`, `maxMove` at no gap (terms `turn`, `move`); `Response.maxStepDegrees`, `maxStepMm` | tuned: an allowance, below what a wrong match looks like | (1), (2) |
+| `World.headTurnRate`, `headMoveRate` | 100 °/s, 200 mm/s | how `Tracker.maxTurn`, `maxMove` grow with the gap between sightings | tuned: likewise an allowance | (1) |
+| `World.headTurnSpeed`, `headMoveSpeed` | 300 °/s, 500 mm/s | the spreads of a head's speed: how likely a pose continues the last (terms `turning`, `moving`), and what finding afresh gives up (term `afresh`) | a head's fastest, about 600°/s and 1 m/s, as two spreads | (1) |
 | `World.headTurnSpread` | 40° | `Branch.headReachDegrees`: where a head would be weighs which pose is the mirror image (term `reach`) | tuned | `Tracker.maxReachTurn` |
 | `Tracker.maxReachTurn` | 120° | a pose turned further from the centre isn't the clip (term `turned`) | 3 × `World.headTurnSpread` | `Response.yawRange` 180 is the view's, not the head's |
 | `World.headReachAside` | 400 mm | `Tracker.maxReachMove`: a pose further to the side of the centre isn't the clip (term `aside`) | tuned; vetoed good blobs before depth was let go | (6) |
