@@ -31,24 +31,29 @@ Three things hold the scheme together:
   minus infinity; a soft one says how unlikely. A decision made of terms can
   say which term rejected, with its figure and limit.
 - **Explanations** reach whoever is looking: a lost frame carries why
-  (`outWhy`), a tracked one what it was judged by (`outJudged`), a light
-  learnt why it was taken for one, a correction its evidence, and windows of
-  turning are counted by what took or rejected them (`trackerWindows`).
+  (`outWhy`), a tracked one what it was judged by (`outJudged`) and which
+  hypothesis gave its pose (`outChosen`), a light learnt why it was taken
+  for one, a correction its evidence, and windows of turning are counted by
+  what took or rejected them (`trackerWindows`).
   `tirprobe` prints them (`--explain` for every frame), and trackkat's log
   says, in the user's words, why the clip is out of sight with lights in
   view.
 
-Gathering the numbers changed none of them: every value below is what
-tracking used before, and the tests' figures and replays are the same to
-the last digit. The contradictions found are listed, not fixed.
+Gathering the numbers changed none of them: every value was what tracking
+used before, and the tests' figures and replays were the same to the last
+digit. The contradictions found are listed, and mostly not fixed. Since
+then one decision is made by score, and changed what tracking does:
+[following or finding afresh](#following-or-finding-afresh).
 
 ## Headline
 
-About 135 numbers in ten modules, counting each named constant and each
-literal inside a function once: 45 head facts, 28 of noise, 21 of
-appearance, 25 of memory and 17 thresholds. (Many of the first three kinds
+About 140 numbers in ten modules, counting each named constant and each
+literal inside a function once: 47 head facts, 30 of noise, 21 of
+appearance, 25 of memory and 20 thresholds. (Many of the first three kinds
 gate something, so they are thresholds too; each is counted by what it
-measures.) 17 are now fields of `World`. 26 literals that stood in the
+measures.) Choosing between following and finding afresh added seven of
+them, one tuned pair (a head's speed) and the rest derived. 19 are now
+fields of `World`. 26 literals that stood in the
 modules are now those fields (19) or named multiples of them (7). Eight
 literals that were inline in `Tracker`, `Match`, `Lights` and `Pose` have
 names. The rest are tuned and stand alone.
@@ -143,8 +148,21 @@ Each is a candidate to reconcile. None was changed.
     `Match` adds squared pixels. `Tracker` and `Lights` gate: yes or no.
     `Calibration` and `Shape` keep information matrices but admit windows
     by gates. Terms put the first three in nats; the gates are still
-    gates.
+    gates, but `Tracker` now also compares in nats, between following and
+    finding afresh.
 13. **Six ways of forgetting** (see [Memory](#memory)).
+14. **A reflector's size is scored against two things.** Matching scores a
+    blob against the size its reflector had in the last frame (`sizes`);
+    choosing between following and finding afresh scores it against the
+    most it has been lately (`usual size`), because the latest is whatever
+    the last frame took for the reflector, which is what is in question.
+    Both use `Match.sizeScale`. One likelihood of a blob's size under what
+    was learnt of its reflector would serve both (7).
+15. **A reflector unseen costs the same 18 nats each frame,** in a match
+    and in the clip being still where it was (`stillThere`), as if frames
+    were independent; while how long the clip may show less is a deadline
+    (`showingSeconds`). A reflector that fades stays faded: the cost
+    belongs to its going, and a rate to its staying.
 
 ## Head facts
 
@@ -192,6 +210,8 @@ How far off measurements are.
 | --- | --- | --- | --- | --- |
 | `World.centroidNoise` | 1 px | `Pose.guessFit`: a pose refined from the last is taken if it fits this well | tuned | (9) |
 | `Tracker.maxFit` | 2 px | a followed pose fitting worse isn't the clip (term `fit`) | 2 × `World.centroidNoise` | (9) |
+| `Tracker.misfit` spread | 0.577 px | how likely a pose's reflectors are seen so far from where it puts them, in scoring a hypothesis (term `misfit`) | `World.centroidNoise` / √3: three centres each out by the fit | the gate `fit` is the same figure, cut at 2 px |
+| `Tracker.turnSpread`, `moveSpread` | 2.5°, 4.2 mm a frame apart | how likely a pose continues the last (terms `turning`, `moving`) | `World.headTurnSpeed`, `headMoveSpeed` × the time between, a frame at least | the gates `turn`, `move` are the same figures, cut at the allowance (1) |
 | `Match.missingCost` | 36 px² | what a reflector unseen costs a match (term `unseen`) | (6 × `World.centroidNoise`)² | (9) |
 | `Match.squaredPixelsPerNat` | 2 px² | turns a match's cost into nats | 2 × `World.centroidNoise`² | |
 | `Match.sizeScale` | 10 px per factor of e | what a blob's size being off costs a match (term `sizes`) | tuned | (9); a size is not a distance |
@@ -199,7 +219,7 @@ How far off measurements are.
 | `Pose.holdTurn`, `holdMove` | 3 px/radian, 0.05 px/mm | how strongly a followed pose is held where it was | tuned | |
 | `Tracker.observe` shared | 0.5 | how much a reflector sharing a blob counts in the fit | tuned | |
 | `Tracker.observe` dim | pixels over usual, at most 1 | how much a dim reflector counts | tuned | another size test (7) |
-| `Tracker.roles` reach | 3 px + a blob's diameter | a blob this near a reflector is drawn as one | tuned | (9) |
+| `Tracker.reflectorReach` | 3 px + a blob's diameter | a blob this near a reflector is drawn as one (`roles`); a reflector with a blob this near where it is predicted isn't counted out of sight (`stillThere`) | tuned; about what a reflector moves in a frame at a head's fastest | (9) |
 | `Tracker.reflectorDiscs` margin | 15 px + the biggest reflector's diameter | lights aren't learnt this near the clip | tuned | (9) |
 | `Tracker.step` alone | a reflector's diameter | a reflector with another blob this near isn't seen clearly | tuned | |
 | `Lights.stillPixels` | 4 px | a blob straying further isn't a still light | "a fire's core moves less than 2" | (9) |
@@ -237,7 +257,7 @@ What a reflector's blob looks like.
 | `Match.together` | the diameter of a disc of both areas | two blobs this close may be pieces of one reflector | geometry | |
 | `Match.maxBlobs` | 8 | blobs considered | tuned | |
 | `Match.matches` options | 4 a reflector; 2 blobs for a shared pair; 1 for the third | candidates tried | tuned | |
-| `Tracker.clipSearch`, `maskedSearch` | 5, 4 | blobs searched for the clip among more than three, and among those masked | tuned | |
+| `Tracker.clipSearch`, `maskedSearch` | 5, 4 | blobs searched for the clip among more than three, and among those masked | tuned | with a pose to go on, the best scored three of the 5 is taken; without, the only one that passes the gates |
 | `Tracker.jumpRetries` | 5 | matches tried after the best jumps | tuned | |
 | three big blobs | 3 | finding afresh wants just three (term `big blobs`) | the clip | |
 | reflector size at 1 m | learnt (`trSizes`: latest, and usual with `sizeMemory`) | every size test above | about 245 px lower, 180 top, in the simulation (`Synth.lowerRadius`, `topRadius`) | (8) |
@@ -257,7 +277,7 @@ How long things are kept. Six ways of forgetting are in use:
 
 | Name | Value | Keeps | From | Repeats or contradicts |
 | --- | --- | --- | --- | --- |
-| `Tracker.predictionSeconds` | 0.5 s | a pose predicts the reflectors; after, the clip is found afresh | tuned | (10) |
+| `Tracker.predictionSeconds` | 0.5 s | a pose predicts the reflectors, and one left for a pose found afresh may be resumed; after, the clip is found afresh only | tuned | (10); no longer how long a rejected follow waits |
 | `Tracker.confirmSeconds` | 0.5 s | tracking this long before lights are learnt clear of the clip | tuned | (10) |
 | `Tracker.showingSeconds` | 1 s one reflector out; 2.5 s one perhaps behind another | how long the clip is followed showing less (term `partly seen`) | tuned | |
 | `Tracker.sizeMemory` | 10 s | a reflector's usual size, out of sight | tuned | (8) |
@@ -298,8 +318,83 @@ How sure a decision must be.
 | `Shape.difference` | 2 mm and 4 spreads | an estimate different from what is configured | tuned | |
 | `Shape.solveEvidence` | 1e-9 | evidence too thin to solve | numerical | |
 
+| `Tracker.afreshCost` | 22.4 nats a frame after the last pose; 7.5 at 0.1 s; 1.8 at 0.5 s | what a pose found by layout gives up to a followed one (term `afresh`) | derived: log of the room a head has anywhere over the room a followed head has, see below | |
+| `Tracker.weakScore` | −4 nats | a followed pose scoring less is doubted, and the clip looked for by layout too | derived: a head turning and moving at twice the spreads of its speed, "little beyond two" | |
+| `Match.unseenScore` × reflectors with no blob near | −18 nats each | what the clip still being where it was scores (`stillThere`), which a pose found elsewhere must beat | `Match.missingCost` in nats | (15) |
+
 The hard gates among the head facts, noise and appearance above are
 thresholds too: each row that names a term is a decision.
+
+## Following or finding afresh
+
+With a pose from a moment ago there are up to four hypotheses about a
+frame, and `Tracker.followOrFind` takes the best scored (the reasoning is
+in Note [Following or finding afresh] in `Tracker.hs`):
+
+| Hypothesis | Scored by | Vetoed by |
+| --- | --- | --- |
+| Followed: the best match to the prediction, as before | `usual size`, 18 nats a reflector unseen, `misfit`, `turning`, `moving` | `followable`: `fit`, `turn`, `move`, `canBeThere`; `partly seen` |
+| Refound: the big blobs by layout, at a pose within the jump following allows (`jumpable`) | `usual size`, `misfit`, and the better of `turning` + `moving` and `afresh` + `reach` | `clipLike`: `canBeThere`, `size` |
+| Found afresh: the same, at a pose beyond that jump | `usual size`, `misfit`, `afresh`, `reach` | `clipLike`; and it must beat the clip being still where it was |
+| Still where it was: the frame doesn't show the clip rightly | 18 nats for each reflector with no blob within `reflectorReach` of its predicted place | `showingSeconds`: not once the clip has shown less for a second |
+
+When they are tried:
+
+- Following alone, while it scores at least `weakScore`. On ordinary
+  glancing it always does, so nothing else is computed.
+- By layout too, when following is rejected or weak: exactly three big
+  blobs in view, or the best scored three of the heaviest five; never
+  masked blobs; not the very three following took; and, against a weak
+  follow, not three whose sizes alone score no better than it.
+- A tie is following's. A frame nothing wins is lost, with following's
+  reason, and any pose passed over for the clip being where it was
+  (`outHeld`).
+
+What continues:
+
+- **Followed** and **refound** carry on the belief about the mirror image
+  and its window of turning, the time tracked that lets lights be learnt
+  clear of the clip, and what learns from poses.
+- **Found afresh** starts them over, as it always has (`Branch.foundAfresh`:
+  either pose as likely the mirror image). The pose it left is kept for
+  `predictionSeconds`; a pose found by layout within the jump following
+  allows from *that* pose is **resumed**: scored as continuing it, and
+  taking up its belief and time tracked as if the frames between had been
+  lost.
+
+Where the advantage of following comes from. `afreshCost` is not tuned: it
+is how much higher the density of "about where it was" is at its peak than
+that of "anywhere a head can be". In turning, three ways, a spread of
+`headTurnSpread` (40°) against `headTurnSpeed` × the time since (2.5° a
+frame on): 3 ln 16 = 8.3 nats. In place, the box `canBeThere` allows (800 mm
+by 800 mm by 2250 mm) against a gaussian of `headMoveSpeed` × the time
+(4.2 mm): ln (1.44e9 / 1139) = 14.1 nats. Together 22.4 nats a frame on,
+falling by 6 ln n after n frames, each part never below nothing. Following and
+finding afresh are otherwise taken as equally likely beforehand.
+
+What that says about the gates (contradiction 1): a pose a frame on is as
+likely found anywhere as followed when it has turned 16.7° or moved 28 mm,
+beside gates at 15.8° and 41.7 mm. The turn gate is where the speed puts
+it; the move gate is half again looser.
+
+What the wait was, and is now. Following alone for half a second protected
+a brief occlusion from being taken for the clip somewhere else. That is
+now the fourth hypothesis, with a score: two reflectors still in place and
+a stray score 18 nats as the clip where it was, and more than 22 as the
+clip elsewhere, so the frame is lost as before; three blobs nowhere near
+score 54 against 22, and are found at once. A head that has really jumped,
+with a reflector or two landing near the old places, is found after two or
+three frames, as `afreshCost` falls below 18.
+
+What it doesn't do. A stray the size of a reflector, taken for it, scores
+as well as the reflector: size is the only evidence of what a blob is,
+`usual size` follows what is tracked within seconds, and frames are scored
+one by one. Such a pose is left only when a gate rejects it. Strays under
+half a reflector's size aren't taken (`Match.wholeFactor`), and between
+half and full size they cost under 24 nats, which finding afresh elsewhere
+rarely beats; so replacing a follow happens mostly as a refind, close by.
+The likelihood of a blob's size (7, 14) and evidence that adds up over
+frames are what would widen it.
 
 ## What is a term, and what isn't yet
 
@@ -308,6 +403,9 @@ thresholds too: each row that names a term is a decision.
 | A pose is somewhere a head can be (`Tracker.canBeThere`) | `near`, `far`, `turned`, `aside` | terms; the decision is their sum |
 | A followed pose is the clip (`Tracker.followable`) | `fit`, `turn`, `move`, and the above | terms |
 | Three blobs found afresh are the clip (`Tracker.clipLike`) | the above, and `size` | terms |
+| Following or finding by layout (`Tracker.followOrFind`) | `usual size`, `misfit`, `turning`, `moving`, `afresh`, `reach`; `unseen` | soft terms; the better score wins, after the gates above |
+| A pose found by layout continues the last (`Tracker.jumpable`) | `turn`, `move` | the gates, used as the test |
+| The clip is still where it was (`Tracker.stillThere`) | `unseen`, counted | a score; its deadline is a rule |
 | Which blobs to try afresh (`Tracker.findAfresh`) | `big blobs` | the rule decides as before; the term says why it came to nothing |
 | How long to follow the clip showing less (`Tracker.follow`) | `partly seen` | a term, filtering matches as before |
 | A match's cost (`Match.matches`) | `places`, `sizes`, `unseen`; `shared size`, `third size` | terms, in nats; matches are ordered by them |
@@ -329,12 +427,15 @@ The scheme has four steps. The first two are done: the inventory and
 `World`, and terms with explanations wrapped round the decisions as they
 were. The next two change behaviour, and each has what it needs in place.
 
-**Step 3: choose among hypotheses by score.** Today each candidate is
+**Step 3: choose among hypotheses by score.** Each candidate used to be
 accepted or rejected by itself, in a fixed order, and the first accepted
-wins. With every candidate's terms in nats, the tracker can score all the
+won. With every candidate's terms in nats, the tracker can score all the
 candidates of a frame (each match followed, the three big blobs afresh,
 the mirror image) and take the best, falling back to the next when the
-best is impossible. That needs:
+best is impossible. The first of these is done: following and finding
+afresh are tried in the same frame and compared
+([above](#following-or-finding-afresh)), in place of following for
+`predictionSeconds` and only then looking afresh. The rest needs:
 
 - the gates softened where a hard edge has bitten: `aside` and `turned`
   as likelihoods of where a head is (`headTurnSpread` already is one, in
@@ -342,10 +443,12 @@ best is impossible. That needs:
   `move` as likelihoods of a head's speed, with contradiction 1 settled by
   splitting a head's real speed from the allowance for a wrong match;
 - one term for a blob's size, a likelihood under the size learnt for its
-  reflector, in place of the six tests of contradiction 7;
-- following and finding afresh tried in the same frame and compared, in
-  place of following for `predictionSeconds` and only then looking afresh:
-  that wait is what turns a brief wrong match into half a second lost;
+  reflector, in place of the six tests of contradiction 7 and the two
+  sizes of 14: this is what would let a pose followed onto a stray be
+  told from the clip;
+- each match followed scored as a hypothesis, not only the best, and
+  evidence carried from frame to frame, so that a pose that has fitted
+  badly for a while is doubted more than one that just began to (15);
 - `Match`'s rules for which matches exist turned into terms, so that a
   match excluded by `missingPlausible` can be told;
 - the sway of contradiction 3 settled, so that `Branch` and `Calibration`

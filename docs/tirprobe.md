@@ -68,6 +68,26 @@ what ruled out each half second of head turning that the neck pivot, the
 clip's shape or the mirror image wasn't learnt from. The names and limits
 are listed in [heuristics.md](heuristics.md).
 
+While tracking has a pose from a moment ago it follows the clip from there,
+and when that fails or looks doubtful it also looks for the clip by the
+layout of the blobs, and takes whichever is likelier. A line says so when
+the pose came from the layout:
+
+```
+# refound: following the clip scored -27.16 nats against -22.83 nats; found by layout where predicted (turn 7.637 degrees <= 15.83 degrees, move 35.97 mm <= 41.67 mm)
+# found afresh: following the clip, rejected: turn 38.51 degrees > 17.5 degrees; found by layout away from where predicted (turn 38.72 degrees > 17.5 degrees, move 19.34 mm <= 45 mm)
+# resumed: following the clip, rejected: turn 26.44 degrees > 15.83 degrees, move 131.7 mm > 41.67 mm; found by layout where a pose left a moment ago predicted (turn 1.69 degrees <= 18.33 degrees, move 1.445 mm <= 46.67 mm)
+# lost, with 3 blobs: following the clip, rejected: turn 25.61 degrees > 15.83 degrees; found by layout elsewhere, scoring -22.9 nats, but likelier where it was with 1 reflector out of sight (-18 nats)
+```
+
+*Refound* is the clip close to where it was: tracking carries on as if it
+had been followed. *Found afresh* is the clip somewhere else: what was known
+of the [mirror image](details.md#mirror-images) starts over. *Resumed* is the clip back
+where it was before being found somewhere else for a moment. The last line
+is a frame lost because blobs that look like the clip somewhere else are
+less likely it than the clip staying put with a reflector hidden. Scores
+are in nats, logs of likelihood: nearer nothing is likelier.
+
 A light being ignored says why it was taken for one, and a mirror-image
 pose corrected says on what evidence:
 
