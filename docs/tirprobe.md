@@ -49,7 +49,32 @@ carries on through these, and the line ends with a note when it happens:
   behind you, were ignored; see [still lights](details.md#still-lights).
 
 When the clip is lost the line says how many blobs there were, such as
-`lost: 2 blobs, need 3`.
+`lost: 2 blobs, need 3`. When it is first lost, and whenever the reason
+changes, a line says why: what tracking was trying, and what ruled the blobs
+out, each with its figure and its limit:
+
+```
+# lost, with 3 blobs: following the clip, rejected: aside 401.2 mm > 400 mm
+# lost, with 3 blobs: finding the clip afresh, rejected: near 181 mm < 250 mm, size 81 px < 926 px
+# lost, with 2 blobs: following the clip, rejected: partly seen 1.008 s > 1 s
+```
+
+Here the blobs fit the clip, but 401 mm to the side of where you recentered,
+further than a seated head goes; then they were nearer the camera than the
+clip can be tracked, and far smaller than its reflectors have been; then one
+reflector had been out of sight for over a second. With `--explain` every
+line ends with what that frame was judged by, passed or not, and a line says
+what ruled out each half second of head turning that the neck pivot, the
+clip's shape or the mirror image wasn't learnt from. The names and limits
+are listed in [heuristics.md](heuristics.md).
+
+A light being ignored says why it was taken for one, and a mirror-image
+pose corrected says on what evidence:
+
+```
+# Ignoring a bright light at (156, 296): it stayed put for 3 seconds, and at 813 pixels is bigger than the clip's reflectors (349).
+# corrected a mirror-image pose: switched the tracked pose: the tracked pose 99.8% likely the mirror image, the centre 51.8%; the head turned 12 degrees from centre as it was, 19 with one switched
+```
 
 ## Recording a problem
 
@@ -83,8 +108,15 @@ seconds, and where Enter, `c` Enter and `m` Enter were pressed:
 ```
 
 With `--blobs` it shows the blobs instead, `--every-frame` prints every
-frame rather than ten a second, and `--clip` and `--no-mask` track with
-other settings than those recorded.
+frame rather than ten a second, `--explain` says what each frame was judged
+by, and `--clip` and `--no-mask` track with other settings than those
+recorded. A replay ends with how many windows of head turning the neck
+pivot, the clip's shape and the mirror image were each learnt from, and how
+many were left out, by what ruled them out:
+
+```
+# windows of turning for the pivot: 90 taken, 35 turn
+```
 
 ## Options
 
@@ -107,6 +139,9 @@ other settings than those recorded.
 - `--record FILE`: record every frame to FILE, to be replayed; see
   [recording a problem](#recording-a-problem).
 - `--replay FILE`: track a recording instead of the camera.
+- `--explain`: end each frame's line with what tracking judged it by, each
+  figure against its limit, and say what ruled out each window of head
+  turning not learnt from.
 - `--raw`: hex-dump every USB transfer; use this when reporting problems:
   `tirprobe --raw > probe.txt`.
 - `--list`: list every USB device and whether it can be opened.
