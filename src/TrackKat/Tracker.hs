@@ -22,6 +22,13 @@ module TrackKat.Tracker (
     Why (..),
     Looking (..),
     Reason (..),
+    Way (..),
+    Chosen (..),
+    Tried (..),
+    Fate (..),
+    explainChosen,
+    Held (..),
+    explainHeld,
     whyRejectedBy,
     sameWhy,
     describeWhy,
@@ -59,7 +66,7 @@ import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Term
-import TrackKat.World (World (..), inDegrees, inMillimetres, inPerSecond, inPixels, times, world)
+import TrackKat.World (Seconds, World (..), during, inDegrees, inMillimetres, inPerSecond, inPixels, seconds, times, world)
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
@@ -108,6 +115,9 @@ data Outcome
         , outJudged :: [Finding]
         -- ^ what each term that accepted the pose found (see Note
         -- [Explaining]); worked out only if looked at
+        , outChosen :: Chosen
+        -- ^ how the pose was come by, of the ways tried (see Note
+        -- [Following or finding afresh]); worked out only if looked at
         }
     | -- | The clip couldn't be made out.
       Lost
@@ -117,6 +127,10 @@ data Outcome
         -- ^ blobs ignored as part of a still light
         , outWhy :: Why
         -- ^ why not (see Note [Explaining]); worked out only if looked at
+        , outHeld :: Maybe Held
+        -- ^ a pose found by layout that wasn't taken, the clip being
+        -- likelier where it was (see Note [Following or finding afresh]);
+        -- worked out only if looked at
         }
     deriving (Show)
 
@@ -147,10 +161,203 @@ data Outcome
 -- the three big blobs, if there are just three. Others tried after it,
 -- and rejected too, aren't told.
 --
+-- With a pose to go on, following and finding by layout are both tried
+-- when the first is rejected or weak (see Note [Following or finding
+-- afresh]). A tracked frame says which gave its pose and what became of
+-- the other ('outChosen'); a lost one gives following's reason, and any
+-- pose found by layout that was passed over ('outHeld').
+--
 -- What learns from tracked poses says what it did likewise: a light
 -- learnt says why it was taken for one, a correction says on what
 -- evidence, and windows of turning are counted by what took or rejected
 -- them ('trackerWindows').
+
+-- Note [Following or finding afresh]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- With a pose from a moment ago, a frame's blobs can be taken for the clip
+-- in two ways: by following, each reflector matched to a blob near where
+-- that pose predicts it ('follow'); or by layout alone, the big blobs in
+-- view taken for the clip as when there is no pose to go on ('findHere').
+-- Following used to be the only way tried for as long as the pose
+-- predicted ('predictionSeconds'), so that a jump following wouldn't
+-- make, as after a frame followed to a wrong pose, cost up to half a
+-- second out of sight before the clip was looked for afresh; and a pose
+-- followed onto the wrong blobs stayed there while its gates let it. Now
+-- they are hypotheses about the same frame, scored alike, and the best is
+-- taken.
+--
+-- What they are scored by, in nats (see "TrackKat.Term"):
+--
+--  * the blobs' own evidence ('blobsSay'): how far each blob taken for a
+--    reflector is from the size its reflector has usually been
+--    ('usualSize', as a match's terms for sizes score a size), a reflector
+--    unseen (what a match's term for it costs), and how far the reflectors
+--    are from where the pose puts them ('misfit', under the world's
+--    'centroidNoise');
+--
+--  * where the pose is, given the last. For a pose that continues the
+--    last, how likely a head turned and moved so far in the time
+--    ('continuing': gaussians of the spreads of a head's speed, the
+--    world's 'headTurnSpeed' and 'headMoveSpeed', over that time). For a
+--    pose that doesn't, how likely a head is there with nothing known of
+--    where it was ('anywhere': anywhere a head can be, turned from the
+--    centre by the world's 'headTurnSpread', within 'headReachAside' to
+--    either side and in the camera's range).
+--
+-- These are commensurable because each is the log of a probability density
+-- over the same things: the blobs' places and sizes, given the pose, and
+-- the pose's six freedoms, given the last pose or given nothing. A density
+-- that says the pose is within a few degrees and mm is far higher at its
+-- peak than one that says only that it is somewhere a head can be, by the
+-- ratio of the volumes they spread over; 'afreshCost' is the log of that
+-- ratio, some 22 nats a frame after the last pose and less the longer
+-- after, and it is all the advantage following has. There is no bonus for
+-- following besides: the two are taken as equally likely beforehand. A
+-- match's term for the reflectors' places is left out of the score, being
+-- the same continuity measured in the image before the pose is solved.
+--
+-- So following wins whenever both take the same blobs, and a pose found
+-- by layout wins when following has to take a blob of the wrong size, or
+-- leave a reflector unseen, or jump, to an extent that costs more than
+-- the pose found does. The hard gates still veto either: 'followable' for
+-- a followed pose, 'clipLike' for one found by layout.
+--
+-- A pose found by layout that is within the jump following allows
+-- ('jumpable') continues the last all the same: it is the clip refound
+-- ('Refound'), scored by the better of 'continuing' and 'anywhere', and
+-- everything that goes by continuity carries on as if it had been
+-- followed: the belief about the mirror image and its window of turning
+-- (see "TrackKat.Branch"), the time tracked that lets lights be learnt,
+-- and what learns from poses. Only one that isn't ('FoundAfresh') starts
+-- them over, as finding the clip afresh always has: either pose may then
+-- be the mirror image.
+--
+-- When following is rejected, a pose found by layout that continues the
+-- last is taken. One that doesn't has a third hypothesis to beat
+-- ('stillThere'): that the clip is still where the last pose predicts it,
+-- and the frame doesn't show it rightly. That scores what a match's term
+-- for a reflector unseen costs, for each reflector with no blob near where
+-- it is predicted. So blobs like the clip somewhere else altogether, none
+-- where the reflectors were, are taken at once, at 22 nats against 54;
+-- but two reflectors still in their places and a stray, as a reflector
+-- fades for a moment, are not: the clip is likelier where it was, one
+-- reflector out of sight, at 18 nats. This is the wait that following
+-- alone amounted to, as a hypothesis with a score: it holds while the
+-- pose predicts and the clip may show less ('showingSeconds'), it gives
+-- way as finding afresh gets cheaper with the time since the pose, a few
+-- frames for a head that has really jumped, and the frame is lost
+-- meanwhile, as it was, with what was passed over told ('Held').
+--
+-- A pose left for one found afresh elsewhere isn't forgotten at once
+-- ('LeftBehind'). Blobs that look like the clip somewhere else for a
+-- frame or two used to be frames out of sight, with the clip followed
+-- again from where it was when they passed. Now, if none of the
+-- reflectors is still in its place, they are tracked; but if the clip is
+-- then found by layout where the pose left behind still predicts it
+-- ('Resumed', scored as continuing that pose), that pose's continuity is
+-- taken up again as if those frames had been out of sight: a brief wrong
+-- sight doesn't cost what was known of the mirror image.
+--
+-- What the wait protected is kept otherwise:
+--
+--  * A pose still predicts for 'predictionSeconds' out of sight, and a
+--    frame where no hypothesis makes out the clip is lost with following's
+--    reason as before, so a brief occlusion or merge is followed through
+--    when the reflectors show again.
+--
+--  * The clip showing two reflectors, or one behind another
+--    ('showingSeconds'), is followed for as long as it was. A reflector
+--    unseen costs 18 nats, less than finding afresh a frame on, so such a
+--    pose is outscored only once it also jumps; and what would be found
+--    instead, a stray taken for the third reflector, pays for its size.
+--
+--  * Blobs masked as still lights are never taken for the clip while a
+--    pose predicts: only blobs in view are tried by layout, exactly three
+--    big ones or the best scored three of a few. Masked ones are tried,
+--    as before, only with no pose to go on.
+--
+-- Finding by layout costs a solve or several, so it isn't tried on every
+-- frame: only when following is rejected, or scores below 'weakScore';
+-- and then not of the very three blobs following took, which is the same
+-- hypothesis, nor of three whose sizes alone score no better than
+-- following did.
+--
+-- What the scores can't tell: a stray the size of a reflector, taken for
+-- it. A blob's size is its only evidence of what it is, the sizes learnt
+-- follow what is tracked within seconds ('sizeMemory', and the latest at
+-- once), and each frame is scored by itself, with no memory of how well
+-- the frames before fitted. So a pose followed onto such a stray is left
+-- only when a gate rejects it, as before.
+
+-- | How a tracked frame's pose was come by (see Note [Following or
+-- finding afresh]).
+data Way
+    = -- | by following the last pose, its reflectors matched to blobs near
+      -- where it predicts them
+      Followed
+    | -- | by the layout of the big blobs, at a pose that continues the last
+      Refound
+    | -- | by the layout of the big blobs, at a pose that doesn't continue
+      -- the last but one from a moment before, left for a pose found
+      -- afresh
+      Resumed
+    | -- | by the layout of the big blobs, at a pose that doesn't continue
+      -- the last, or with none to continue
+      FoundAfresh
+    deriving (Eq, Show)
+
+-- | Which way gave a tracked frame's pose, and what became of the other,
+-- if both were tried.
+data Chosen = Chosen Way (Maybe Tried)
+    deriving (Eq, Show)
+
+-- | The way not taken: what became of it, and what the jump to the pose
+-- found by layout was judged to be, against what following allows, if a
+-- pose was found so. The jump is from the last pose, or, of a pose
+-- resumed, from the one it continues.
+data Tried = Tried Fate [Finding]
+    deriving (Eq, Show)
+
+-- | What became of a way of making out the clip that wasn't taken.
+data Fate
+    = -- | it was rejected, for this
+      Failed Why
+    | -- | it scored less: what the way taken scored, and what it did
+      Outscored Score Score
+    deriving (Eq, Show)
+
+-- | What was decided between following the clip and finding it afresh in
+-- a tracked frame, for a developer; nothing if only one was tried.
+explainChosen :: Chosen -> Maybe String
+explainChosen (Chosen _ Nothing) = Nothing
+explainChosen (Chosen way (Just (Tried fate jump))) = Just $ case way of
+    Followed -> "followed: " ++ against "finding the clip afresh"
+    Refound -> "refound: " ++ against "following the clip" ++ "; found by layout where predicted (" ++ renderFindings jump ++ ")"
+    Resumed -> "resumed: " ++ against "following the clip" ++ "; found by layout where a pose left a moment ago predicted (" ++ renderFindings jump ++ ")"
+    FoundAfresh -> "found afresh: " ++ against "following the clip" ++ "; found by layout away from where predicted (" ++ renderFindings jump ++ ")"
+  where
+    against other = case fate of
+        Failed why -> explainWhy why
+        Outscored won lost -> other ++ " scored " ++ renderScore lost ++ " against " ++ renderScore won
+
+-- | A pose found by layout away from where the last pose predicts the
+-- clip, and not taken: what it scored, how many reflectors have no blob
+-- near where they are predicted, and what the clip being there all the
+-- same, those out of sight, scores.
+data Held = Held Score Int Score
+    deriving (Eq, Show)
+
+-- | A pose passed over for the clip being where it was, for a developer.
+explainHeld :: Held -> String
+explainHeld (Held found missing held) =
+    "found by layout elsewhere, scoring "
+        ++ renderScore found
+        ++ ", but likelier where it was with "
+        ++ show missing
+        ++ (if missing == 1 then " reflector" else " reflectors")
+        ++ " out of sight ("
+        ++ renderScore held
+        ++ ")"
 
 -- | Why the clip wasn't made out in a frame: what was being tried, and
 -- what came of it.
@@ -320,6 +527,10 @@ data Recent = Recent
     -- ^ since when the clip has been tracked in every frame
     }
 
+-- | A pose that was left for one found afresh elsewhere, and what was
+-- believed of it being the head's or the mirror image.
+data LeftBehind = LeftBehind !Recent !Branch
+
 data Tracker = Tracker
     { trIntrinsics :: !Intrinsics
     , trModel :: !Model
@@ -336,6 +547,9 @@ data Tracker = Tracker
     -- ^ oldest first
     , trMasking :: !Masking
     , trLights :: !Lights
+    , trLeft :: !(Maybe LeftBehind)
+    -- ^ a pose left for one found afresh, while it still predicts (see
+    -- Note [Following or finding afresh])
     , trBlobs :: ![(Blob, BlobRole)]
     -- ^ the last frame's, all evaluated, so as not to hold on to the frames
     -- before
@@ -344,7 +558,7 @@ data Tracker = Tracker
 -- | A tracker that starts from the given calibration and recenters on the
 -- first frame it tracks.
 newTracker :: Intrinsics -> Model -> Masking -> Calibration -> Tracker
-newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newShapeLearner m) (newBranch m) Nothing [Recenter] masking noLights []
+newTracker k m masking c = Tracker k m Nothing (pure noSize) Nothing (newLearner m c) (newShapeLearner m) (newBranch m) Nothing [Recenter] masking noLights Nothing []
 
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
@@ -404,7 +618,7 @@ request r t = t{trPending = trPending t ++ [r]}
 -- | Track a differently shaped clip from the next frame, recentering then,
 -- since the model's axes move with its shape.
 setModel :: Model -> Tracker -> Tracker
-setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLearner = changeClip m (trLearner t), trShape = newShapeLearner m, trBranch = newBranch m}
+setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLeft = Nothing, trLearner = changeClip m (trLearner t), trShape = newShapeLearner m, trBranch = newBranch m}
 
 -- | Seconds of head turning to calibrate level from.
 calibrationSeconds :: Double
@@ -451,7 +665,8 @@ findBlobs :: [Stripe] -> [Blob]
 findBlobs = stripesToBlobs minFaintPixels maxBlobPixels
 
 -- | For how long, in seconds, a pose predicts where the reflectors are. After
--- longer out of sight, the clip is found afresh.
+-- longer out of sight, the clip is found only afresh, with nothing said of
+-- where it was.
 predictionSeconds :: Double
 predictionSeconds = 0.5
 
@@ -469,6 +684,42 @@ confirmSeconds = 0.5
 maxTurn, maxMove :: Double -> Double
 maxTurn dt = inDegrees (headStepTurn world) + inPerSecond (headTurnRate world) * dt
 maxMove dt = inMillimetres (headStepMove world) + inPerSecond (headMoveRate world) * dt
+
+-- | The spreads of how far a head turns (degrees) and its pivot moves (mm)
+-- in the given seconds: the world's 'headTurnSpeed' and 'headMoveSpeed'
+-- for that long, or for a frame if that is longer.
+turnSpread, moveSpread :: Double -> Double
+turnSpread dt = inDegrees (headTurnSpeed world `during` sinceSeen dt)
+moveSpread dt = inMillimetres (headMoveSpeed world `during` sinceSeen dt)
+
+sinceSeen :: Double -> Seconds
+sinceSeen dt = seconds (max dt (1 / inPerSecond (frameRate world)))
+
+-- | How much likelier, in nats, a pose is where a pose so many seconds
+-- before says it most likely is than where a head most likely is with
+-- nothing known of where it was: what finding the clip afresh gives up
+-- (see Note [Following or finding afresh]).
+--
+-- It is the log of how much more room a head has anywhere than a head
+-- followed has: in turning, the world's 'headTurnSpread' against
+-- 'turnSpread', each of three ways; in place, the box 'canBeThere' allows
+-- ('maxReachMove' to either side, and up or down, and from 'nearest' to
+-- 'farthest') against a gaussian of 'moveSpread' each way. Neither is
+-- less than nothing: after long enough, a pose says no more than that the
+-- head is somewhere.
+afreshCost :: Double -> Double
+afreshCost dt = 3 * log (max 1 (inDegrees (headTurnSpread world) / turnSpread dt)) + log (max 1 (box / (moveSpread dt * sqrt (2 * pi)) ^ (3 :: Int)))
+  where
+    box = (2 * maxReachMove) ^ (2 :: Int) * (farthest - nearest)
+
+-- | The score below which a followed pose is doubted, and the clip looked
+-- for by layout in the same frame too (see Note [Following or finding
+-- afresh]): what a head turning and moving at twice the spreads of its
+-- speed scores, beyond which, as spreads are stated, little happens.
+weakScore :: Score
+weakScore = Score (negate (2 * (twice * twice / 2)))
+  where
+    twice = 2 :: Double
 
 -- | The farthest a head turns (degrees) and moves (mm, at its pivot) from
 -- where it was recentered: three of the world's 'headTurnSpread', and its
@@ -523,7 +774,7 @@ sizeMemory = 10
 -- | What a frame showed, when the clip was made out.
 data Sighting
     = Sighting
-        Looking
+        Chosen
         Pose
         -- | RMS reprojection error, pixels
         Double
@@ -534,6 +785,17 @@ data Sighting
         Int
         -- | what each term that accepted the pose found
         [Finding]
+
+-- | The clip found by the layout of the big blobs, with a pose still
+-- predicting: what it scores, how its pose stands to that pose, the
+-- sighting it makes given what became of following, and what its jump was
+-- judged to be against what following allows.
+data Layout = Layout
+    { layoutScore :: Score
+    , layoutWay :: Way
+    , layoutSighting :: Fate -> Sighting
+    , layoutJump :: [Finding]
+    }
 
 -- | A pose following the last: the pose, its RMS reprojection error in
 -- pixels, and the degrees it turned and mm its pivot moved from the last.
@@ -548,7 +810,7 @@ data Found = Found Pose (Three Blob)
 step :: Double -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
 step now stripes t =
     case sighting of
-        Left why ->
+        Left (why, held) ->
             let (learntLights, learntNews) = learnt unseen
                 -- Lights just learnt that the clip would be found in are
                 -- the clip, held still: they are forgotten unannounced.
@@ -569,15 +831,26 @@ step now stripes t =
                         | not (holding [p | LightIgnored p _ <- news] (toList (seenAt k m (recentPose r) <$> reflectors)) lights) ->
                             Just r{recentSince = now}
                     _ -> Nothing
-             in ( t{trLearner = lostSight (trLearner t), trShape = shapeLostSight (trShape t), trLights = lights, trRecent = untracked, trBlobs = roles []}
-                , Lost (length visible) (length masked) why
+             in ( t{trLearner = lostSight (trLearner t), trShape = shapeLostSight (trShape t), trLights = lights, trRecent = untracked, trLeft = left, trBlobs = roles []}
+                , Lost (length visible) (length masked) why held
                 , news
                 )
-        Right (Sighting finding seenPose fit sights unused hidden judged) ->
+        Right (Sighting chosen@(Chosen way _) seenPose fit sights unused hidden judged) ->
             let allSeen = all isJust sights
-                since = case finding of
-                    Following -> maybe now recentSince (trRecent t)
-                    Afresh -> now
+                -- A pose that continues the last carries on what goes by
+                -- continuity; one found afresh starts it over (see Note
+                -- [Following or finding afresh]).
+                (continued, since) = case (way, left, trRecent t) of
+                    (FoundAfresh, _, _) -> (Nothing, now)
+                    (Resumed, Just (LeftBehind was believed), _) -> (Just believed, recentSince was)
+                    (_, _, recent') -> (Just (trBranch t), maybe now recentSince recent')
+                -- A pose still predicting that is left for one found
+                -- afresh is kept while it predicts, unless one left
+                -- before it still does.
+                leaving = case (way, left, following) of
+                    (Resumed, _, _) -> Nothing
+                    (FoundAfresh, Nothing, Just r) -> Just (LeftBehind r (trBranch t))
+                    _ -> left
                 -- Lights are learnt clear of the clip once it has been
                 -- tracked a while: something tracked for a moment can be
                 -- lights that look like the clip. If it was, and the light
@@ -598,9 +871,7 @@ step now stripes t =
                 alone size s =
                     let across = 2 * sqrt (max (sizeUsual size / (metres seenPose ^ (2 :: Int))) (sightPixels s) / pi)
                      in sightKind s == Whole && length [() | b <- blobs, distance2 (sightAt s) (at b) <= across ^ (2 :: Int)] <= 1
-                watched = watch now pivot (trReference t) clarity seenPose others $ case finding of
-                    Following -> trBranch t
-                    Afresh -> foundAfresh (trBranch t)
+                watched = watch now pivot (trReference t) clarity seenPose others (fromMaybe (foundAfresh (trBranch t)) continued)
                 (pose, fix) = case (correction watched, followedMirror watched) of
                     (c, Just other) | c `elem` [MirrorTracked, MirrorBoth] -> (other, c)
                     (MirrorReference, _) -> (seenPose, MirrorReference)
@@ -626,6 +897,7 @@ step now stripes t =
                         , trShape = if correcting then shapeLostSight (trShape t) else trShape t
                         , trSweep = if correcting then fmap (\(Sweep deadline _) -> Sweep deadline []) (trSweep t) else trSweep t
                         , trLights = lights
+                        , trLeft = leaving
                         , trBlobs = roles [s | Just s <- toList sights]
                         }
                 (t1, requested) = foldl (handle pose) (restarted, []) (trPending t)
@@ -644,7 +916,7 @@ step now stripes t =
                         unused
                         hidden
              in ( if wasLight then t2{trRecent = Nothing} else t2
-                , Tracked (relativePose (appliedLevel applied) (appliedPivot applied) ref pose) (norm (poseT pose)) fit seen judged
+                , Tracked (relativePose (appliedLevel applied) (appliedPivot applied) ref pose) (norm (poseT pose)) fit seen judged chosen
                 , [Corrected evidence | correcting]
                     ++ reverse requested
                     ++ [Refined r (learnerCalibration learner) | r <- refinements]
@@ -660,6 +932,9 @@ step now stripes t =
     -- clip is predicted to be.
     following = case trRecent t of
         Just r | now - recentTime r <= predictionSeconds -> Just r
+        _ -> Nothing
+    left = case trLeft t of
+        Just l@(LeftBehind r _) | now - recentTime r <= predictionSeconds -> Just l
         _ -> Nothing
     mask = case trMasking t of
         NoMasking -> noMask
@@ -679,7 +954,9 @@ step now stripes t =
             | any (\s -> distance2 (sightAt s) (at b) <= reflectorReach b ^ (2 :: Int)) seen = ReflectorBlob
             | inMask mask b = MaskedBlob
             | otherwise = StrayBlob
-        reflectorReach b = 3 + 2 * sqrt (fromIntegral (blobPoints b) / pi)
+    -- How near a reflector's place, in pixels, a blob is its own: three,
+    -- and the blob's diameter.
+    reflectorReach b = 3 + 2 * sqrt (fromIntegral (blobPoints b) / pi)
     distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
     toEvent (Lights.Learnt p why) = LightIgnored p why
     toEvent (Lights.Forgotten p) = LightForgotten p
@@ -692,7 +969,104 @@ step now stripes t =
          in [(seenAt k m pose which, 15 + 2 * sqrt (biggestSeen / pi)) | which <- toList reflectors]
     pivot = appliedPivot (trLearner t)
     metres pose = norm (poseT pose) / 1000
-    sighting = maybe (fst <$> findAfresh (mask, (masked, visible))) follow following
+    sighting = maybe (either (\why -> Left (why, Nothing)) (Right . fst) (findAfresh (mask, (masked, visible)))) followOrFind following
+    -- The better of following the given pose and finding the clip by
+    -- layout, the second tried only when the first is rejected or weak
+    -- (see Note [Following or finding afresh]). A tie is following's.
+    followOrFind r = case follow r of
+        Right (followScore, followed@(Sighting _ pose fit sights unused hidden judged))
+            | followScore >= weakScore -> Right followed
+            | otherwise ->
+                let keeping fate jump = Right (Sighting (Chosen Followed (Just (Tried fate jump))) pose fit sights unused hidden judged)
+                 in case findHere r (Just (followScore, sights)) of
+                        Nothing -> Right followed
+                        Just (Left reason) -> keeping (Failed (Why Afresh reason)) []
+                        Just (Right found)
+                            | layoutScore found > followScore -> Right (layoutSighting found (Outscored (layoutScore found) followScore))
+                            | otherwise -> keeping (Outscored followScore (layoutScore found)) (layoutJump found)
+        Left why -> case findHere r Nothing of
+            Just (Right found)
+                | layoutWay found == Refound || layoutScore found > held -> Right (layoutSighting found (Failed why))
+                | otherwise -> Left (why, Just (Held (layoutScore found) missing held))
+              where
+                (missing, held) = stillThere r
+            _ -> Left (why, Nothing)
+    -- The clip still where the given pose predicts it, though the frame
+    -- doesn't show it so (see Note [Following or finding afresh]): how
+    -- many of its reflectors have no blob near where they are predicted,
+    -- and what that scores, each of them out of sight; impossible once
+    -- the clip has shown less than all three for longer than it may.
+    stillThere r
+        | now - recentAllSeen r > showingSeconds OneOut = (missing, impossible)
+        | otherwise = (missing, Score (fromIntegral missing * nats unseenScore))
+      where
+        -- Reflectors with a blob near their place, but no more of them
+        -- than there are such blobs: one blob isn't two reflectors seen.
+        places = toList (seenAt k m (recentPose r) <$> reflectors)
+        near q b = distance2 q (at b) <= reflectorReach b ^ (2 :: Int)
+        missing = 3 - min (length [() | q <- places, any (near q) visible]) (length [() | b <- visible, any (`near` b) places])
+    -- The clip by the layout of the big blobs in view, with the given
+    -- pose still predicting, or why the blobs aren't the clip. Nothing if
+    -- the blobs don't allow trying: there aren't three big ones, or none
+    -- is worth trying against the score and sights given, which are
+    -- following's. Masked blobs aren't tried.
+    --
+    -- Of more than three big blobs, each three of the heaviest few that
+    -- would be taken for the clip is a hypothesis, and the best scored is
+    -- the one told: with a pose to go on, the sizes the reflectors had and
+    -- where the clip was say which three, where finding afresh without
+    -- one wants just one such three ('onlyClipLike').
+    findHere r taken = case (lefts tried, sortOn (negate . nats . layoutScore) (rights tried)) of
+        (_, best : _) -> Just (Right best)
+        (reason : _, []) -> Just (Left reason)
+        ([], []) -> Nothing
+      where
+        big = bigAmong visible
+        threes = case compare (length big) 3 of
+            EQ -> [big]
+            GT | any ((> 0) . sizeUsual) (trSizes t) -> choose 3 (take clipSearch big)
+            _ -> []
+        tried = [foundHere r three | three <- threes, maybe True (worthTrying three) taken]
+        -- Not the three blobs following took, which is the same
+        -- hypothesis; nor three whose sizes alone, at the distance the
+        -- clip was, score no better than following did, since where they
+        -- put the clip can only cost them more.
+        worthTrying three (followed, sights) =
+            not (sightsOf three sights) && case identify m at three of
+                Just (l, rt, top) -> score usualSize (recentPose r, whole <$> Three l rt top) > followed
+                Nothing -> False
+    -- Three blobs as the clip, with the given pose still predicting, as
+    -- 'findHere' tells it.
+    foundHere r three = do
+        (pose, fit, (l, rt, top), judged) <- asClip three
+        let dt = now - recentTime r
+            sights = whole <$> Three l rt top
+            -- The pose as moved from another, so many seconds before: if
+            -- that isn't an impossible jump, as continuing it or as
+            -- anywhere, whichever makes it likelier.
+            from was since =
+                let (turn, move) = poseChange pivot (recentPose was) pose
+                    moved = Moved pose fit turn move
+                    likelier = if score (continuing since) moved >= score (anywhere dt) moved then continuing since else anywhere dt
+                 in (accepts (jumpable since) moved, about (const moved) likelier, findings (jumpable since) moved)
+            (way, prior, jump) = case (from r dt, (\(LeftBehind was _) -> from was (now - recentTime was)) <$> left) of
+                ((True, continued, jumped), _) -> (Refound, continued, jumped)
+                (_, Just (True, continued, jumped)) -> (Resumed, continued, jumped)
+                ((False, _, jumped), _) -> (FoundAfresh, anywhere dt, jumped)
+            placed = Moved pose fit 0 0
+            likely = blobsSay pose sights <> prior
+        Right
+            Layout
+                { layoutScore = score likely placed
+                , layoutWay = way
+                , layoutSighting = \fate -> Sighting (Chosen way (Just (Tried fate jump))) pose fit sights (length visible - 3) (length masked) (judged ++ findings likely placed)
+                , layoutJump = jump
+                }
+    -- Whether the blobs are just those the sights take for the reflectors,
+    -- each one of its own.
+    sightsOf :: [Blob] -> Three (Maybe Sight) -> Bool
+    sightsOf three sights = and [or [sightKind s == Whole && sightAt s == at b | Just s <- toList sights] | b <- three]
+    whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
     -- The pixels the biggest reflector, of the given sizes, lights where
     -- the head was recentered.
     usualAt sizes = case (maximum (sizeUsual <$> sizes), trReference t) of
@@ -768,11 +1142,10 @@ step now stripes t =
             LT -> [(bigShown ++ extra, extra) | extra <- sortOn alike (choose (3 - length bigShown) (take maskedSearch (filter (bigBeside biggest) (heaviestIn areas hidden))))]
             GT -> [(three, []) | Just three <- [onlyClipLike shown]]
         alike extra = let ps = map blobPoints (bigShown ++ extra) in fromIntegral (maximum ps) / fromIntegral (max 1 (minimum ps)) :: Double
-        whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
         attempts = map attempt choices
         attempt (three, extra) = do
             (pose, fit, (l, r, top), judged) <- asClip three
-            Right (Sighting Afresh pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra) judged, extra)
+            Right (Sighting (Chosen FoundAfresh Nothing) pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra) judged, extra)
     -- Finding the clip afresh wants just three big blobs: with fewer, or
     -- more, it is found only as 'findAfresh' says.
     threeBig :: Term Int
@@ -810,8 +1183,16 @@ step now stripes t =
                     let (turn, move) = poseChange pivot (recentPose r) pose
                         jump = max (turn / maxTurn dt) (move / maxMove dt)
                         moved = Moved pose fit turn move
+                        likely = blobsSay pose (matchSights c)
                      in if accepts (followable dt) moved
-                            then Right (jump, Sighting Following pose fit (matchSights c) (matchUnused c) (length masked) (matchJudged c ++ findings (followable dt) moved))
+                            then
+                                Right
+                                    ( jump
+                                    ,
+                                        ( Score (fromIntegral (3 - seenCount c) * nats unseenScore + nats (score (likely <> continuing dt) moved))
+                                        , Sighting (Chosen Followed Nothing) pose fit (matchSights c) (matchUnused c) (length masked) (matchJudged c ++ findings (followable dt <> likely <> continuing dt) moved)
+                                        )
+                                    )
                             else Left (Unfit (rejections (followable dt) moved))
          in case candidates of
                 [] -> Left . Why Following $ case allMatches of
@@ -828,15 +1209,48 @@ step now stripes t =
     -- seen, it isn't an impossible jump, and it is somewhere a head can be.
     followable dt =
         atMost (Name "fit" "the lights in view don't fit the clip's shape") "px" maxFit (\(Moved _ fit _ _) -> fit)
-            <> gate
-                (Name "turn" "the head would have turned faster than heads turn")
-                (\(Moved _ _ turn _) -> turn / maxTurn dt <= 1)
-                (\(Moved _ _ turn _) -> Measure turn AtMost (maxTurn dt) "degrees")
+            <> jumpable dt
+            <> about (\(Moved pose _ _ _) -> pose) canBeThere
+    -- A pose isn't an impossible jump from the last, so many seconds
+    -- before.
+    jumpable dt =
+        gate
+            (Name "turn" "the head would have turned faster than heads turn")
+            (\(Moved _ _ turn _) -> turn / maxTurn dt <= 1)
+            (\(Moved _ _ turn _) -> Measure turn AtMost (maxTurn dt) "degrees")
             <> gate
                 (Name "move" "the head would have moved faster than heads move")
                 (\(Moved _ _ _ move) -> move / maxMove dt <= 1)
                 (\(Moved _ _ _ move) -> Measure move AtMost (maxMove dt) "mm")
-            <> about (\(Moved pose _ _ _) -> pose) canBeThere
+    -- The soft terms that hypotheses about a frame are compared by (see
+    -- Note [Following or finding afresh]).
+    --
+    -- How likely the reflectors are seen so far from where a pose puts
+    -- them: each a centre out by the fit, under the world's
+    -- 'centroidNoise'.
+    misfit = gaussian (Name "misfit" "the lights in view don't quite fit the clip's shape") "px" (inPixels (centroidNoise world) / sqrt 3) (\(Moved _ fit _ _) -> fit)
+    -- How likely a head turned and moved as far as a pose is from the
+    -- last, so many seconds before.
+    continuing dt =
+        gaussian (Name "turning" "the head would have turned faster than heads mostly turn") "degrees" (turnSpread dt) (\(Moved _ _ turn _) -> turn)
+            <> gaussian (Name "moving" "the head would have moved faster than heads mostly move") "mm" (moveSpread dt) (\(Moved _ _ _ move) -> move)
+    -- How likely a head is at a pose with nothing known of where it was,
+    -- beside how likely one followed for so many seconds is where it was:
+    -- anywhere it can be, and turned from the centre as heads are.
+    anywhere dt =
+        cost (Name "afresh" "nothing says where the clip would be") (const (afreshCost dt))
+            <> maybe mempty (\ref -> gaussian (Name "reach" "turned further than heads mostly turn") "degrees" (inDegrees (headTurnSpread world)) (\(Moved pose _ _ _) -> fst (poseChange pivot ref pose))) (trReference t)
+    -- What the blobs taken for the reflectors at a pose say of it: how
+    -- well they fit it, and how likely each that is a reflector's own is
+    -- the size its reflector has been lately, at the pose's distance, as
+    -- a match's terms for sizes score a size. (Against the usual size, not
+    -- the latest as matching goes by: the latest is whatever the last
+    -- frame took for the reflector, which is what is in question.)
+    blobsSay pose sights = about (const (pose, sights)) usualSize <> misfit
+    usualSize :: Term (Pose, Three (Maybe Sight))
+    usualSize =
+        likelihood (Name "usual size" "the lights in view aren't the size the clip's reflectors have been") $ \(pose, sights) ->
+            sum [nats (sizeScore (sizeUsual size / metres pose ^ (2 :: Int)) (sightPixels sight)) | (size, Just sight) <- toList ((,) <$> trSizes t <*> sights), sightKind sight /= Merged]
     -- Somewhere a head can be: at a sane distance from the camera, and not
     -- too far to the side of where it was recentered, though as near or as
     -- far from the camera as it likes.

@@ -16,6 +16,8 @@ module TrackKat.Match (
     Sight (..),
     Match (..),
     matchScore,
+    sizeScore,
+    unseenScore,
     matches,
     splitMerged,
     bigEnoughForTwo,
@@ -122,6 +124,16 @@ matchScore m = Score (negate (matchCost m / squaredPixelsPerNat))
 -- at least two reflectors seen, no blob used twice, none left over that
 -- would be a reflector taken as unseen ('missingPlausible'), and two
 -- sharing a blob only when predicted within 'reach' of each other.
+
+-- | How likely a blob of so many pixels is a reflector expected to light
+-- the given number (0 for unknown), as a match's terms for sizes score it.
+sizeScore :: Double -> Double -> Score
+sizeScore expected actual = Score (negate (sizeCost expected actual / squaredPixelsPerNat))
+
+-- | How likely a reflector is to go unseen, as a match's term for it
+-- scores it.
+unseenScore :: Score
+unseenScore = Score (negate (missingCost / squaredPixelsPerNat))
 
 -- | The ways to match blobs to reflectors, best first, given a recent pose
 -- and the reflectors' recent sizes. At least two reflectors are seen in

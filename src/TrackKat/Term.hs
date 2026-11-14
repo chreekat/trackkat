@@ -48,6 +48,7 @@ module TrackKat.Term (
     renderTally,
 
     -- * Saying
+    renderScore,
     renderMeasure,
     renderFinding,
     renderFindings,
@@ -91,9 +92,11 @@ import Numeric (showFFloat)
 -- mm"), and a plain phrase for the user, who is told only what is wrong
 -- ("too far to the side of where you recentered").
 --
--- What is not here yet: hypotheses are still accepted or rejected one at
--- a time, by gates. Choosing among several by their scores, with gates
--- softened into likelihoods, is what the terms are for next (see
+-- Scores choose among hypotheses in one place so far: whether a frame's
+-- blobs are the clip followed from the last pose or found by their layout
+-- (see Note [Following or finding afresh] in "TrackKat.Tracker").
+-- Elsewhere hypotheses are still accepted or rejected one at a time, by
+-- gates; softening those into likelihoods is what comes next (see
 -- docs/heuristics.md).
 
 -- | The log of a likelihood, in nats: at most 0 from a gate, and minus
@@ -340,9 +343,13 @@ renderFinding :: Finding -> String
 renderFinding (Finding name s m) = unwords ([brief name] ++ maybe [] (pure . renderMeasure) m ++ [worth | soft])
   where
     soft = maybe True ((== Spread) . measureBound) m
-    worth
-        | isImpossible s = "(impossible)"
-        | otherwise = "(" ++ figure (nats s) ++ " nats)"
+    worth = "(" ++ renderScore s ++ ")"
+
+-- | A score, like "-3.2 nats", or "impossible".
+renderScore :: Score -> String
+renderScore s
+    | isImpossible s = "impossible"
+    | otherwise = figure (nats s) ++ " nats"
 
 renderFindings :: [Finding] -> String
 renderFindings = intercalate ", " . map renderFinding
