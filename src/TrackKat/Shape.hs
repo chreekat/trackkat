@@ -7,6 +7,7 @@ module TrackKat.Shape (
     newShapeLearner,
     watchShape,
     shapeLostSight,
+    shapeWindows,
     ShapeEstimate (..),
     shapeEstimate,
     sureEstimate,
@@ -21,10 +22,11 @@ module TrackKat.Shape (
 
 import Text.Printf (printf)
 
-import TrackKat.Calibration (plausiblePivot)
+import TrackKat.Calibration (neckCanBeAt)
 import TrackKat.Config (wornDistances)
 import TrackKat.Linear
 import TrackKat.Pose
+import TrackKat.Term (Bound (..), Finding (..), Measure (..), Name (..), Tally, Term, Verdict (..), about, accepts, atMost, gate, impossible, noTally, possible, rejections, tally)
 import TrackKat.World (World (..), inMillimetres, times, world)
 
 -- Note [Clip shape from movement]
@@ -74,6 +76,9 @@ import TrackKat.World (World (..), inMillimetres, times, world)
 -- the distances to the top within about a mm, and five minutes within
 -- half that. Being linearised, the estimate falls a little short of a far
 -- different shape, by about a tenth of the difference.
+--
+-- Which windows are taken is decided by terms (see "TrackKat.Term"), and
+-- the learner counts them by what took or rejected them ('shapeWindows').
 
 -- | Learning the shape of a clip, configured as the given model.
 data ShapeLearner = ShapeLearner
@@ -91,6 +96,8 @@ data ShapeLearner = ShapeLearner
     -- ^ windows taken, which picks the group for the next
     , slTold :: !(Maybe (Double, Double))
     -- ^ the distances to the top last reported
+    , slWindows :: !Tally
+    -- ^ windows of turning taken, and those not, by what rejected them
     }
 
 -- | Consecutive poses, to be taken as their mean.
@@ -158,7 +165,13 @@ memory = 600
 
 -- | Nothing learnt yet about a clip configured as the given model.
 newShapeLearner :: Model -> ShapeLearner
-newShapeLearner m = ShapeLearner m Nothing Nothing Nothing Nothing (replicate groups noEvidence) 0 Nothing
+newShapeLearner m = ShapeLearner m Nothing Nothing Nothing Nothing (replicate groups noEvidence) 0 Nothing noTally
+
+-- | How many windows of turning the shape has been estimated from since
+-- the learner was made, and how many were left out, by the term that
+-- rejected them, with what the last one left out was rejected for.
+shapeWindows :: ShapeLearner -> Tally
+shapeWindows = slWindows
 
 -- | Learn from a pose seen clearly at the given time, surely the head's,
 -- given the pivot it turns about, in the model's axes. The estimate is
@@ -200,8 +213,8 @@ addSample pivot at s sl = case slWindow sl of
     Just (Window start samples)
         | at - start < windowSeconds -> (sl{slWindow = Just (Window start (s : samples))}, Nothing)
         | otherwise -> case windowEvidence (slModel sl) pivot (s : samples) of
-            Nothing -> (sl{slWindow = Nothing}, Nothing)
-            Just e -> news (taken sl{slWindow = Nothing} e)
+            Left failed -> (sl{slWindow = Nothing, slWindows = tally (Rejected failed) (slWindows sl)}, Nothing)
+            Right e -> news (taken sl{slWindow = Nothing, slWindows = tally (Accepted possible) (slWindows sl)} e)
 
 -- | Add a window's evidence to its group, fading the older.
 taken :: ShapeLearner -> Evidence -> ShapeLearner
@@ -274,23 +287,38 @@ perturbed (Pose r t) [a, b, c, x, y, z] = Pose (rodrigues (V3 a b c) `mulMM` r) 
 perturbed p _ = p
 
 -- | What a window's samples, the latest first, say about the top
--- reflector's move, given the pivot as learnt: none if they turned too
--- little, or no still point explains them, or it is where no neck can be.
+-- reflector's move, given the pivot as learnt; or, if they turned too
+-- little, or no still point explains them, or it is where no neck can be,
+-- what the terms that say so found.
 --
 -- The unknowns are the still point p, its place c, and the move d; each
 -- sample gives three equations R p - c + B d = -t (see Note [Clip shape
 -- from movement]), with B linearised about the window's still point with
 -- the configured shape, and p held very weakly toward the pivot, which
 -- only settles where along the axis of turning it is.
-windowEvidence :: Model -> V3 -> [Sample] -> Maybe Evidence
+windowEvidence :: Model -> V3 -> [Sample] -> Either [Finding] Evidence
 windowEvidence m pivot samples
-    | span' < windowSpan * pi / 180 = Nothing
-    | otherwise = do
+    | not (accepts turned span') = Left (rejections turned span')
+    | otherwise = maybe (Left [Finding unsolved impossible Nothing]) id $ do
         still <- leastSquares (stillRows (const (replicate 3 [0, 0])))
         let p = vec (take 3 still)
         normal@(_, _, fit) <- reduced (stillRows (moveColumns p))
-        if sqrt (fit / n) <= windowFit && plausiblePivot m p then Just (toEvidence normal) else Nothing
+        let found = (sqrt (fit / n), p)
+        pure (if accepts explained found then Right (toEvidence normal) else Left (rejections explained found))
   where
+    turned :: Term Double
+    turned =
+        gate
+            (Name "turn" "the head turned too little")
+            (\turn -> not (turn < windowSpan * pi / 180))
+            (\turn -> Measure (turn * 180 / pi) AtLeast windowSpan "degrees")
+    unsolved = Name "no still point" "no point of the head stayed still"
+    -- The window's still point, and the RMS distance, mm, it moved: within
+    -- 'windowFit', and where a neck can be.
+    explained :: Term (Double, V3)
+    explained =
+        atMost (Name "fit" "the body moved while the head turned") "mm" windowFit fst
+            <> about snd (neckCanBeAt "window's pivot" m)
     n = fromIntegral (length samples)
     span' = case reverse samples of
         Sample first _ _ _ _ : _ -> maximum [norm (rotationVector (r `mulMM` transpose (poseR first))) | Sample (Pose r _) _ _ _ _ <- samples]
