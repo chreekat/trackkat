@@ -70,6 +70,7 @@ import Text.Printf (printf)
 import TrackKat.Linear
 import TrackKat.Number
 import TrackKat.Pose
+import TrackKat.World (World (..), inMillimetres, inPerSecond, times, world)
 
 -- | Estimates of up and of the neck pivot, with the evidence for each.
 data Calibration = Calibration
@@ -344,13 +345,13 @@ turnedAbout weight up c = c{upScatter = scaleM weight (outer u u), upWeight = we
 -- * Pivot
 
 -- | Whether a pivot, in the head's axes, is where a neck can be: behind the
--- reflectors, on the side away from where they face, and within a head's
--- reach of them. However the clip sits on the head, and however its post
+-- reflectors, on the side away from where they face, by at least the
+-- world's 'neckBehindClip', and within its 'neckWithin' of them. However the clip sits on the head, and however its post
 -- is bent, the head is behind the reflectors; a pivot in front of them was
 -- learnt from mirror-image poses (see 'mirrorPose'), on which the head
 -- seems to turn about a point in front of the clip.
 plausiblePivot :: Model -> V3 -> Bool
-plausiblePivot m p = dot p (towardHead m) >= 30 && norm p <= 300
+plausiblePivot m p = dot p (towardHead m) >= inMillimetres (neckBehindClip world) && norm p <= inMillimetres (neckWithin world)
 
 -- | Whether what was learnt of the pivot is plausible for the given clip.
 -- A calibration whose pivot isn't came from mirror-image poses, and its
@@ -413,18 +414,19 @@ screenCalibration m c
 -- holds it between.
 
 -- | How far, mm, the pivot is from 'pivotPrior' on most heads, in any
--- direction: the standard deviation of the prior.
+-- direction: the standard deviation of the prior, the world's
+-- 'pivotSpread'.
 priorSpread :: Double
-priorSpread = 40
+priorSpread = inMillimetres (pivotSpread world)
 
 priorInfo :: M33
 priorInfo = scaleM (1 / (priorSpread * priorSpread)) identity
 
 -- | How far, mm, a window's poses stray from turning about one point at
 -- the least, however well they fit: how far a neck is from a single pivot
--- over half a second.
+-- over half a second, the world's 'neckWander'.
 windowNoise :: Double
-windowNoise = 2
+windowNoise = inMillimetres (neckWander world)
 
 -- | How many independent poses a window's are worth.
 windowPoses :: Double
@@ -453,9 +455,9 @@ windowSpan :: Double
 windowSpan = 8
 
 -- | RMS distance, mm, by which a window's best fixed point may move; more,
--- and the body moved too.
+-- and the body moved too: twice the world's 'neckWander'.
 windowFit :: Double
-windowFit = 4
+windowFit = inMillimetres (times 2 (neckWander world))
 
 -- | Sums over a window's poses, enough to fit the point that stays still.
 data TurnWindow = TurnWindow
@@ -800,9 +802,10 @@ windowInfo saved = foldr add zeroM [(min limit (max 0 e), u) | (e, u) <- eigenSy
         | otherwise = (precision `addM` scaleM (-1) priorInfo, most)
     add (e, u) acc = acc `addM` scaleM e (outer u u)
 
--- | Poses in a window of earlier builds, at 120 frames a second.
+-- | Poses in a window of earlier builds: a window's at the world's
+-- 'frameRate', 60.
 olderWindowPoses :: Int
-olderWindowPoses = 60
+olderWindowPoses = round (windowSeconds * inPerSecond (frameRate world))
 
 -- | Read a calibration file. Settings it lacks start from scratch; the
 -- error names the offending line.

@@ -38,6 +38,7 @@ library
     TrackKat.Tracker
     TrackKat.Visibility
     TrackKat.USB
+    TrackKat.World
   build-depends:
     , array       ^>=0.5.8
     , async       ^>=2.2.6

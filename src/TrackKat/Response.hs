@@ -23,6 +23,7 @@ module TrackKat.Response (
 ) where
 
 import TrackKat.Pose (HeadPose (..))
+import TrackKat.World (World (..), inDegrees, inMillimetres, world)
 
 -- | A response curve, the same on both sides of centre: in degrees for
 -- rotations, mm for translations.
@@ -194,11 +195,13 @@ data Shaper = Shaper
 newShaper :: Shaper
 newShaper = Shaper Nothing 0 Nothing
 
--- | Largest change in one frame that a head can make: about 1800 degrees or
--- 5 m a second.
+-- | Largest change in one frame that a head can make: the world's
+-- 'headStepTurn' and 'headStepMove', about 1800 degrees or 5 m a second.
+-- The tracker takes the same for a frame's jump (see 'TrackKat.Tracker');
+-- this one catches what gets past it on an axis of the pose games see.
 maxStepDegrees, maxStepMm :: Double
-maxStepDegrees = 15
-maxStepMm = 40
+maxStepDegrees = inDegrees (headStepTurn world)
+maxStepMm = inMillimetres (headStepMove world)
 
 -- | Frames a jump must persist before it counts as real.
 jumpPersistence :: Int

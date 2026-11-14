@@ -49,6 +49,7 @@ import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 
 import TrackKat.Linear
+import TrackKat.World (World (..), inPixels, world)
 
 -- | Pinhole camera.
 data Intrinsics = Intrinsics
@@ -375,7 +376,7 @@ solvePose ::
     Maybe (Pose, Double)
 solvePose k m guess obs@(l, r, _) =
     case guess of
-        Just g | Just res@(_, err) <- refine g, err < 1 -> Just res
+        Just g | Just res@(_, err) <- refine g, err < guessFit -> Just res
         _ -> refine (frontal k m l r)
   where
     residuals = misfit k m obs
@@ -385,6 +386,12 @@ solvePose k m guess obs@(l, r, _) =
         p <- levenbergMarquardt solverSteps residuals p0
         let V3 _ _ z = poseT p
         if z > 0 then Just (p, rms p) else Nothing
+
+-- | The RMS reprojection error, in pixels, within which a pose refined
+-- from the guess given is taken, without trying from a head squarely
+-- facing the camera: the world's 'centroidNoise'.
+guessFit :: Double
+guessFit = inPixels (centroidNoise world)
 
 -- | How far, in pixels across and down, each reflector appears at a pose
 -- from where it was seen (left, right, top).
