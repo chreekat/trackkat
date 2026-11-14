@@ -26,6 +26,7 @@ import Data.Ord (comparing)
 
 import TrackKat.Frame (Blob (..))
 import TrackKat.Match (Kind (..), Sight (..))
+import qualified TrackKat.World as World
 
 -- | Whether still lights are learnt and masked.
 data Masking = MaskLights | NoMasking
@@ -129,23 +130,24 @@ clipMemorySeconds = 10
 
 -- | How much bigger than the biggest reflector seen lately a blob can be,
 -- and still look like a reflector: a reflector grows as the head comes
--- nearer the camera.
+-- nearer the camera. The world's 'World.sameSizeFactor'.
 reflectorLikeFactor :: Double
-reflectorLikeFactor = 1.5
+reflectorLikeFactor = World.sameSizeFactor World.world
 
 -- | Seconds over which the size of the biggest reflector seen fades.
 sizeMemorySeconds :: Double
 sizeMemorySeconds = 600
 
 -- | Seconds a blob that looks like a reflector must stay put to be learnt
--- as a light, while the clip isn't tracked elsewhere.
+-- as a light, while the clip isn't tracked elsewhere: the world's
+-- 'World.headStillFor'.
 stillHeadSeconds :: Double
-stillHeadSeconds = 300
+stillHeadSeconds = World.inSeconds (World.headStillFor World.world)
 
 -- | How much bigger or smaller than a light a reflector tracked in its
--- area can be, and be taken for it.
+-- area can be, and be taken for it: the world's 'World.sameSizeFactor'.
 sameSizeFactor :: Double
-sameSizeFactor = 1.5
+sameSizeFactor = World.sameSizeFactor World.world
 
 -- | A blob being watched: perhaps a light.
 data Candidate = Candidate

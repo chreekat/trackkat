@@ -39,6 +39,7 @@ import TrackKat.Linear (M33, dot, mulMM, mulMV, norm, normalize, transpose, (*^)
 import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Shape
+import TrackKat.World (World (..), inDegrees, inMillimetres, inPerSecond, inPixels, times, world)
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
@@ -288,31 +289,34 @@ confirmSeconds = 0.5
 
 -- | The most a head turns (degrees) and moves (mm, at its pivot) between
 -- frames the given number of seconds apart: from one frame to the next,
--- about what the shaping for games allows, and more the longer apart. A
--- bigger jump means the blobs were matched to the wrong reflectors.
+-- the world's 'headStepTurn' and 'headStepMove', which is what the shaping
+-- for games allows, and more the longer apart, by its 'headTurnRate' and
+-- 'headMoveRate'. A bigger jump means the blobs were matched to the wrong
+-- reflectors.
 maxTurn, maxMove :: Double -> Double
-maxTurn dt = 15 + 100 * dt
-maxMove dt = 40 + 200 * dt
+maxTurn dt = inDegrees (headStepTurn world) + inPerSecond (headTurnRate world) * dt
+maxMove dt = inMillimetres (headStepMove world) + inPerSecond (headMoveRate world) * dt
 
 -- | The farthest a head turns (degrees) and moves (mm, at its pivot) from
--- where it was recentered: the move to either side, or up or down, as the
--- camera sees it. Toward or away from the camera it goes as near as
--- 'nearest' or as far as 'farthest': people lean in, and sit back after a
--- break. Beyond that the blobs aren't the clip, but something like a
--- phone's light.
+-- where it was recentered: three of the world's 'headTurnSpread', and its
+-- 'headReachAside', the move to either side, or up or down, as the camera
+-- sees it. Toward or away from the camera it goes as near as 'nearest' or
+-- as far as 'farthest': people lean in, and sit back after a break. Beyond
+-- that the blobs aren't the clip, but something like a phone's light.
 maxReachTurn, maxReachMove :: Double
-maxReachTurn = 120
-maxReachMove = 400
+maxReachTurn = inDegrees (times 3 (headTurnSpread world))
+maxReachMove = inMillimetres (headReachAside world)
 
--- | The nearest and farthest, in mm, the clip can be from the camera.
+-- | The nearest and farthest, in mm, the clip can be from the camera: the
+-- world's 'cameraNearest' and 'cameraFarthest'.
 nearest, farthest :: Double
-nearest = 250
-farthest = 2500
+nearest = inMillimetres (cameraNearest world)
+farthest = inMillimetres (cameraFarthest world)
 
 -- | The worst RMS reprojection error, in pixels, of a pose matched from a
--- prediction.
+-- prediction: twice the world's 'centroidNoise'.
 maxFit :: Double
-maxFit = 2
+maxFit = inPixels (times 2 (centroidNoise world))
 
 -- | Seconds over which a reflector's usual size is forgotten.
 sizeMemory :: Double

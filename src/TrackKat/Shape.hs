@@ -25,6 +25,7 @@ import TrackKat.Calibration (plausiblePivot)
 import TrackKat.Config (wornDistances)
 import TrackKat.Linear
 import TrackKat.Pose
+import TrackKat.World (World (..), inMillimetres, times, world)
 
 -- Note [Clip shape from movement]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -146,9 +147,10 @@ windowSpan = 12
 
 -- | RMS distance, mm, by which a window's best still point may move, with
 -- the configured shape; more, and the body moved too. Looser than for
--- learning the pivot, as the shape may be some way off.
+-- learning the pivot, as the shape may be some way off: four times the
+-- world's 'neckWander', twice what learning the pivot allows.
 windowFit :: Double
-windowFit = 8
+windowFit = inMillimetres (times 4 (neckWander world))
 
 -- | Windows remembered: about ten minutes of turning.
 memory :: Double

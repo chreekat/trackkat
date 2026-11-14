@@ -27,6 +27,7 @@ import Data.Maybe (catMaybes)
 import TrackKat.Frame (Blob (..), blobAxes)
 import TrackKat.Linear (norm)
 import TrackKat.Pose
+import TrackKat.World (World (..), inPixels, world)
 
 -- | One of something for each reflector: left, right, top.
 data Three a = Three a a a
@@ -165,10 +166,10 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
 maxBlobs :: Int
 maxBlobs = 8
 
--- | The cost of a reflector going unseen: as if it were 6 pixels from where
--- it was predicted.
+-- | The cost of a reflector going unseen: as if it were six of the world's
+-- 'centroidNoise', 6 pixels, from where it was predicted.
 missingCost :: Double
-missingCost = 36
+missingCost = (6 * inPixels (centroidNoise world)) ^ (2 :: Int)
 
 -- | The cost of a blob being bigger or smaller than predicted: as if it
 -- were this many pixels away for each factor of e.

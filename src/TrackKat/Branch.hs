@@ -30,6 +30,7 @@ import Data.Maybe (fromMaybe)
 import TrackKat.Calibration
 import TrackKat.Linear (V3)
 import TrackKat.Pose
+import TrackKat.World (World (..), inDegrees, inMillimetres, times, world)
 
 -- Note [Which pose is the head's]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -180,9 +181,13 @@ togetherDegrees = 8
 -- | Spread, in mm, of how well a head's turning fits a fixed point near the
 -- pivot, from swaying and from where the pivot is; and how far, in mm, the
 -- point may lie from the pivot as cheaply as moving by that spread.
+--
+-- The spread is the world's 'bodySway'. The point's allowance is twice the
+-- world's 'pivotSpread': the pivot applied is itself an estimate, as far
+-- again from where it is.
 swayMM, pivotSpreadMM :: Double
-swayMM = 5
-pivotSpreadMM = 80
+swayMM = inMillimetres (bodySway world)
+pivotSpreadMM = inMillimetres (times 2 (pivotSpread world))
 
 -- | Degrees a window must turn through to say anything. Less than what
 -- learning the pivot needs, since a point in front of the clip shows
@@ -205,9 +210,10 @@ placesRemembered :: Int
 placesRemembered = 4
 
 -- | Spread, in degrees, of how far a head turns from where it was
--- centred: most turns are within this, and few beyond twice it.
+-- centred: most turns are within this, and few beyond twice it. The
+-- world's 'headTurnSpread'.
 headReachDegrees :: Double
-headReachDegrees = 40
+headReachDegrees = inDegrees (headTurnSpread world)
 
 normalise :: Belief -> Belief
 normalise b = Belief (f bothTrue) (f referenceMirrored) (f trackedMirrored) (f bothMirrored)
