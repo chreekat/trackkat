@@ -3,7 +3,7 @@
 module Main (main) where
 
 import Control.Exception (IOException, evaluate, try)
-import Control.Monad (forM_, unless)
+import Control.Monad (forM_, unless, when)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
@@ -11,7 +11,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Either (isLeft)
 import Data.IORef
 import Data.List (isInfixOf, isPrefixOf, mapAccumL, nub)
-import Data.Maybe (isNothing)
+import Data.Maybe (isJust, isNothing)
 import Data.Word (Word64, Word8)
 import GHC.Stats (gc, gcdetails_live_bytes, getRTSStats, getRTSStatsEnabled)
 import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removePathForcibly)
@@ -43,9 +43,14 @@ import TrackKat.Visibility
 main :: IO ()
 main = do
     failures <- newIORef (0 :: Int)
-    let check name ok = unless ok $ do
-            putStrLn ("FAIL: " ++ name)
-            modifyIORef' failures (+ 1)
+    -- TRACKKAT_SHOW=1 prints every check, with the figures in its name, to
+    -- compare one build's with another's.
+    shown <- isJust <$> lookupEnv "TRACKKAT_SHOW"
+    let check name ok = do
+            when shown $ putStrLn ((if ok then "ok: " else "not ok: ") ++ name)
+            unless ok $ do
+                putStrLn ("FAIL: " ++ name)
+                modifyIORef' failures (+ 1)
 
     -- Command obfuscation round-trips for many seeds.
     let cmds = [(1, Cmd1 0x13), (2, Cmd2 0x1A 0x07), (4, Cmd4 0x19 0x05 0x01 0x18), (4, Cmd4 0x23 0x3B 0x8E 0xFF)]
