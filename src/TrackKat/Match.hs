@@ -15,6 +15,7 @@ module TrackKat.Match (
     Kind (..),
     Sight (..),
     Match (..),
+    matchScore,
     matches,
     splitMerged,
     bigEnoughForTwo,
@@ -27,6 +28,7 @@ import Data.Maybe (catMaybes)
 import TrackKat.Frame (Blob (..), blobAxes)
 import TrackKat.Linear (norm)
 import TrackKat.Pose
+import TrackKat.Term
 import TrackKat.World (World (..), inPixels, world)
 
 -- | One of something for each reflector: left, right, top.
@@ -73,15 +75,21 @@ data Sight = Sight
     deriving (Show)
 
 -- | A way to see the reflectors in the blobs: each reflector's sight, or
--- Nothing for one not seen; how many blobs it leaves unused; and how
--- unlikely it is, from how far it puts the reflectors from where they were
--- predicted and how their sizes changed.
+-- Nothing for one not seen; how many blobs it leaves unused; how unlikely
+-- it is, from how far it puts the reflectors from where they were
+-- predicted and how their sizes changed, in squared pixels; and what each
+-- term of that found (see Note [Matching blobs]).
 data Match = Match
     { matchSights :: Three (Maybe Sight)
     , matchUnused :: Int
     , matchCost :: Double
+    , matchJudged :: [Finding]
     }
     deriving (Show)
+
+-- | How likely a match is, as its terms score it.
+matchScore :: Match -> Score
+matchScore m = Score (negate (matchCost m / squaredPixelsPerNat))
 
 -- Note [Matching blobs]
 -- ~~~~~~~~~~~~~~~~~~~~~
@@ -102,6 +110,18 @@ data Match = Match
 -- the usual size of one of them or more is left over: that would be it.
 -- Matches come best first; the caller solves for the pose from the first,
 -- and checks it.
+--
+-- The costs are terms (see "TrackKat.Term"): the reflectors' places, their
+-- sizes, and any unseen, for reflectors each seen apart ('apartTerm'); the
+-- places, the shared blob's size and the third reflector's, for two
+-- sharing a blob ('sharingTerm'). A squared distance of d pixels is the
+-- log-likelihood of a centre out by d under noise of 'centroidNoise',
+-- d squared over twice the noise squared, so the costs as reckoned, in
+-- squared pixels, are 'squaredPixelsPerNat' times the terms' nats. Which
+-- matches there are to cost is still decided by rules outside the terms:
+-- at least two reflectors seen, no blob used twice, none left over that
+-- would be a reflector taken as unseen ('missingPlausible'), and two
+-- sharing a blob only when predicted within 'reach' of each other.
 
 -- | The ways to match blobs to reflectors, best first, given a recent pose
 -- and the reflectors' recent sizes. At least two reflectors are seen in
@@ -123,10 +143,10 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
     -- A reflector can go unseen, or share a blob, only if no blob left over
     -- is half its usual size or more: that would be the reflector, seen far
     -- from where it was predicted.
-    missingPlausible used size Nothing = size <= 0 || and [2 * pixels b < size | (i, b) <- indexed, i `notElem` used]
+    missingPlausible used size Nothing = size <= 0 || and [wholeFactor * pixels b < size | (i, b) <- indexed, i `notElem` used]
     missingPlausible _ _ (Just _) = True
     separate =
-        [ Match (fmap (fmap snd) chosen) (unused used) (cost + missingCost * fromIntegral (3 - length seen))
+        [ judged apartTerm (Apart (shiftedCost placed) (sum sized) (missingCost * fromIntegral (3 - length seen))) (fmap (fmap snd) chosen) (unused used)
         | chosen <- traverse (Nothing :) (fmap (map Just) options)
         , let seen = catMaybes (toList chosen)
         , length seen >= 2
@@ -135,20 +155,20 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
         , and (missingPlausible used <$> usual <*> chosen)
         , let placed = catMaybes (toList ((\q -> fmap (\(_, s) -> (q, sightAt s))) <$> predicted <*> chosen))
               sized = catMaybes (toList ((\e -> fmap (\(_, s) -> sizeCost e (sightPixels s))) <$> expected <*> chosen))
-              cost = shiftedCost placed + sum sized
         ]
     merged =
-        [ Match (place (Just si) (Just sj) (Just third)) (unused (i : thirdUsed)) cost
+        [ judged sharingTerm sharing (place (Just si) (Just sj) (Just third)) (unused (i : thirdUsed))
         | (qi, qj, qk, ei, ej, ek, ui, uj, otherOptions, place) <- pairs
         , distance2 qi qj <= reach ei ej ^ (2 :: Int)
         , (i, b) <- take 2 (sortOn (\(_, b) -> distance2 (between qi qj ei ej) (blobX b, blobY b)) indexed)
         , let (si, sj) = splitMerged b qi qj ei ej
         , (thirdUsed, third) <- take 1 [o | o@(us, _) <- otherOptions, i `notElem` us]
         , missingPlausible (i : thirdUsed) ui Nothing && missingPlausible (i : thirdUsed) uj Nothing
-        , let cost =
-                shiftedCost [(qi, sightAt si), (qj, sightAt sj), (qk, sightAt third)]
-                    + sizeCost (ei + ej) (pixels b)
-                    + sizeCost ek (sightPixels third)
+        , let sharing =
+                Sharing
+                    (shiftedCost [(qi, sightAt si), (qj, sightAt sj), (qk, sightAt third)])
+                    (sizeCost (ei + ej) (pixels b))
+                    (sizeCost ek (sightPixels third))
         ]
     Three qL qR qT = predicted
     Three eL eR eT = expected
@@ -162,6 +182,45 @@ matches k m pose sizes blobs = sortOn matchCost (separate ++ merged)
     between (ui, vi) (uj, vj) ei ej =
         let f = share ei ej in (f * ui + (1 - f) * uj, f * vi + (1 - f) * vj)
 
+-- | The costs, in squared pixels, of a match with each reflector seen
+-- apart or not at all: of the places, of the sizes, and of any unseen.
+data Apart = Apart Double Double Double
+
+-- | The costs, in squared pixels, of a match with two reflectors sharing a
+-- blob: of the places, of the shared blob's size, and of the third
+-- reflector's size.
+data Sharing = Sharing Double Double Double
+
+-- | Squared pixels of cost to a nat of log-likelihood: twice the square
+-- of the world's 'centroidNoise'.
+squaredPixelsPerNat :: Double
+squaredPixelsPerNat = 2 * inPixels (centroidNoise world) ^ (2 :: Int)
+
+-- | The terms of a match's cost. They add in the order the costs always
+-- have, so that matches come in the same order to the last bit.
+apartTerm :: Term Apart
+apartTerm =
+    ( squaredPixels (Name "places" "the reflectors aren't where they were expected") (\(Apart places _ _) -> places)
+        <> squaredPixels (Name "sizes" "the reflectors aren't the size they were") (\(Apart _ sizes _) -> sizes)
+    )
+        <> squaredPixels (Name "unseen" "a reflector is out of sight") (\(Apart _ _ unseen) -> unseen)
+
+sharingTerm :: Term Sharing
+sharingTerm =
+    ( squaredPixels (Name "places" "the reflectors aren't where they were expected") (\(Sharing places _ _) -> places)
+        <> squaredPixels (Name "shared size" "two reflectors run together aren't the size of both") (\(Sharing _ shared _) -> shared)
+    )
+        <> squaredPixels (Name "third size" "the third reflector isn't the size it was") (\(Sharing _ _ third) -> third)
+
+-- | A cost in squared pixels, as a term.
+squaredPixels :: Name -> (h -> Double) -> Term h
+squaredPixels name f = cost name (\h -> f h / squaredPixelsPerNat)
+
+-- | A match as its terms judge it: its cost is what they come to, in
+-- squared pixels.
+judged :: Term h -> h -> Three (Maybe Sight) -> Int -> Match
+judged term h sights left = Match sights left (negate (nats (score term h)) * squaredPixelsPerNat) (findings term h)
+
 -- | Up to how many blobs, heaviest first, are considered.
 maxBlobs :: Int
 maxBlobs = 8
@@ -170,6 +229,12 @@ maxBlobs = 8
 -- 'centroidNoise', 6 pixels, from where it was predicted.
 missingCost :: Double
 missingCost = (6 * inPixels (centroidNoise world)) ^ (2 :: Int)
+
+-- | How many times bigger than a blob left over a reflector's usual size
+-- must be for the reflector to be unseen, or sharing a blob, and not that
+-- blob: a blob half its usual size or more would be it.
+wholeFactor :: Double
+wholeFactor = 2
 
 -- | The cost of a blob being bigger or smaller than predicted: as if it
 -- were this many pixels away for each factor of e.
@@ -228,7 +293,18 @@ reach ei ej = 1.5 * (radius ei + radius ej)
 -- compared on, to the two side by side than to the bigger alone. One no
 -- bigger could as well be either alone, the other out of sight.
 bigEnoughForTwo :: Double -> Double -> Double -> Bool
-bigEnoughForTwo area ei ej = ei <= 0 || ej <= 0 || area * area > max ei ej * (ei + ej)
+bigEnoughForTwo area ei ej = accepts bothInOne (area, ei, ej)
+
+-- | A blob's pixels, and two reflectors' expected sizes: whether the blob
+-- is big enough to be both (see 'bigEnoughForTwo'). Its figure is the
+-- blob's size against the least that would be both, the geometric mean of
+-- the bigger alone and the two together.
+bothInOne :: Term (Double, Double, Double)
+bothInOne =
+    gate
+        (Name "both in one" "a blob two reflectors would share is no bigger than one")
+        (\(area, ei, ej) -> ei <= 0 || ej <= 0 || area * area > max ei ej * (ei + ej))
+        (\(area, ei, ej) -> Measure area AtLeast (sqrt (max ei ej * (ei + ej))) "px")
 
 -- | The first reflector's share of a blob the two make together, from their
 -- expected sizes.
