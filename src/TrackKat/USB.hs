@@ -39,9 +39,14 @@ data CContext
 data CHandle
 data CStream
 
+-- | A libusb session.
 newtype Context = Context (Ptr CContext)
+
+-- | An open device.
 newtype Handle = Handle (Ptr CHandle)
 
+-- | A libusb call that failed: which, its error code, and libusb's name
+-- for the code.
 data USBError = USBError
     { usbCall :: String
     , usbCode :: Int
@@ -51,6 +56,7 @@ data USBError = USBError
 
 instance Exception USBError
 
+-- | libusb's error codes that callers tell apart.
 errNotFound, errNotSupported, errAccess, errBusy, errTimeout :: Int
 errAccess = -3
 errNotFound = -5
@@ -100,9 +106,11 @@ throwUSB call rc = do
     name <- errorName (fromIntegral rc)
     throwIO (USBError call (fromIntegral rc) name)
 
+-- | libusb's name for an error code.
 errorName :: Int -> IO String
 errorName rc = c_error_name (fromIntegral rc) >>= peekCString
 
+-- | Run the action with a libusb session, ended however the action exits.
 withContext :: (Context -> IO a) -> IO a
 withContext = bracket acquire (\(Context p) -> c_exit p)
   where
@@ -121,6 +129,7 @@ openFirst (Context ctx) vid pids =
                     >>= check "open"
                 (,) <$> (Handle <$> peek hPtr) <*> peek foundPtr
 
+-- | An attached device.
 data DeviceInfo = DeviceInfo
     { devVendor :: Word16
     , devProduct :: Word16
@@ -154,12 +163,15 @@ claim (Handle h) = do
     unless (cfg == 1) $ c_set_configuration h 1 >>= check "set_configuration"
     c_claim_interface h 0 >>= check "claim_interface"
 
+-- | Give up interface 0; failure is ignored.
 release :: Handle -> IO ()
 release (Handle h) = () <$ c_release_interface h 0
 
+-- | Close a device opened by 'openFirst'.
 close :: Handle -> IO ()
 close (Handle h) = c_close h
 
+-- | Write the bytes to an endpoint, waiting up to a second.
 bulkWrite :: Handle -> Word8 -> B.ByteString -> IO ()
 bulkWrite (Handle h) ep bytes =
     BU.unsafeUseAsCStringLen bytes $ \(p, len) ->

@@ -70,6 +70,7 @@ data Paths = Paths
     -- ^ the Start menu's shortcut
     }
 
+-- | Ask Windows where this trackkat is and where its folders are.
 findPaths :: IO Paths
 findPaths = do
     exe <- getExecutablePath
