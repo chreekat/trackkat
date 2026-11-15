@@ -47,6 +47,7 @@ data Command
       ListFiles
     deriving (Eq, Show)
 
+-- | What the arguments ask for; nothing if they aren't trackkat's.
 parseCommand :: [String] -> Maybe Command
 parseCommand = \case
     ["--install"] -> Just InstallCommand
@@ -63,6 +64,7 @@ parseCommand = \case
         "--after" : pid : rest | Just n <- parseCount pid -> go s w (Just n) rest
         _ -> Nothing
 
+-- | What is printed for arguments that aren't trackkat's.
 usage :: String
 usage =
     unlines

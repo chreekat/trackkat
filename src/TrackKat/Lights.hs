@@ -222,6 +222,7 @@ data Lights = Lights
     -- ^ since when the clip has been tracked in every frame
     }
 
+-- | Nothing learnt, watched or remembered.
 noLights :: Lights
 noLights = Lights [] [] Nothing Nothing Nothing (0, []) Nothing
 
@@ -417,6 +418,7 @@ holds centres places r = rAt r `elem` centres && any (\p -> distance p (rAt r) <
 -- | The areas of lights masked in a frame.
 newtype Mask = Mask [Region]
 
+-- | A mask that hides no blob.
 noMask :: Mask
 noMask = Mask []
 

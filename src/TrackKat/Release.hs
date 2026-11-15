@@ -74,6 +74,7 @@ instance Eq Version where
 instance Ord Version where
     compare a b = compare (versionNumbers a) (versionNumbers b)
 
+-- | The numbers versions are compared by.
 versionNumbers :: Version -> [Int]
 versionNumbers (Version ns _) = ns
 
@@ -90,6 +91,7 @@ parseVersion s = case break (== '+') s of
         | not (null b), all (\c -> isAlphaNum c || c `elem` ".-") b = Just (Just b)
     build _ = Nothing
 
+-- | A version as 'parseVersion' reads it.
 renderVersion :: Version -> String
 renderVersion v@(Version _ b) = versionFolder v ++ maybe "" ('+' :) b
 

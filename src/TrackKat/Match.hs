@@ -40,6 +40,7 @@ instance Applicative Three where
     pure a = Three a a a
     Three f g h <*> Three a b c = Three (f a) (g b) (h c)
 
+-- | Each reflector in its own place.
 reflectors :: Three Reflector
 reflectors = Three LeftReflector RightReflector TopReflector
 

@@ -171,6 +171,8 @@ wrapDegrees a = a - 360 * fromIntegral (floor ((a + 180) / 360) :: Integer)
 clampPitch :: Double -> Double
 clampPitch = max (-90) . min 90
 
+-- | How the head's pose becomes the view games see: smoothing, a curve
+-- for each axis, and what leaning follows.
 data Response = Response
     { smoothing :: Smoothing
     , yawCurve, pitchCurve, rollCurve, xCurve, yCurve, zCurve :: Curve
@@ -182,6 +184,7 @@ data Response = Response
 -- change.
 data Axis = Axis !Double !Double
 
+-- | What shaping keeps from one frame to the next.
 data Shaper = Shaper
     { shLast :: !(Maybe (Double, HeadPose))
     -- ^ time and pose last accepted, before smoothing
@@ -192,6 +195,7 @@ data Shaper = Shaper
     -- paused, doesn't hold on to every frame before
     }
 
+-- | A shaper that has seen no frame.
 newShaper :: Shaper
 newShaper = Shaper Nothing 0 Nothing
 

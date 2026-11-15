@@ -138,6 +138,7 @@ data Entry
       Unreadable Int String
     deriving (Eq, Show)
 
+-- | A session as recorded: how it started, and what happened, in order.
 data Recording = Recording
     { recStart :: Start
     , recEntries :: [Entry]
@@ -155,6 +156,7 @@ secondsSince s ns = fromIntegral (toInteger ns - toInteger (startClock s)) / 1e9
 
 -- * Writing
 
+-- | A recording's header. See Note [Recording format].
 renderStart :: Start -> Builder
 renderStart s =
     mconcat $
@@ -170,6 +172,7 @@ renderStart s =
     calibrationLines (SavedCalibration text) = filter (not . blank) (map (dropWhileEnd isSpace . takeWhile (/= '#')) (lines text))
     blank = all isSpace
 
+-- | An entry's line in a recording that started as given.
 renderEntry :: Start -> Entry -> Builder
 renderEntry s = \case
     FrameEntry t n stripes -> time t <> string7 " frame " <> word8Dec n <> foldMap stripe stripes <> nl

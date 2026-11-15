@@ -128,6 +128,8 @@ estimatedUp c
   where
     nearest = snd (maximumBy (comparing (abs . dot cameraUp . snd)) (eigenSymmetric (upScatter c)))
 
+-- | The camera's level as estimated: its axes turned so that the learnt up
+-- is up.
 estimatedLevel :: Calibration -> Level
 estimatedLevel = levelFromUp . estimatedUp
 
@@ -494,9 +496,12 @@ data TurnWindow = TurnWindow
     -- ^ furthest the head turned from the first pose, radians
     }
 
+-- | A window of turning that starts at the time given, in seconds, with
+-- the pose given.
 startWindow :: Double -> Pose -> TurnWindow
 startWindow now (Pose r t) = TurnWindow now r 1 r (mulMV (transpose r) t) t (dot t t) 0
 
+-- | The window with one more pose.
 addPose :: Pose -> TurnWindow -> TurnWindow
 addPose (Pose r t) w =
     w
@@ -692,6 +697,7 @@ newLearner m c = Learner m mc Nothing Nothing Nothing up pivot up pivot noTally
     up = estimatedUp mc
     pivot = estimatedPivot mc
 
+-- | What has been learnt, as it would be saved.
 learnerCalibration :: Learner -> Calibration
 learnerCalibration = lCalibration
 
@@ -701,6 +707,7 @@ learnerCalibration = lCalibration
 learnerWindows :: Learner -> Tally
 learnerWindows = lWindows
 
+-- | The level applied, which follows the one learnt slowly (see 'upRate').
 appliedLevel :: Learner -> Level
 appliedLevel = levelFromUp . lUp
 
