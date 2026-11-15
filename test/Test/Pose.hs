@@ -275,9 +275,7 @@ newtype AClip = AClip Model
 
 instance Arbitrary AClip where
     arbitrary = AClip <$> elements clips
-    shrink (AClip m) = AClip <$> takeWhile ((/= reflectors m) . reflectors) clips
-      where
-        reflectors c = (mLeft c, mRight c, mTop c)
+    shrink (AClip m) = AClip <$> earlier clips m
 
 -- | One of 'clips' at a pose the camera sees it whole in, within the range
 -- a clip is tracked in, turned any way.
@@ -286,7 +284,7 @@ data ClipSeen = ClipSeen Model Placing
 
 instance Arbitrary ClipSeen where
     arbitrary = elements clips >>= \m -> ClipSeen m <$> genSeen 180 trackedRange m
-    shrink (ClipSeen m placing) = ClipSeen m <$> shrinkSeen m placing
+    shrink (ClipSeen m placing) = [ClipSeen m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipSeen m <$> shrinkSeen m placing)
 
 -- | One of 'clips' as 'ClipSeen' has it, turned up to 25 degrees from
 -- squarely facing the camera.
@@ -295,7 +293,7 @@ data ClipFacing = ClipFacing Model Placing
 
 instance Arbitrary ClipFacing where
     arbitrary = elements clips >>= \m -> ClipFacing m <$> genSeen 25 trackedRange m
-    shrink (ClipFacing m placing) = ClipFacing m <$> shrinkSeen m placing
+    shrink (ClipFacing m placing) = [ClipFacing m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipFacing m <$> shrinkSeen m placing)
 
 -- | Degrees of yaw, pitch and roll, short of where they stop telling a
 -- turn apart: pitch straight up or down, and yaw or roll half a turn.

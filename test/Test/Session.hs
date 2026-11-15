@@ -4,7 +4,6 @@
 module Test.Session (tests) where
 
 import Data.List (mapAccumL)
-import Data.Maybe (isJust)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck
@@ -159,7 +158,7 @@ tests =
             \(Found found) ->
                 let (c, effects) = startingCalibration "trackkat.calibration" found
                     none = [noCalibration]
-                 in renderCalibration c === renderCalibration defaultCalibration
+                 in c === defaultCalibration
                         .&&. case found of
                             Nothing -> userLines effects === none .&&. [shown | ShowCalibration shown <- effects] === none
                             Just (Left err) ->
@@ -363,5 +362,8 @@ instance Show Found where
     show (Found found) = show (fmap (fmap renderCalibration) found)
 
 instance Arbitrary Found where
-    arbitrary = Found <$> elements [Nothing, Just (Left "line 3: no pivot"), Just (Right defaultCalibration)]
-    shrink (Found found) = [Found Nothing | isJust found]
+    arbitrary = Found <$> elements finds
+    shrink (Found found) = Found <$> earlier finds found
+
+finds :: [Maybe (Either String Calibration)]
+finds = [Nothing, Just (Left "line 3: no pivot"), Just (Right defaultCalibration)]

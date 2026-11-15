@@ -178,5 +178,8 @@ newtype Lit = Lit (Three Bool)
     deriving (Show)
 
 instance Arbitrary Lit where
-    arbitrary = Lit <$> elements [Three True True True, Three False True True, Three True False True, Three True True False]
-    shrink (Lit lit) = [Lit (pure True) | not (and lit)]
+    arbitrary = Lit <$> elements lights
+    shrink (Lit lit) = Lit <$> earlier lights lit
+
+lights :: [Three Bool]
+lights = [Three True True True, Three False True True, Three True False True, Three True True False]
