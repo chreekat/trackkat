@@ -44,6 +44,19 @@ library
     TrackKat.Stats
     TrackKat.Term
     TrackKat.Tracker
+    TrackKat.Tracker.Absence
+    TrackKat.Tracker.Blobs
+    TrackKat.Tracker.Choose
+    TrackKat.Tracker.Follow
+    TrackKat.Tracker.Judge
+    TrackKat.Tracker.Layout
+    TrackKat.Tracker.Learners
+    TrackKat.Tracker.Mirror
+    TrackKat.Tracker.Outcome
+    TrackKat.Tracker.Sighting
+    TrackKat.Tracker.Sizes
+    TrackKat.Tracker.Still
+    TrackKat.Tracker.Trail
     TrackKat.Updater
     TrackKat.Visibility
     TrackKat.USB
@@ -161,6 +174,15 @@ test-suite tests
     Test.Stats
     Test.Term
     Test.Tracker
+    Test.Tracker.Blobs
+    Test.Tracker.Choose
+    Test.Tracker.Follow
+    Test.Tracker.Judge
+    Test.Tracker.Kept
+    Test.Tracker.Layout
+    Test.Tracker.Sizes
+    Test.Tracker.Step
+    Test.Tracker.Trail
     Test.Updater
     Test.Visibility
     Test.World
