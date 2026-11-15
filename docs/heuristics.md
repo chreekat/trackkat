@@ -17,7 +17,7 @@ one currency:
 | Memory | how long something learnt is kept | the module that keeps it, for now |
 | Threshold | how sure a decision must be | the module that decides |
 
-Three things hold the scheme together:
+Four things hold the scheme together:
 
 - **`World`** states each primary fact once, with its unit. A module's
   constant that is the same fact *is* that field; one that is a multiple
@@ -38,6 +38,16 @@ Three things hold the scheme together:
   `tirprobe` prints them (`--explain` for every frame), and trackkat's log
   says, in the user's words, why the clip is out of sight with lights in
   view.
+- **Stages** make each of the tracker's decisions in one function of just
+  what it reads, in a module of its own under `src/TrackKat/Tracker/` (the
+  head of `Tracker.hs` says which, in the order a frame goes through
+  them). What each promises is stated as properties under
+  `test/Test/Tracker/`: a gate that lets something through lets through
+  anything on its safe side, a score peaks where its figure is as
+  expected, nothing is made out that a gate refuses, and the choice among
+  hypotheses takes only what one of them gave. A number tuned is then
+  tested by the promises of the stage it belongs to. What would be good
+  to promise and isn't true is among the contradictions below (16 to 19).
 
 Gathering the numbers changed none of them: every value was what tracking
 used before, and the tests' figures and replays were the same to the last
@@ -62,11 +72,11 @@ Duplicates that collapsed to one source:
 
 | Fact | Was stated in | Now |
 | --- | --- | --- |
-| A frame's largest jump, 15° and 40 mm | `Tracker.maxTurn`/`maxMove`, `Response.maxStepDegrees`/`maxStepMm` | `World.headStepTurn`, `headStepMove` |
-| How far a head turns from centre | `Branch.headReachDegrees` 40 (a spread), `Tracker.maxReachTurn` 120 (a limit) | `World.headTurnSpread`; the limit is 3 spreads |
+| A frame's largest jump, 15° and 40 mm | `Tracker.Judge.maxTurn`/`maxMove`, `Response.maxStepDegrees`/`maxStepMm` | `World.headStepTurn`, `headStepMove` |
+| How far a head turns from centre | `Branch.headReachDegrees` 40 (a spread), `Tracker.Judge.maxReachTurn` 120 (a limit) | `World.headTurnSpread`; the limit is 3 spreads |
 | How far a neck is from one pivot | `Calibration.windowNoise` 2, `Calibration.windowFit` 4, `Shape.windowFit` 8 | `World.neckWander`, and 2 and 4 times it |
 | Where the pivot is, head to head | `Calibration.priorSpread` 40, `Branch.pivotSpreadMM` 80 | `World.pivotSpread`, and twice it |
-| A reflector's centre is good to a pixel | `Tracker.maxFit` 2, `Pose.solvePose`'s 1, `Match.missingCost` 36 | `World.centroidNoise`: 2 of it, 1 of it, 6 of it squared |
+| A reflector's centre is good to a pixel | `Tracker.Judge.maxFit` 2, `Pose.solvePose`'s 1, `Match.missingCost` 36 | `World.centroidNoise`: 2 of it, 1 of it, 6 of it squared |
 | Blobs of one thing differ by 1.5 times | `Lights.reflectorLikeFactor`, `Lights.sameSizeFactor` | `World.sameSizeFactor` |
 | 120 frames a second | `Calibration.olderWindowPoses` 60 | `windowSeconds × World.frameRate` |
 
@@ -113,7 +123,7 @@ Each is a candidate to reconcile. None was changed.
    `Pose.standardMounting`, where the simulation's head has it at (0, 130,
    90).
 6. **How far to the side a head goes is 400 mm for tracking and 300 mm for
-   the view.** `Tracker.maxReachMove` against `Response.leanRange`. They
+   the view.** `Tracker.Judge.maxReachMove` against `Response.leanRange`. They
    are different things (where blobs can be the clip; where a game's view
    ends), so both stay, but a head 350 mm aside is tracked and sent to a
    game as beyond the end of its range.
@@ -126,10 +136,10 @@ Each is a candidate to reconcile. None was changed.
    lately (`reflectorLikeFactor`); within 1.5 times a light's size
    (`sameSizeFactor`). 3/25 and 1/8 are the same idea at 0.12 and 0.125.
    None knows the others, and none is a likelihood: a reflector's size has
-   a distribution, learnt per reflector in `trSizes`, and each test cuts it
+   a distribution, learnt per reflector (`Tracker.Sizes`), and each test cuts it
    at a different place.
 8. **A reflector's size is remembered for 10 s, for 600 s, and for good.**
-   `Tracker.sizeMemory` fades the usual size over 10 s out of sight;
+   `Tracker.Sizes.sizeMemory` fades the usual size over 10 s out of sight;
    `Lights.sizeMemorySeconds` fades the biggest seen over 600 s; `Lights`
    also keeps the size at the centre (`lUsual`), which never fades.
 9. **Pixel distances each have their own number:** 1 (a guess is good
@@ -139,7 +149,7 @@ Each is a candidate to reconcile. None was changed.
    (`nearPixels`), 25 (`reachPixels`). Only 1, 2 and 6 derive from
    `centroidNoise`.
 10. **Half a second is three separate constants** that happen to agree:
-    `Tracker.predictionSeconds`, `Tracker.confirmSeconds` and
+    `Tracker.Trail.predictionSeconds`, `Tracker.Still.confirmSeconds` and
     `Calibration.windowSeconds`. A quarter second is `Lights.gapSeconds`.
 11. **Things counted in frames assume 120 a second:** `Shape.blockFrames` 8,
     `Response.jumpPersistence` 3, and the per-frame jump limits above. At
@@ -163,6 +173,29 @@ Each is a candidate to reconcile. None was changed.
     were independent; while how long the clip may show less is a deadline
     (`showingSeconds`). A reflector that fades stays faded: the cost
     belongs to its going, and a rate to its staying.
+16. **A pose found by layout needn't fit the blobs.** A followed pose is
+    rejected when it fits worse than `maxFit`. Three big blobs are the clip
+    at whatever pose the solver ends on: `clipLike` has no term for the
+    fit, though `misfit` scores it once a pose predicts. Three blobs of
+    106 pixels at (272, 394), (394, 279) and (328, 410) are found afresh
+    as the clip, with nothing else known, at a pose that fits them to 42
+    pixels.
+17. **A pose refound is taken without weighing the clip still where it
+    was.** With following rejected, a layout that continues the last pose
+    is taken whatever it scores, where one elsewhere must beat
+    `stillThere`: refound at -41 nats is taken though every reflector has
+    a blob in its place (0 nats). A pose resumed, which continues the pose
+    left behind, must beat it like one found afresh.
+18. **The clip still where it was is impossible by a deadline, however
+    much of it shows.** `stillThere` goes by `showingSeconds` of one
+    reflector out: with all three reflectors' blobs in their places and
+    all three last showing 1.2 s ago, it is impossible, and any layout
+    elsewhere is taken.
+19. **A reflector's usual size, "the most it has been lately", can be
+    less than its latest.** Unseen or sharing a blob, its usual size fades
+    (`sizeMemory`) and its latest stays: 390 pixels latest and usual,
+    then 13 s out of sight, is 390 latest and 103 usual. Matching goes by
+    the latest, the choice between hypotheses by the usual (14).
 
 ## Head facts
 
@@ -171,13 +204,13 @@ How heads, necks and the camera are. `World` fields first.
 | Name | Value | Gates or weighs | From | Repeats or contradicts |
 | --- | --- | --- | --- | --- |
 | `World.frameRate` | 120 /s | `Calibration.olderWindowPoses` (60) | the TrackIR 5 | frame-counted constants assume it (11) |
-| `World.cameraNearest`, `cameraFarthest` | 250, 2500 mm | `Tracker.nearest`, `farthest`: a pose outside isn't the clip (terms `near`, `far`) | tuned; leaning in to 270 mm is tested | `maxBlobPixels` is sized for `nearest` |
-| `World.headStepTurn`, `headStepMove` | 15°, 40 mm | `Tracker.maxTurn`, `maxMove` at no gap (terms `turn`, `move`); `Response.maxStepDegrees`, `maxStepMm` | tuned: an allowance, below what a wrong match looks like | (1), (2) |
-| `World.headTurnRate`, `headMoveRate` | 100 °/s, 200 mm/s | how `Tracker.maxTurn`, `maxMove` grow with the gap between sightings | tuned: likewise an allowance | (1) |
+| `World.cameraNearest`, `cameraFarthest` | 250, 2500 mm | `Tracker.Judge.nearest`, `farthest`: a pose outside isn't the clip (terms `near`, `far`) | tuned; leaning in to 270 mm is tested | `maxBlobPixels` is sized for `nearest` |
+| `World.headStepTurn`, `headStepMove` | 15°, 40 mm | `Tracker.Judge.maxTurn`, `maxMove` at no gap (terms `turn`, `move`); `Response.maxStepDegrees`, `maxStepMm` | tuned: an allowance, below what a wrong match looks like | (1), (2) |
+| `World.headTurnRate`, `headMoveRate` | 100 °/s, 200 mm/s | how `Tracker.Judge.maxTurn`, `maxMove` grow with the gap between sightings | tuned: likewise an allowance | (1) |
 | `World.headTurnSpeed`, `headMoveSpeed` | 300 °/s, 500 mm/s | the spreads of a head's speed: how likely a pose continues the last (terms `turning`, `moving`), and what finding afresh gives up (term `afresh`) | a head's fastest, about 600°/s and 1 m/s, as two spreads | (1) |
-| `World.headTurnSpread` | 40° | `Branch.headReachDegrees`: where a head would be weighs which pose is the mirror image (term `reach`) | tuned | `Tracker.maxReachTurn` |
-| `Tracker.maxReachTurn` | 120° | a pose turned further from the centre isn't the clip (term `turned`) | 3 × `World.headTurnSpread` | `Response.yawRange` 180 is the view's, not the head's |
-| `World.headReachAside` | 400 mm | `Tracker.maxReachMove`: a pose further to the side of the centre isn't the clip (term `aside`) | tuned; vetoed good blobs before depth was let go | (6) |
+| `World.headTurnSpread` | 40° | `Branch.headReachDegrees`: where a head would be weighs which pose is the mirror image (term `reach`) | tuned | `Tracker.Judge.maxReachTurn` |
+| `Tracker.Judge.maxReachTurn` | 120° | a pose turned further from the centre isn't the clip (term `turned`) | 3 × `World.headTurnSpread` | `Response.yawRange` 180 is the view's, not the head's |
+| `World.headReachAside` | 400 mm | `Tracker.Judge.maxReachMove`: a pose further to the side of the centre isn't the clip (term `aside`) | tuned; vetoed good blobs before depth was let go | (6) |
 | `World.bodySway` | 5 mm | `Branch.swayMM`: the spread a window's misfit is scored against (term `turning`) | tuned | (3) |
 | `World.neckWander` | 2 mm | `Calibration.windowNoise`: the least a window's poses are taken to stray, in weighing it | tuned | (3) |
 | `Calibration.windowFit` | 4 mm | a window whose still point moved more isn't learnt from (term `fit`) | 2 × `World.neckWander` | (3) |
@@ -198,7 +231,7 @@ How heads, necks and the camera are. `World` fields first.
 | `Pose.alternatives` range | 0.5 to 1.5 times the distance | which other poses are looked for | tuned | |
 | `Pose.alternatives` apart | 0.5° | another pose nearer than this is the same pose | tuned | |
 | `Pose.levelFromYaws` | 0.5 | too little turning to calibrate level from | tuned | |
-| `Tracker.calibrationSeconds` | 5 s | how long a requested calibration watches | tuned | |
+| `Tracker.Learners.calibrationSeconds` | 5 s | how long a requested calibration watches | tuned | |
 | `Response.yawRange`, `pitchRange`, `rollRange`, `leanRange` | 180°, 90°, 90°, 300 mm | the ends of the view's ranges, as games and the window have them | games; `cbits/gui.c` draws the same | (6) |
 | `Config.clipShape` tabs | radius 10 mm, tape 25 mm of arc, bend 37.5°, post leaning 45° | where a reflector's light is on its tab | measured from a TrackClip | |
 
@@ -209,19 +242,19 @@ How far off measurements are.
 | Name | Value | Gates or weighs | From | Repeats or contradicts |
 | --- | --- | --- | --- | --- |
 | `World.centroidNoise` | 1 px | `Pose.guessFit`: a pose refined from the last is taken if it fits this well | tuned | (9) |
-| `Tracker.maxFit` | 2 px | a followed pose fitting worse isn't the clip (term `fit`) | 2 × `World.centroidNoise` | (9) |
-| `Tracker.misfit` spread | 0.577 px | how likely a pose's reflectors are seen so far from where it puts them, in scoring a hypothesis (term `misfit`) | `World.centroidNoise` / √3: three centres each out by the fit | the gate `fit` is the same figure, cut at 2 px |
-| `Tracker.turnSpread`, `moveSpread` | 2.5°, 4.2 mm a frame apart | how likely a pose continues the last (terms `turning`, `moving`) | `World.headTurnSpeed`, `headMoveSpeed` × the time between, a frame at least | the gates `turn`, `move` are the same figures, cut at the allowance (1) |
+| `Tracker.Judge.maxFit` | 2 px | a followed pose fitting worse isn't the clip (term `fit`) | 2 × `World.centroidNoise` | (9) |
+| `Tracker.Judge.misfit` spread | 0.577 px | how likely a pose's reflectors are seen so far from where it puts them, in scoring a hypothesis (term `misfit`) | `World.centroidNoise` / √3: three centres each out by the fit | the gate `fit` is the same figure, cut at 2 px |
+| `Tracker.Judge.turnSpread`, `moveSpread` | 2.5°, 4.2 mm a frame apart | how likely a pose continues the last (terms `turning`, `moving`) | `World.headTurnSpeed`, `headMoveSpeed` × the time between, a frame at least | the gates `turn`, `move` are the same figures, cut at the allowance (1) |
 | `Match.missingCost` | 36 px² | what a reflector unseen costs a match (term `unseen`) | (6 × `World.centroidNoise`)² | (9) |
 | `Match.squaredPixelsPerNat` | 2 px² | turns a match's cost into nats | 2 × `World.centroidNoise`² | |
 | `Match.sizeScale` | 10 px per factor of e | what a blob's size being off costs a match (term `sizes`) | tuned | (9); a size is not a distance |
 | `Match.shiftedCost` shift | 0.1 | how much the shift all reflectors share costs, beside each one's own | tuned | |
 | `Pose.holdTurn`, `holdMove` | 3 px/radian, 0.05 px/mm | how strongly a followed pose is held where it was | tuned | |
-| `Tracker.observe` shared | 0.5 | how much a reflector sharing a blob counts in the fit | tuned | |
-| `Tracker.observe` dim | pixels over usual, at most 1 | how much a dim reflector counts | tuned | another size test (7) |
-| `Tracker.reflectorReach` | 3 px + a blob's diameter | a blob this near a reflector is drawn as one (`roles`); a reflector with a blob this near where it is predicted isn't counted out of sight (`stillThere`) | tuned; about what a reflector moves in a frame at a head's fastest | (9) |
-| `Tracker.reflectorDiscs` margin | 15 px + the biggest reflector's diameter | lights aren't learnt this near the clip | tuned | (9) |
-| `Tracker.step` alone | a reflector's diameter | a reflector with another blob this near isn't seen clearly | tuned | |
+| `Tracker.Follow.observations` shared | 0.5 | how much a reflector sharing a blob counts in the fit | tuned | |
+| `Tracker.Follow.observations` dim | pixels over usual, at most 1 | how much a dim reflector counts | tuned | another size test (7) |
+| `Tracker.Blobs.reflectorReach` | 3 px + a blob's diameter | a blob this near a reflector is drawn as one (`roles`); a reflector with a blob this near where it is predicted isn't counted out of sight (`stillThere`) | tuned; about what a reflector moves in a frame at a head's fastest | (9) |
+| `Tracker.Still.clipView` margin | 15 px + the biggest reflector's diameter | lights aren't learnt this near the clip | tuned | (9) |
+| `Tracker.Mirror.clarity` alone | a reflector's diameter | a reflector with another blob this near isn't seen clearly | tuned | |
 | `Lights.stillPixels` | 4 px | a blob straying further isn't a still light | "a fire's core moves less than 2" | (9) |
 | `Lights.marginPixels` | 5 px | the margin of a light's area | tuned | (9) |
 | `Lights.reachPixels` | 25 px | how far a light's fragments show | "a fire's flicker, about 20" | (9) |
@@ -245,10 +278,10 @@ What a reflector's blob looks like.
 
 | Name | Value | Gates or weighs | From | Repeats or contradicts |
 | --- | --- | --- | --- | --- |
-| `Tracker.minBlobPixels`, `maxBlobPixels` | 15, 5000 px | a blob outside isn't a reflector, finding afresh | 250 px at 950 mm is 3600 at `nearest` | (7) |
-| `Tracker.minFaintPixels` | 6 px | the smallest blob kept at all | tuned | (7) |
-| `Tracker.besideBiggest` | 3/25 | a blob smaller beside the biggest in view isn't big (count term `big blobs`) | tuned | (7): 0.12 against `smallestShare`'s 0.125 |
-| `Tracker.smallestShare` | 1/8 | three blobs any of which is smaller beside its reflector's usual size aren't the clip (term `size`) | tuned | (7) |
+| `Tracker.Blobs.minBlobPixels`, `maxBlobPixels` | 15, 5000 px | a blob outside isn't a reflector, finding afresh | 250 px at 950 mm is 3600 at `nearest` | (7) |
+| `Tracker.Blobs.minFaintPixels` | 6 px | the smallest blob kept at all | tuned | (7) |
+| `Tracker.Blobs.besideBiggest` | 3/25 | a blob smaller beside the biggest in view isn't big (count term `big blobs`) | tuned | (7): 0.12 against `smallestShare`'s 0.125 |
+| `Tracker.Judge.smallestShare` | 1/8 | three blobs any of which is smaller beside its reflector's usual size aren't the clip (term `size`) | tuned | (7) |
 | `Match.wholeFactor` | 2 | a reflector isn't unseen, or sharing, while a blob half its usual size is left over | tuned | (7); `Lights.fragmentFactor` |
 | `Lights.fragmentFactor` | 2 | a blob near a light and half its size or less is a fragment of it | tuned | `Match.wholeFactor`: the same half, of another thing |
 | `Match.bigEnoughForTwo` | area² > bigger × both | a shared blob no bigger is perhaps one reflector (term `both in one`) | the geometric mean, on the log scale sizes are compared on | (7) |
@@ -257,10 +290,10 @@ What a reflector's blob looks like.
 | `Match.together` | the diameter of a disc of both areas | two blobs this close may be pieces of one reflector | geometry | |
 | `Match.maxBlobs` | 8 | blobs considered | tuned | |
 | `Match.matches` options | 4 a reflector; 2 blobs for a shared pair; 1 for the third | candidates tried | tuned | |
-| `Tracker.clipSearch`, `maskedSearch` | 5, 4 | blobs searched for the clip among more than three, and among those masked | tuned | with a pose to go on, the best scored three of the 5 is taken; without, the only one that passes the gates |
-| `Tracker.jumpRetries` | 5 | matches tried after the best jumps | tuned | |
+| `Tracker.Layout.clipSearch`, `maskedSearch` | 5, 4 | blobs searched for the clip among more than three, and among those masked | tuned | with a pose to go on, the best scored three of the 5 is taken; without, the only one that passes the gates |
+| `Tracker.Follow.jumpRetries` | 5 | matches tried after the best jumps | tuned | |
 | three big blobs | 3 | finding afresh wants just three (term `big blobs`) | the clip | |
-| reflector size at 1 m | learnt (`trSizes`: latest, and usual with `sizeMemory`) | every size test above | about 245 px lower, 180 top, in the simulation (`Synth.lowerRadius`, `topRadius`) | (8) |
+| reflector size at 1 m | learnt (`Tracker.Sizes.resized`: latest, and usual with `sizeMemory`) | every size test above | about 245 px lower, 180 top, in the simulation (`Synth.lowerRadius`, `topRadius`) | (8) |
 
 ## Memory
 
@@ -269,7 +302,7 @@ How long things are kept. Six ways of forgetting are in use:
 | Way | Where |
 | --- | --- |
 | A deadline: kept whole, then gone | `predictionSeconds`, `showingSeconds`, `confirmSeconds`, `Lights.learnSeconds`, `gapSeconds`, `forgetSeconds`, `clipMemorySeconds`, `Calibration.turnSeconds`, `longestStep` |
-| Fading with time, by e each so many seconds | `Tracker.sizeMemory`, `Lights.sizeMemorySeconds` |
+| Fading with time, by e each so many seconds | `Tracker.Sizes.sizeMemory`, `Lights.sizeMemorySeconds` |
 | A cap on how much is kept, the old scaled down as new comes | `Calibration.upMemory` (degrees), `Shape.memory` (windows), `Calibration.countMemory` (windows) |
 | A cap on how sure, direction by direction | `Calibration.pivotMemorySpread` |
 | The last few | `Branch.placesRemembered` |
@@ -277,10 +310,10 @@ How long things are kept. Six ways of forgetting are in use:
 
 | Name | Value | Keeps | From | Repeats or contradicts |
 | --- | --- | --- | --- | --- |
-| `Tracker.predictionSeconds` | 0.5 s | a pose predicts the reflectors, and one left for a pose found afresh may be resumed; after, the clip is found afresh only | tuned | (10); no longer how long a rejected follow waits |
-| `Tracker.confirmSeconds` | 0.5 s | tracking this long before lights are learnt clear of the clip | tuned | (10) |
-| `Tracker.showingSeconds` | 1 s one reflector out; 2.5 s one perhaps behind another | how long the clip is followed showing less (term `partly seen`) | tuned | |
-| `Tracker.sizeMemory` | 10 s | a reflector's usual size, out of sight | tuned | (8) |
+| `Tracker.Trail.predictionSeconds` | 0.5 s | a pose predicts the reflectors, and one left for a pose found afresh may be resumed; after, the clip is found afresh only | tuned | (10); no longer how long a rejected follow waits |
+| `Tracker.Still.confirmSeconds` | 0.5 s | tracking this long before lights are learnt clear of the clip | tuned | (10) |
+| `Tracker.Sizes.showingSeconds` | 1 s one reflector out; 2.5 s one perhaps behind another | how long the clip is followed showing less (term `partly seen`) | tuned | |
+| `Tracker.Sizes.sizeMemory` | 10 s | a reflector's usual size, out of sight | tuned | (8) |
 | `Lights.learnSeconds` | 3 s | still this long, a blob is a light (term `still`) | tuned | |
 | `Lights.gapSeconds` | 0.25 s | how long a light may vanish while watched; how old a frame's sights may be | tuned | (10) |
 | `Lights.forgetSeconds` | 45 s | a light unseen | tuned | |
@@ -296,7 +329,7 @@ How long things are kept. Six ways of forgetting are in use:
 | `Branch.placesRemembered`, `placeDegrees` | 4, 15° | where windows lately ended, so that fidgeting in one place counts once | tuned | |
 | `Branch.leastChance` | 0.001 | no belief falls below, so any can come back | tuned | |
 | `Response.jumpPersistence` | 3 frames | a jump lasting this long is real | tuned | (11) |
-| `Tracker.absenceSeconds`, `absenceQuiet` | 1 s, 10 s | how long out of sight before the user is told why, and how seldom | tuned | |
+| `Tracker.Absence.absenceSeconds`, `absenceQuiet` | 1 s, 10 s | how long out of sight before the user is told why, and how seldom | tuned | |
 
 ## Thresholds
 
@@ -318,8 +351,8 @@ How sure a decision must be.
 | `Shape.difference` | 2 mm and 4 spreads | an estimate different from what is configured | tuned | |
 | `Shape.solveEvidence` | 1e-9 | evidence too thin to solve | numerical | |
 
-| `Tracker.afreshCost` | 22.4 nats a frame after the last pose; 7.5 at 0.1 s; 1.8 at 0.5 s | what a pose found by layout gives up to a followed one (term `afresh`) | derived: log of the room a head has anywhere over the room a followed head has, see below | |
-| `Tracker.weakScore` | −4 nats | a followed pose scoring less is doubted, and the clip looked for by layout too | derived: a head turning and moving at twice the spreads of its speed, "little beyond two" | |
+| `Tracker.Judge.afreshCost` | 22.4 nats a frame after the last pose; 7.5 at 0.1 s; 1.8 at 0.5 s | what a pose found by layout gives up to a followed one (term `afresh`) | derived: log of the room a head has anywhere over the room a followed head has, see below | |
+| `Tracker.Choose.weakScore` | −4 nats | a followed pose scoring less is doubted, and the clip looked for by layout too | derived: a head turning and moving at twice the spreads of its speed, "little beyond two" | |
 | `Match.unseenScore` × reflectors with no blob near | −18 nats each | what the clip still being where it was scores (`stillThere`), which a pose found elsewhere must beat | `Match.missingCost` in nats | (15) |
 
 The hard gates among the head facts, noise and appearance above are
@@ -328,8 +361,8 @@ thresholds too: each row that names a term is a decision.
 ## Following or finding afresh
 
 With a pose from a moment ago there are up to four hypotheses about a
-frame, and `Tracker.followOrFind` takes the best scored (the reasoning is
-in Note [Following or finding afresh] in `Tracker.hs`):
+frame, and `Tracker.Choose.followOrFind` takes the best scored (the reasoning is
+in Note [Following or finding afresh] in `Tracker/Choose.hs`):
 
 | Hypothesis | Scored by | Vetoed by |
 | --- | --- | --- |
@@ -400,14 +433,14 @@ frames are what would widen it.
 
 | Decision | Terms | State |
 | --- | --- | --- |
-| A pose is somewhere a head can be (`Tracker.canBeThere`) | `near`, `far`, `turned`, `aside` | terms; the decision is their sum |
-| A followed pose is the clip (`Tracker.followable`) | `fit`, `turn`, `move`, and the above | terms |
-| Three blobs found afresh are the clip (`Tracker.clipLike`) | the above, and `size` | terms |
-| Following or finding by layout (`Tracker.followOrFind`) | `usual size`, `misfit`, `turning`, `moving`, `afresh`, `reach`; `unseen` | soft terms; the better score wins, after the gates above |
-| A pose found by layout continues the last (`Tracker.jumpable`) | `turn`, `move` | the gates, used as the test |
-| The clip is still where it was (`Tracker.stillThere`) | `unseen`, counted | a score; its deadline is a rule |
-| Which blobs to try afresh (`Tracker.findAfresh`) | `big blobs` | the rule decides as before; the term says why it came to nothing |
-| How long to follow the clip showing less (`Tracker.follow`) | `partly seen` | a term, filtering matches as before |
+| A pose is somewhere a head can be (`Tracker.Judge.canBeThere`) | `near`, `far`, `turned`, `aside` | terms; the decision is their sum |
+| A followed pose is the clip (`Tracker.Judge.followable`) | `fit`, `turn`, `move`, and the above | terms |
+| Three blobs found afresh are the clip (`Tracker.Judge.clipLike`) | the above, and `size` | terms |
+| Following or finding by layout (`Tracker.Choose.followOrFind`) | `usual size`, `misfit`, `turning`, `moving`, `afresh`, `reach`; `unseen` | soft terms; the better score wins, after the gates above |
+| A pose found by layout continues the last (`Tracker.Judge.jumpable`) | `turn`, `move` | the gates, used as the test |
+| The clip is still where it was (`Tracker.Follow.stillThere`) | `unseen`, counted | a score; its deadline is a rule |
+| Which blobs to try afresh (`Tracker.Layout.findAfresh`) | `big blobs` | the rule decides as before; the term says why it came to nothing |
+| How long to follow the clip showing less (`Tracker.Follow.follow`) | `partly seen` | a term, filtering matches as before |
 | A match's cost (`Match.matches`) | `places`, `sizes`, `unseen`; `shared size`, `third size` | terms, in nats; matches are ordered by them |
 | Which matches exist (`Match.matches`) | none | rules: two reflectors seen, no blob twice, `missingPlausible`, `reach` |
 | A shared blob is both reflectors (`Match.bigEnoughForTwo`) | `both in one` | a term |
