@@ -31,6 +31,7 @@ module TrackKat.Windows (
 ) where
 
 import Data.Bits ((.&.))
+import Data.List (isSuffixOf)
 import Data.Word (Word64)
 import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..), CULLong (..), CULong (..))
@@ -126,7 +127,7 @@ singleInstance = (/= 0) <$> c_single_instance
 -- code.
 setNPClientPath :: FilePath -> IO (Either Int ())
 setNPClientPath dir =
-    withCWString (if last dir == '\\' then dir else dir ++ "\\") $ \p ->
+    withCWString (if "\\" `isSuffixOf` dir then dir else dir ++ "\\") $ \p ->
         (\rc -> if rc == 0 then Right () else Left (fromIntegral rc)) <$> c_set_npclient_path p
 
 -- | The folder of NaturalPoint's TrackIR software, ending in a backslash,

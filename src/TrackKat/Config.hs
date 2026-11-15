@@ -39,7 +39,7 @@ import Control.Exception (IOException, displayException, try)
 import Data.Bits ((.&.), (.|.))
 import Data.Char (digitToInt, isDigit, isSpace, toLower)
 import Data.Foldable (traverse_)
-import Data.List (dropWhileEnd, findIndices, intercalate)
+import Data.List (dropWhileEnd, findIndices, intercalate, unsnoc)
 import Data.Maybe (fromMaybe)
 import System.IO (readFile')
 
@@ -576,11 +576,10 @@ parseBinding s = case joystickButton (trim s) of
             Just n | n >= 1, n <= toInteger maxButton -> Right (fromInteger n)
             _ -> Left ("joystick buttons are numbered from 1 to " ++ show maxButton)
         Right (JoystickButton j n)
-    Nothing -> case splitPlus s of
-        [] -> Left "empty key binding"
-        parts -> do
-            mods <- traverse modifier (init parts)
-            let k = last parts
+    Nothing -> case unsnoc (splitPlus s) of
+        Nothing -> Left "empty key binding"
+        Just (held, k) -> do
+            mods <- traverse modifier held
             case lookupKey k of
                 Just (canonical, _) -> Right (Key (heldInOrder mods) canonical)
                 Nothing
