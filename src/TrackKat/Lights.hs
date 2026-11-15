@@ -75,7 +75,7 @@ data Masking = MaskLights | NoMasking
 -- and is learnt only once it has stayed put for 'stillHeadSeconds', longer
 -- than a head is held still, unless the clip is tracked elsewhere with all
 -- three reflectors in view. A fire's core is about twice a reflector's
--- size, so it is learnt as quickly as ever. Before any reflector has been
+-- size, so it doesn't wait that long. Before any reflector has been
 -- seen, nothing looks like one.
 --
 -- The size seen lately fades, so that a head once leaned in close doesn't
