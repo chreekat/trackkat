@@ -10,6 +10,7 @@ import Text.Printf (printf)
 
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Log (Line (..))
+import TrackKat.World (Instant, seconds, (.-.))
 
 -- | Whether a game is tracking or trackkat's window is open.
 data Use = Used | Unused
@@ -18,8 +19,8 @@ data Use = Used | Unused
 -- | How long trackkat has gone unused.
 data Idle
     = Busy
-    | -- | unused since this time, in seconds
-      IdleSince Double
+    | -- | unused since this time
+      IdleSince Instant
     | -- | unused for so long that it is to quit
       Quitting
     deriving (Eq, Show)
@@ -30,11 +31,11 @@ data Idle
 idleSeconds :: Int
 idleSeconds = 60
 
--- | Take in whether trackkat is in use at the time given, in seconds:
+-- | Take in whether trackkat is in use at the time given:
 -- started by a game, it is to quit once it has gone unused for
 -- 'idleSeconds', and the log says when that wait begins, is called off and
 -- ends; started otherwise, it stays.
-idle :: Start -> Double -> Use -> Idle -> (Idle, [Line])
+idle :: Start -> Instant -> Use -> Idle -> (Idle, [Line])
 idle start now use was = case (start, use, was) of
     (_, _, Quitting) -> (Quitting, [])
     (ByHand, _, _) -> (Busy, [])
@@ -44,6 +45,6 @@ idle start now use was = case (start, use, was) of
     (ByGame, Unused, Busy) ->
         (IdleSince now, [ForUser (printf "No game or window is using trackkat; quitting in %d s unless one starts." idleSeconds)])
     (ByGame, Unused, IdleSince since)
-        | now - since >= fromIntegral idleSeconds ->
+        | now .-. since >= seconds (fromIntegral idleSeconds) ->
             (Quitting, [ForUser (printf "Quitting: no game or window used trackkat for %d s." idleSeconds)])
         | otherwise -> (was, [])

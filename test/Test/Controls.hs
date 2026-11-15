@@ -10,6 +10,7 @@ import Test.Instances ()
 import TrackKat.Config
 import TrackKat.Controls
 import TrackKat.Log
+import TrackKat.World (clockAt)
 
 tests :: TestTree
 tests =
@@ -25,9 +26,9 @@ tests =
                         ]
         , testProperty "a joystick coming or going is logged for the user, and nothing else" $
             \(Button button) (Naming (asked, now)) ->
-                let (naming, _) = nameButtons asked
+                let (naming, _) = nameButtons (clockAt asked)
                  in conjoin
-                        [ case joystickEffects naming now event of
+                        [ case joystickEffects naming (clockAt now) event of
                             [JoystickLog (ForUser line)] -> counterexample line (renderJoystick j `isInfixOf` line)
                             other -> counterexample (show other) False
                         | JoystickButton j _ <- [button]
@@ -35,9 +36,9 @@ tests =
                         ]
         , testProperty "a button pressed is always offered to the window, and named in the log just for a minute from when naming began" $
             \(Button button) (Naming (asked, now)) ->
-                let (naming, _) = nameButtons asked
+                let (naming, _) = nameButtons (clockAt asked)
                     named = [line | JoystickLog (ForUser line) <- effects]
-                    effects = concat [joystickEffects naming now (Pressed j n) | JoystickButton j n <- [button]]
+                    effects = concat [joystickEffects naming (clockAt now) (Pressed j n) | JoystickButton j n <- [button]]
                  in [b | OfferButton b <- effects] === [button]
                         .&&. length effects === length named + 1
                         .&&. (if now < asked + 60 then map (renderBinding button `isInfixOf`) named === [True] else named === [])

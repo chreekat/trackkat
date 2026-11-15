@@ -45,7 +45,7 @@ simulations =
          in if t < 10 then fireLit i t (fidgeting t) else (t, renderDiscs (fireDiscs fireAt i))
     -- Shaping while paused, its output unused.
     swaying i = let t = fromIntegral i / 120 in HeadPose{yaw = 30 * sin t, pitch = 10 * sin (t / 2), roll = 0, tx = 20 * sin (t / 3), ty = 0, tz = 0}
-    shapeUnused i sh = pure (snd (shape (response defaultConfig) NoTrim (fromIntegral i / 120) (swaying i) sh))
+    shapeUnused i sh = pure (snd (shape (response defaultConfig) NoTrim (clockAt (fromIntegral i / 120)) (swaying i) sh))
 
 -- | Track the i-th frame of (time, stripes) for i from 0, as the app does,
 -- keeping only the tracker: the bytes of memory in use, after a major

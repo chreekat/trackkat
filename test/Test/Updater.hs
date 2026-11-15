@@ -8,13 +8,14 @@ import Data.Maybe (isJust)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (earlier, shrinkParts, shrinkWithin)
+import Test.Gen (earlier, shrinkParts)
 import Test.Instances ()
 import TrackKat.Config (Updates (..))
 import TrackKat.Display
 import TrackKat.Log
 import TrackKat.Release
 import TrackKat.Updater
+import TrackKat.World (clockAt, inSeconds, (.+^))
 
 tests :: TestTree
 tests =
@@ -24,25 +25,25 @@ tests =
             \(Rounds rounds) ->
                 conjoin
                     [ counterexample (show look) $
-                        property (lookUpdates look == UpdatesOn && all ((>= updateEvery) . (lookAt look -)) (counted before))
+                        property (lookUpdates look == UpdatesOn && all ((>= inSeconds updateEvery) . (lookAt look -)) (counted before))
                     | (before, look) <- withEarlier (looks rounds)
                     , lookWhy look == Due
                     ]
                     .&&. conjoin
                         [ counterexample (show (at, updates)) $
-                            isJust (dueLook updates at u) === (updates == UpdatesOn && all ((>= updateEvery) . (at -)) (counted (looksBefore at rounds)))
+                            isJust (dueLook updates (clockAt at) u) === (updates == UpdatesOn && all ((>= inSeconds updateEvery) . (at -)) (counted (looksBefore at rounds)))
                         | (at, updates, u) <- roundStarts rounds
                         ]
         , testProperty "an unasked look that finds no network tells the user nothing, and is tried again whenever updates are next on" $
-            \(Rounds rounds) (At at) (Later later) ->
+            \(Rounds rounds) at later ->
                 let (u, effects) = answered self Due at (Left (Offline "no route")) (waitingAfter rounds) (reached rounds)
                  in userLines effects === []
                         .&&. [s | ShowStatus s <- effects] === []
                         .&&. length [() | Log (ForDeveloper _) <- effects] === 1
-                        .&&. dueLook UpdatesOn (at + later) u === Just Due
+                        .&&. dueLook UpdatesOn (at .+^ later) u === Just Due
         , testProperty "a look the user asked for always answers, in the log and in the window's strip" $
             \(Rounds rounds) (Found found) (Waiting waiting) ->
-                let (_, effects) = answered self Asked 0 found waiting (reached rounds)
+                let (_, effects) = answered self Asked (clockAt 0) found waiting (reached rounds)
                  in counterexample (show effects) $
                         length (userLines effects) === 1
                             .&&. length [() | ShowStatus _ <- effects] === 1
@@ -63,7 +64,7 @@ tests =
                     ]
         , testProperty "the strip has its tick just when no newer version was found and none waits for a restart" $
             \(Rounds rounds) (Found found) (Waiting waiting) why ->
-                let (_, effects) = answered self why 0 found waiting (reached rounds)
+                let (_, effects) = answered self why (clockAt 0) found waiting (reached rounds)
                     upToDate = found == Right Nothing && not (isUpdate waiting)
                  in counterexample (show effects) $
                         conjoin [property (versionFolder self `isInfixOf` s) | ShowStatus (UpToDate s) <- effects]
@@ -130,14 +131,14 @@ run rounds = (remembered, rows)
     ((remembered, _), rows) = mapAccumL go (newUpdater, 0) rounds
     go (u, clock) r =
         let at = clock + roundAfter r
-            (u1, due) = case dueLook (roundUpdates r) at u of
+            (u1, due) = case dueLook (roundUpdates r) (clockAt at) u of
                 Just why ->
-                    let (u', effects) = answered self why at (roundFound r) (roundWaiting r) u
+                    let (u', effects) = answered self why (clockAt at) (roundFound r) (roundWaiting r) u
                      in (u', [Look at why (roundUpdates r) (roundFound r) effects])
                 Nothing -> (u, [])
             (u2, asked, end) = case roundAsked r of
                 Just (after, found) ->
-                    let (u', effects) = answered self Asked (at + after) found (roundWaiting r) u1
+                    let (u', effects) = answered self Asked (clockAt (at + after)) found (roundWaiting r) u1
                      in (u', [Look (at + after) Asked (roundUpdates r) found effects], at + after)
                 Nothing -> (u1, [], at)
          in ((u2, end), (at, roundUpdates r, u, due ++ asked))
@@ -191,11 +192,13 @@ instance Arbitrary Rounds where
 instance Arbitrary Round where
     arbitrary =
         Round
-            <$> oneof [pure 600, choose (600, 3 * updateEvery), elements [updateEvery - 0.001, updateEvery]]
+            <$> oneof [pure 600, choose (600, 3 * every), elements [every - 0.001, every]]
             <*> frequency [(4, pure UpdatesOn), (1, pure UpdatesOff)]
             <*> elements finds
             <*> elements offers
             <*> frequency [(3, pure Nothing), (1, Just <$> ((,) <$> choose (0, 600) <*> elements finds))]
+      where
+        every = inSeconds updateEvery
     shrink =
         shrinkParts
             [ \r -> [r{roundAsked = Nothing} | isJust (roundAsked r)]
@@ -233,20 +236,3 @@ instance Arbitrary Waiting where
 
 offers :: [Offer]
 offers = [NoOffer, OfferInstall self, OfferInstalled (version "0.1.7"), OfferUpdate (version "0.1.9")]
-
--- | When a look answers, in seconds, up to ten times as long as trackkat
--- waits between looks.
-newtype At = At Double
-    deriving (Show)
-
-instance Arbitrary At where
-    arbitrary = At <$> choose (0, 10 * updateEvery)
-    shrink (At at) = At <$> shrinkWithin (0, 10 * updateEvery) 0 at
-
--- | How many seconds later, up to a thousand.
-newtype Later = Later Double
-    deriving (Show)
-
-instance Arbitrary Later where
-    arbitrary = Later <$> choose (0, 1000)
-    shrink (Later later) = Later <$> shrinkWithin (0, 1000) 0 later

@@ -45,7 +45,7 @@ import qualified TrackKat.USB as USB
 import TrackKat.Updater (Looking (..), answered, begun, dueLook, newUpdater, offerNotice)
 import qualified TrackKat.Updater as Updater
 import TrackKat.Windows
-import TrackKat.World (clockAt)
+import TrackKat.World (Instant, clockAt)
 
 -- | This build's version; none for a development build.
 version :: Maybe Version
@@ -131,7 +131,7 @@ run start window after = do
         (calibration, told) <- loadCalibration (clipModel (clip config)) calibrationFile
         shell <- Shell paths <$> newIORef (newSession config calibration) <*> pure offered <*> newEmptyMVar <*> newEmptyMVar
         mapM_ (perform shell) told
-        (naming, named) <- nameButtons <$> getMonotonicTime
+        (naming, named) <- nameButtons <$> monotonicNow
         logLine named
         alongside
             [ ("Watching the settings file", watchSettings settingsFile shell stamp)
@@ -232,7 +232,7 @@ maintain place sh = forM_ (selfUpdating place) $ \self -> go self newUpdater
   where
     go self u = do
         _ <- cleanUp say paths place
-        now <- getMonotonicTime
+        now <- monotonicNow
         wanted <- updates . sSettings <$> readIORef (shSession sh)
         u' <- maybe (pure u) (\why -> look self why now u) (dueLook wanted now u)
         -- Read, not taken, so a click the timeout cuts off is still there
@@ -254,7 +254,7 @@ maintain place sh = forM_ (selfUpdating place) $ \self -> go self newUpdater
         -- for a look asked for, from its answer.
         from <- case why of
             Due -> pure began
-            Asked -> getMonotonicTime
+            Asked -> monotonicNow
         let (u', effects) = answered self why from found waiting u
         mapM_ act effects
         pure u'
@@ -359,7 +359,7 @@ controls start path sh = go 0 Busy
                 name <- if games > 0 then trackingGameName else pure Nothing
                 showGames games name
                 open <- windowOpen
-                let (unused', said) = idle start now (if games > 0 || open then Used else Unused) unused
+                let (unused', said) = idle start (clockAt now) (if games > 0 || open then Used else Unused) unused
                 mapM_ logLine said
                 case unused' of
                     Quitting -> pure ()
@@ -509,6 +509,10 @@ data Shell = Shell
 -- The rest of what a thread remembers from one round to the next is an
 -- argument of its loop.
 
+-- | The moment the monotonic clock tells.
+monotonicNow :: IO Instant
+monotonicNow = clockAt <$> getMonotonicTime
+
 -- | Take the session through an event: the session after it, and what the
 -- event asks to be done.
 transition :: Shell -> Event -> IO (Session, [Effect])
@@ -557,7 +561,7 @@ joysticks :: ButtonNaming -> IO ()
 joysticks naming = forever $ do
     threadDelay 100000
     events <- takeJoystickEvents
-    now <- getMonotonicTime
+    now <- monotonicNow
     forM_ (concatMap (joystickEffects naming now) events) $ \case
         JoystickLog line -> logLine line
         OfferButton b -> capturing >>= mapM_ (`addBinding` b)
