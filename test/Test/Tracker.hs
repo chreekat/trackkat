@@ -10,7 +10,9 @@ import Test.Check
 import Test.Simulation
 import qualified Test.Tracker.Blobs
 import qualified Test.Tracker.Choose
+import qualified Test.Tracker.Follow
 import qualified Test.Tracker.Judge
+import qualified Test.Tracker.Layout
 import qualified Test.Tracker.Sizes
 import qualified Test.Tracker.Trail
 import TrackKat.Calibration
@@ -69,6 +71,8 @@ tests = group "Tracker" $ do
     tree Test.Tracker.Sizes.tests
     tree Test.Tracker.Trail.tests
     tree Test.Tracker.Judge.tests
+    tree Test.Tracker.Layout.tests
+    tree Test.Tracker.Follow.tests
     tree Test.Tracker.Choose.tests
 
 simulations :: TestTree
