@@ -103,8 +103,7 @@ followed = group "following the clip" $ do
     -- An impossible jump is not followed: the head 40 degrees away from
     -- one frame to the next is lost at first, while it is likelier where
     -- it was with a reflector out of sight, and within a few frames is
-    -- found afresh there. (It used to be lost until enough time had
-    -- passed for the head to get there: a quarter of a second.)
+    -- found afresh there.
     let jumping = [(t, headSeen bentWorn (if t < 0.5 then 0 else 40) 0 0, allLit) | t <- at120 1.2]
         jumped = trackPath clipBent jumping
     checkShowing "a jump is lost at first, for" (show (lostCount jumped) ++ " frames") $

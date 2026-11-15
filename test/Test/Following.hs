@@ -33,9 +33,8 @@ simulations = group "Following" $ do
     -- A fast turn, 200 degrees a second, with one frame showing the clip
     -- where it was 15 degrees back: that frame is followed, and from its
     -- pose the next is an impossible jump, the head turning on faster
-    -- than the allowance for a jump grows. Following used to be all that
-    -- was tried until the pose stopped predicting; now the clip is found
-    -- by layout as soon as that is likelier than its being where it was.
+    -- than the allowance for a jump grows. The clip is found by layout
+    -- as soon as that is likelier than its being where it was.
     let turning t = headSeen bentWorn (-40 + 200 * max 0 (min 0.4 (t - 1))) 0 0
         stale = trackFrames clipBent [(t, turning t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (turning (if i == 150 then t - 0.075 else t)))) | (i, t) <- zip [0 :: Int ..] (at120 3)]
     checkShowing "a frame followed to a wrong pose in a fast turn costs" (show (lostCount stale) ++ " frames, then found afresh " ++ show (take 1 (ways (after 1.25 stale)))) $
