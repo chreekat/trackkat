@@ -128,26 +128,32 @@ run start window after = do
         say (describeBindings config)
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
         (calibration, told) <- loadCalibration (clipModel (clip config)) calibrationFile
-        shell <- Shell paths <$> newIORef (newSession config calibration) <*> newEmptyMVar <*> newEmptyMVar
+        shell <- Shell paths <$> newIORef (newSession config calibration) <*> pure offered <*> newEmptyMVar <*> newEmptyMVar
         mapM_ (perform shell) told
         (naming, named) <- nameButtons <$> getMonotonicTime
         logLine named
-        withAsync (watchSettings settingsFile shell stamp) $ \_ ->
-            withAsync (joysticks naming) $ \_ ->
-                withAsync (saveCalibrations calibrationFile (shSaving shell)) $ \_ ->
-                    withAsync (rememberServedGame gameFile) $ \_ ->
-                        withAsync (maintain place shell offered) $ \_ ->
-                            withAsync (cameraLoop shell) $ \camera -> do
-                                link camera
-                                controls start settingsFile shell (takeOffer paths start offered)
-                                -- Let the camera go, turning its lights off, but
-                                -- not for long: after sleep a USB read may never
-                                -- return.
-                                _ <- timeout 3000000 (cancel camera)
-                                -- Rather than wait for the other threads, one
-                                -- perhaps in a download, leave at once.
-                                hFlush stdout `catch` \e -> const (pure ()) (e :: IOException)
-                                quitProcess
+        alongside
+            [ watchSettings settingsFile shell stamp
+            , joysticks naming
+            , saveCalibrations calibrationFile (shSaving shell)
+            , rememberServedGame gameFile
+            , maintain place shell
+            ]
+            $ withAsync (cameraLoop shell)
+            $ \camera -> do
+                link camera
+                controls start settingsFile shell
+                -- Let the camera go, turning its lights off, but not for
+                -- long: after sleep a USB read may never return.
+                _ <- timeout 3000000 (cancel camera)
+                -- Rather than wait for the other threads, one perhaps in a
+                -- download, leave at once.
+                hFlush stdout `catch` \e -> const (pure ()) (e :: IOException)
+                quitProcess
+
+-- | Run threads alongside some work, stopping them when it ends.
+alongside :: [IO ()] -> IO a -> IO a
+alongside threads work = foldr (\thread rest -> withAsync thread (const rest)) work threads
 
 -- | Tell games to load the NPClient chosen, trackkat's from its own folder,
 -- falling back to that if NaturalPoint's isn't installed.
@@ -169,29 +175,34 @@ pointGames dir choice = do
 
 -- | What the window offers, as installed versions now stand.
 refreshOffer :: Paths -> Placement -> IORef Offer -> IO ()
-refreshOffer paths place ref = do
+refreshOffer paths place offered = do
     o <- offer version place <$> installedVersions paths
-    before <- atomicModifyIORef' ref (\b -> (o, b))
+    before <- atomicModifyIORef' offered (\b -> (o, b))
     unless (o == before) $ showOffer (offerNotice (exeDir paths) o)
 
+-- | Whether trackkat has handed over to another copy of itself, and so is
+-- to quit.
+data HandOver = HandedOver | Staying
+
 -- | Take up what the window offers: install this copy, or switch to an
--- installed one, handing over to it. True if trackkat should now quit.
-takeOffer :: Paths -> Start -> IORef Offer -> IO Bool
-takeOffer paths start ref =
-    readIORef ref >>= \case
-        NoOffer -> pure False
+-- installed one, handing over to it.
+takeOffer :: Start -> Shell -> IO HandOver
+takeOffer start sh =
+    readIORef (shOffered sh) >>= \case
+        NoOffer -> pure Staying
         OfferInstall v -> do
             say ("Installing trackkat " ++ versionFolder v ++ " in " ++ installRoot paths ++ ".")
             installCopy paths v >>= \case
-                Left err -> say ("Can't install trackkat: " ++ err) $> False
+                Left err -> say ("Can't install trackkat: " ++ err) $> Staying
                 Right dir -> switchTo (dir </> "trackkat.exe")
         OfferInstalled v -> switchTo (versionExe paths v)
         OfferUpdate v -> switchTo (versionExe paths v)
   where
+    paths = shPaths sh
     switchTo exe =
         handOver exe (startArgs start WindowShown) >>= \case
-            Right () -> say ("Switching to " ++ exe ++ ".") $> True
-            Left e -> say ("Can't start " ++ exe ++ " (error " ++ show e ++ ").") $> False
+            Right () -> say ("Switching to " ++ exe ++ ".") $> HandedOver
+            Left e -> say ("Can't start " ++ exe ++ " (error " ++ show e ++ ").") $> Staying
 
 -- | The version of this copy, if it updates itself: an installed release.
 -- Portable copies and development builds don't.
@@ -205,8 +216,8 @@ selfUpdating place = case (place, version) of
 -- says, and whenever the user asks with 'shCheckAsked'. Portable copies and
 -- development builds do neither. Only this thread looks, so two looks
 -- never run at once.
-maintain :: Placement -> Shell -> IORef Offer -> IO ()
-maintain place sh ref = forM_ (selfUpdating place) $ \self -> go self newUpdater
+maintain :: Placement -> Shell -> IO ()
+maintain place sh = forM_ (selfUpdating place) $ \self -> go self newUpdater
   where
     go self u = do
         _ <- cleanUp say paths place
@@ -226,8 +237,8 @@ maintain place sh ref = forM_ (selfUpdating place) $ \self -> go self newUpdater
     look self why began u = bracket_ (showUpdateCheck CheckRunning) (showUpdateCheck CheckIdle) $ do
         mapM_ act (begun why)
         found <- checkForUpdate paths self
-        refreshOffer paths place ref
-        waiting <- readIORef ref
+        refreshOffer paths place (shOffered sh)
+        waiting <- readIORef (shOffered sh)
         -- The wait for the next look runs from when the round began, or,
         -- for a look asked for, from its answer.
         from <- case why of
@@ -316,18 +327,19 @@ cameraLoop sh = forever $ do
 -- window's count of games current, until the user quits, or, when a game
 -- started trackkat, until neither a game nor the window has used it for
 -- 'idleSeconds'.
-controls :: Start -> FilePath -> Shell -> IO Bool -> IO ()
-controls start path sh takeUp = go 0 Busy
+controls :: Start -> FilePath -> Shell -> IO ()
+controls start path sh = go 0 Busy
   where
     go checked unused = do
         threadDelay 20000
         actions <- takeActions
         mapM_ act actions
-        switched <- if OfferAction `elem` actions then takeUp else pure False
+        switched <- if OfferAction `elem` actions then takeOffer start sh else pure Staying
         reportTrackIRGames
         now <- getMonotonicTime
         if
-            | any quits actions || switched -> pure ()
+            | QuitAction `elem` actions -> pure ()
+            | HandedOver <- switched -> pure ()
             -- Checking game processes is a few system calls; twice a
             -- second is plenty.
             | now - checked < 0.5 -> go checked unused
@@ -341,8 +353,6 @@ controls start path sh takeUp = go 0 Busy
                 case unused' of
                     Quitting -> pure ()
                     _ -> go now unused'
-    quits QuitAction = True
-    quits _ = False
 
     act RecenterAction = advance sh RecenterAsked
     act PauseAction = advance sh PauseAsked
@@ -452,17 +462,47 @@ explain InUse = "The TrackIR is in use by another program, perhaps NaturalPoint'
 explain (OpenFailed e) = "USB error: " ++ show e
 
 -- | What trackkat's threads share.
+--
+-- See Note [What stays mutable].
 data Shell = Shell
     { shPaths :: Paths
     , shSession :: IORef Session
-    -- ^ changed only by 'transition', by the camera's thread, the window's
-    -- and the settings file's
+    , shOffered :: IORef Offer
+    -- ^ what the window was last told it offers
     , shSaving :: MVar Calibration
     -- ^ a calibration waiting to be saved
     , shCheckAsked :: MVar ()
     -- ^ full from when the user asks to look for a newer version until
     -- 'maintain' has looked
     }
+
+-- Note [What stays mutable]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~
+-- trackkat's threads each wait on something of their own: the camera, the
+-- window, the settings file, joysticks, the game served, the network. What
+-- they decide by is in the library, as values taken from one state to the
+-- next; what is left here is what two threads must both reach.
+--
+
+-- * 'shSession': the camera's frames, the window's buttons and the settings
+
+--   file all change the one session, each change whole, through
+--   'transition'.
+--
+
+-- * 'shOffered': 'maintain' finds what there is to offer, and the window's
+
+--   thread takes the offer up. It also remembers what the window was last
+--   told, so the window is told only of a change.
+--
+
+-- * 'shSaving' and 'shCheckAsked' hand work to a thread that may be slow, a
+
+--   disk or the network, without waiting for it: the latest calibration to
+--   save, and a click to answer.
+--
+-- The rest of what a thread remembers from one round to the next is an
+-- argument of its loop.
 
 -- | Take the session through an event: the session after it, and what the
 -- event asks to be done.
