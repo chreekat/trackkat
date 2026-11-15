@@ -595,7 +595,7 @@ parseBinding s = case joystickButton (trim s) of
 
 renderBinding :: Binding -> String
 renderBinding (Key mods k) = intercalate "+" (map renderModifier (heldInOrder mods) ++ [k])
-renderBinding (JoystickButton j n) = renderJoystick j ++ " button " ++ show n
+renderBinding (JoystickButton j n) = renderJoystick j ++ " button " ++ renderNatural (toInteger n)
 
 -- | Split a binding ending in @button N@ into the joystick's name and the
 -- button number, if it has one.
@@ -622,7 +622,7 @@ parseJoystick name = case reverse name of
     _ -> Right (Joystick name 1)
 
 renderJoystick :: Joystick -> String
-renderJoystick (Joystick name index) = name ++ (if index > 1 then " (" ++ show index ++ ")" else "")
+renderJoystick (Joystick name index) = name ++ (if index > 1 then " (" ++ renderNatural (toInteger index) ++ ")" else "")
 
 -- | The modifier flags Windows' RegisterHotKey takes.
 modifierMask :: [Modifier] -> Int
@@ -653,9 +653,9 @@ lookupKey k = case [kv | kv@(name, _) <- keys, map toLower name == map toLower k
 
 keys :: [(String, Int)]
 keys =
-    [("F" ++ show n, 0x6F + n) | n <- [1 .. 24]]
+    [("F" ++ renderNatural (toInteger n), 0x6F + n) | n <- [1 .. 24]]
         ++ [([c], fromEnum c) | c <- ['A' .. 'Z'] ++ ['0' .. '9']]
-        ++ [("NumPad" ++ show n, 0x60 + n) | n <- [0 .. 9]]
+        ++ [("NumPad" ++ renderNatural (toInteger n), 0x60 + n) | n <- [0 .. 9]]
         ++ [ ("NumPadMultiply", 0x6A)
            , ("NumPadAdd", 0x6B)
            , ("NumPadSubtract", 0x6D)

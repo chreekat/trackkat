@@ -11,10 +11,11 @@ module TrackKat.ServedGame (
     stillServed,
 ) where
 
-import Control.Monad ((<=<))
+import Control.Monad (guard)
 import Data.Char (isSpace)
 import Data.Word (Word64)
-import Text.Read (readMaybe)
+
+import TrackKat.Number (parseNatural, renderNatural)
 
 -- | A game served, as cbits/trackir.c's @hts_trackir_served@ reports it.
 data ServedGame = ServedGame
@@ -42,14 +43,16 @@ renderServedGame g =
         [ "# The game trackkat serves through NaturalPoint's NPClient, so that"
         , "# trackkat, restarted while the game runs, serves it again. trackkat"
         , "# writes it, and deletes it once the game is done."
-        , "process = " ++ show (servedProcess g)
-        , "started = " ++ maybe "unknown" show (servedStarted g)
-        , "window = " ++ show (servedWindow g)
-        , "profile = " ++ maybe "none" show (servedProfile g)
+        , "process = " ++ whole (servedProcess g)
+        , "started = " ++ maybe "unknown" whole (servedStarted g)
+        , "window = " ++ whole (servedWindow g)
+        , "profile = " ++ maybe "none" whole (servedProfile g)
         , "tracking = " ++ case servedTracking g of
             TrackingStarted -> "yes"
             TrackingStopped -> "no"
         ]
+  where
+    whole n = renderNatural (toInteger n)
 
 parseServedGame :: String -> Either String ServedGame
 parseServedGame str = do
@@ -59,18 +62,23 @@ parseServedGame str = do
             [] -> Left ("no " ++ name)
             _ -> Left (name ++ " is given twice")
     ServedGame
-        <$> field "process" (positive <=< readMaybe)
-        <*> field "started" (\v -> if v == "unknown" then Just Nothing else Just <$> readMaybe v)
-        <*> field "window" readMaybe
-        <*> field "profile" (\v -> if v == "none" then Just Nothing else Just <$> (profileID <=< readMaybe) v)
+        <$> field "process" (between 1 (maxBound :: Int))
+        <*> field "started" (\v -> if v == "unknown" then Just Nothing else Just <$> between 0 (maxBound :: Word64) v)
+        <*> field "window" (between 0 (maxBound :: Word64))
+        <*> field "profile" (\v -> if v == "none" then Just Nothing else Just <$> between 0 (65535 :: Int) v)
         <*> field "tracking" tracking
   where
     setting l = case break (== '=') l of
         (name, '=' : value) -> Right (trim name, trim value)
         _ -> Left ("expected name = value, not " ++ show (trim l))
     trim = f . f where f = reverse . dropWhile isSpace
-    positive n = if n > 0 then Just n else Nothing
-    profileID n = if n >= 0 && n <= 65535 then Just n else Nothing
+    -- A whole number in digits, no less than the first and no more than
+    -- the second.
+    between :: (Integral a) => a -> a -> String -> Maybe a
+    between least most v = do
+        n <- parseNatural v
+        guard (n >= toInteger least && n <= toInteger most)
+        pure (fromInteger n)
     tracking "yes" = Just TrackingStarted
     tracking "no" = Just TrackingStopped
     tracking _ = Nothing
