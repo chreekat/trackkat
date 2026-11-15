@@ -4,6 +4,7 @@ module Test.ServedGame (tests) where
 
 import Control.Monad (forM_)
 import Data.Either (isLeft)
+import Data.List (isInfixOf)
 import Data.Maybe (isNothing)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -60,6 +61,23 @@ properties =
                         _ -> owner == Just (servedProcess g)
                  in stillServed g (ProcessRunning started) owner === (if same then Just g else Nothing)
                         .&&. stillServed g ProcessGone owner === Nothing
+        , testProperty "the file is touched just when the game served has changed: written to read back as the game, or deleted when there is none" $
+            forAllShrink genServed shrinkServed $ \g -> forAll (chooseInt (0, 5)) $ \seen -> forAll (chooseInt (0, 5)) $ \changes ->
+                conjoin
+                    [ case note seen changes game of
+                        Nothing -> changes === seen
+                        Just Delete -> property (changes /= seen) .&&. game === Nothing
+                        Just (Write text) -> property (changes /= seen) .&&. fmap Right game === Just (parseServedGame text)
+                    | game <- [Nothing, Just g]
+                    ]
+        , testProperty "a game served again is told by its name if it has one, its profile if not, and else its process" $
+            forAllShrink genServed shrinkServed $ \g -> forAll (elements [Nothing, Just "DCS World"]) $ \name ->
+                let line = describeServedAgain g name
+                    told = case (servedProfile g, name) of
+                        (Just i, Just n) -> n ++ " (game " ++ show i ++ ")"
+                        (Just i, Nothing) -> "game " ++ show i
+                        (Nothing, _) -> "process " ++ show (servedProcess g)
+                 in counterexample line (told `isInfixOf` line)
         ]
 
 -- | A game with any process and window Windows could give it.
