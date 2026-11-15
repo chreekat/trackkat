@@ -5,6 +5,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Check
+import Test.Gen (shrinkTo)
 import TrackKat.Term (Bound (..), Finding (..), Measure (..), Name (..), Score (..), Term, Verdict (..))
 import qualified TrackKat.Term as Term
 
@@ -145,7 +146,7 @@ data Spec
     | LeastSpec Which Double
     | GaussianSpec Which (Positive Double)
     | CostSpec Which (NonNegative Double)
-    deriving (Show)
+    deriving (Eq, Show)
 
 specName :: Spec -> String
 specName MostSpec{} = "most"
@@ -163,15 +164,18 @@ built = foldMap one
         CostSpec w (NonNegative each) -> Term.cost (named spec) ((each *) . abs . figure w)
     named spec = Name (specName spec) ("it is " ++ specName spec)
 
--- | Simpler about earlier figures, with simpler limits.
+-- | Simplest that the first figure is at most nothing; and simpler about
+-- earlier figures, with simpler limits.
 instance Arbitrary Spec where
     arbitrary = oneof [MostSpec <$> which <*> arbitrary, LeastSpec <$> which <*> arbitrary, GaussianSpec <$> which <*> arbitrary, CostSpec <$> which <*> arbitrary]
       where
         which = arbitraryBoundedEnum
-    shrink (MostSpec w limit) = [MostSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
-    shrink (LeastSpec w limit) = [LeastSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
-    shrink (GaussianSpec w sigma) = [GaussianSpec w' sigma' | (w', sigma') <- shrinkPair (w, sigma)]
-    shrink (CostSpec w each) = [CostSpec w' each' | (w', each') <- shrinkPair (w, each)]
+    shrink = shrinkTo (MostSpec First 0) steps
+      where
+        steps (MostSpec w limit) = [MostSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
+        steps (LeastSpec w limit) = [LeastSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
+        steps (GaussianSpec w sigma) = [GaussianSpec w' sigma' | (w', sigma') <- shrinkPair (w, sigma)]
+        steps (CostSpec w each) = [CostSpec w' each' | (w', each') <- shrinkPair (w, each)]
 
 shrinkPair :: (Arbitrary a) => (Which, a) -> [(Which, a)]
 shrinkPair (w, x) = [(w', x) | w' <- shrinkBoundedEnum w] ++ [(w, x') | x' <- shrink x]

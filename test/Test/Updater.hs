@@ -8,7 +8,7 @@ import Data.Maybe (isJust)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (earlier, shrinkWithin)
+import Test.Gen (earlier, shrinkParts, shrinkWithin)
 import Test.Instances ()
 import TrackKat.Config (Updates (..))
 import TrackKat.Display
@@ -186,7 +186,8 @@ instance Arbitrary Rounds where
     arbitrary = Rounds <$> scale (`div` 2) (listOf arbitrary)
     shrink (Rounds rounds) = Rounds <$> shrink rounds
 
--- | Simpler with updates on, nothing asked, and nothing newer found.
+-- | Simplest ten minutes on with updates on, nothing asked, nothing newer
+-- found and nothing offered; and simpler with one of those so.
 instance Arbitrary Round where
     arbitrary =
         Round
@@ -195,12 +196,14 @@ instance Arbitrary Round where
             <*> elements finds
             <*> elements offers
             <*> frequency [(3, pure Nothing), (1, Just <$> ((,) <$> choose (0, 600) <*> elements finds))]
-    shrink r =
-        [r{roundAsked = Nothing} | isJust (roundAsked r)]
-            ++ [r{roundUpdates = UpdatesOn} | roundUpdates r == UpdatesOff]
-            ++ [r{roundFound = Right Nothing} | roundFound r /= Right Nothing]
-            ++ [r{roundWaiting = NoOffer} | roundWaiting r /= NoOffer]
-            ++ [r{roundAfter = 600} | roundAfter r /= 600]
+    shrink =
+        shrinkParts
+            [ \r -> [r{roundAsked = Nothing} | isJust (roundAsked r)]
+            , \r -> [r{roundUpdates = UpdatesOn} | roundUpdates r == UpdatesOff]
+            , \r -> [r{roundFound = Right Nothing} | roundFound r /= Right Nothing]
+            , \r -> [r{roundWaiting = NoOffer} | roundWaiting r /= NoOffer]
+            , \r -> [r{roundAfter = 600} | roundAfter r /= 600]
+            ]
 
 -- | What a look can find: no network, nothing published just now, a
 -- failure, a newer version, or none. Simplest none.

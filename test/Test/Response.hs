@@ -212,15 +212,16 @@ jumped axis beyond p = case axis of
 
 -- | A head's pose from its centre: turned short of half a turn, and of
 -- straight up or down, and moved as far as a seated head leans.
--- Simpler with an axis at centre.
+-- Simplest at centre, and simpler with an axis there.
 newtype Seated = Seated HeadPose
     deriving (Show)
 
 instance Arbitrary Seated where
     arbitrary = Seated <$> (HeadPose <$> choose (-170, 170) <*> choose (-85, 85) <*> choose (-170, 170) <*> choose (-300, 300) <*> choose (-300, 300) <*> choose (-300, 300))
 
-    shrink (Seated p) =
-        [Seated p' | p' <- [p{yaw = 0}, p{pitch = 0}, p{roll = 0}, p{tx = 0}, p{ty = 0}, p{tz = 0}], p' /= p]
+    shrink (Seated pose) = Seated <$> Gen.shrinkParts [centred yaw (\p x -> p{yaw = x}), centred pitch (\p x -> p{pitch = x}), centred roll (\p x -> p{roll = x}), centred tx (\p x -> p{tx = x}), centred ty (\p x -> p{ty = x}), centred tz (\p x -> p{tz = x})] pose
+      where
+        centred axis with p = [p `with` 0 | axis p /= 0]
 
 -- | A curve's points: inputs going up from above zero, and any outputs;
 -- simpler of fewer.

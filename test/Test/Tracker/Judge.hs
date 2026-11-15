@@ -162,14 +162,21 @@ pivot :: V3
 pivot = V3 0 100 100
 
 -- | Degrees turned and mm moved, up to twice the most a head does in a
--- frame, in up to half a second. Simpler with no turn, no move, or no
--- time.
+-- frame, in up to half a second. Simplest none of them, and simpler with
+-- no turn, no move, or no time.
 newtype Jump = Jump (Double, Double, Double)
     deriving (Show)
 
 instance Arbitrary Jump where
     arbitrary = Jump <$> ((,,) <$> choose (0, 2 * maxTurn 0) <*> choose (0, 2 * maxMove 0) <*> choose (0, 0.5))
-    shrink (Jump (turn, move, dt)) = Jump <$> [(0, move, dt) | turn /= 0] ++ [(turn, 0, dt) | move /= 0] ++ [(turn, move, 0) | dt /= 0]
+    shrink (Jump jump) =
+        Jump
+            <$> shrinkParts
+                [ \(turn, move, dt) -> [(0, move, dt) | turn /= 0]
+                , \(turn, move, dt) -> [(turn, 0, dt) | move /= 0]
+                , \(turn, move, dt) -> [(turn, move, 0) | dt /= 0]
+                ]
+                jump
 
 -- | Seconds since the last pose, while it predicts.
 newtype Gap = Gap Double

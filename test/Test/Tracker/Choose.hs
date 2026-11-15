@@ -6,7 +6,7 @@ import Data.Either (isRight)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (earlier, shrinkWithin)
+import Test.Gen (earlier, shrinkParts, shrinkTo, shrinkWithin)
 import TrackKat.Match (unseenScore)
 import TrackKat.Term
 import TrackKat.Tracker.Choose
@@ -112,14 +112,14 @@ instance Arbitrary Strong where
     arbitrary = Strong <$> oneof [pure (nats weakScore), choose (nats weakScore, 0)]
     shrink (Strong x) = Strong <$> shrinkWithin (nats weakScore, 0) 0 x
 
--- | A score below which following is weak; simpler a whole number of
--- nats.
+-- | A score below which following is weak; simplest the whole number of
+-- nats next below that, and simpler a whole number of them.
 newtype Weak = Weak Score
     deriving (Show)
 
 instance Arbitrary Weak where
     arbitrary = Weak <$> genScore `suchThat` (< weakScore)
-    shrink (Weak (Score x)) = [Weak (Score whole) | let whole = fromIntegral (floor x :: Int), whole /= x, Score whole < weakScore]
+    shrink (Weak scored) = Weak <$> shrinkTo (Score (fromIntegral (ceiling (nats weakScore) - 1 :: Int))) (\(Score x) -> [Score (fromIntegral (floor x :: Int))]) scored
 
 -- | Why a hypothesis came to nothing.
 newtype Because = Because Reason
@@ -157,8 +157,9 @@ instance Arbitrary Likelier where
     arbitrary = Likelier <$> choose (0, 30)
     shrink (Likelier x) = Likelier <$> shrinkWithin (0, 30) 0 x
 
--- | A clip found by layout, of any score and way; simpler with nothing
--- against it, and with nothing said of its jump.
+-- | A clip found by layout, of any score and way; simplest refound with
+-- nothing against it and nothing said of its jump, and simpler with one
+-- of those so.
 newtype AnyLayout = AnyLayout (Layout Made)
     deriving (Show)
 
@@ -174,11 +175,17 @@ genLayout = do
     pure (Layout scored way jump ByLayout)
 
 shrinkLayout :: Layout Made -> [Layout Made]
-shrinkLayout found = [found{layoutScore = possible} | layoutScore found /= possible] ++ [found{layoutJump = []} | not (null (layoutJump found))]
+shrinkLayout =
+    shrinkParts
+        [ \found -> [found{layoutScore = possible} | layoutScore found /= possible]
+        , \found -> [found{layoutJump = []} | not (null (layoutJump found))]
+        , \found -> [found{layoutWay = way} | way <- earlier [Refound, Resumed, FoundAfresh] (layoutWay found)]
+        ]
 
 -- | What following and the layout make of a frame, whatever that is, and
--- how likely the clip is still where it was. Simpler with no layout, and
--- with a simpler one.
+-- how likely the clip is still where it was. Simplest followed with
+-- nothing against it, no layout, and no reflector out of sight; simpler
+-- with one of those so, and with a simpler layout.
 newtype AnyHypotheses = AnyHypotheses (Hypotheses Made)
     deriving (Show)
 
@@ -189,7 +196,16 @@ instance Arbitrary AnyHypotheses where
         missing <- chooseInt (0, 3)
         held <- elements [Score (fromIntegral missing * nats unseenScore), impossible]
         pure (AnyHypotheses (Hypotheses following layout (missing, held)))
-    shrink (AnyHypotheses h) = case byLayout h of
-        Nothing -> []
-        Just (Left _) -> [AnyHypotheses h{byLayout = Nothing}]
-        Just (Right found) -> AnyHypotheses h{byLayout = Nothing} : [AnyHypotheses h{byLayout = Just (Right found')} | found' <- shrinkLayout found]
+    shrink (AnyHypotheses hypotheses) =
+        AnyHypotheses
+            <$> shrinkParts
+                [ \h -> case byLayout h of
+                    Nothing -> []
+                    Just (Left _) -> [h{byLayout = Nothing}]
+                    Just (Right found) -> h{byLayout = Nothing} : [h{byLayout = Just (Right found')} | found' <- shrinkLayout found]
+                , \h -> case followed h of
+                    Right (scored, made) -> [h{followed = Right (possible, made)} | scored /= possible]
+                    Left (Why looking whyNot) -> h{followed = Right (possible, ByFollowing)} : [h{followed = Left (Why looking whyNot')} | whyNot' <- earlier reasons whyNot]
+                , \h -> [h{stillWhereItWas = (0, possible)} | stillWhereItWas h /= (0, possible)]
+                ]
+                hypotheses

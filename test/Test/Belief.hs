@@ -4,7 +4,7 @@ module Test.Belief (tests) where
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (close, genWeights, shares, shrinkWithin)
+import Test.Gen (close, genWeights, shares, shrinkBelief, shrinkTo, shrinkWithin)
 import Test.Instances ()
 import TrackKat.Belief
 
@@ -94,13 +94,14 @@ isBelief b = counterexample (show b ++ " isn't a belief") (all (\p -> p >= 0 && 
 closeBelief :: Belief -> Belief -> Property
 closeBelief a b = conjoin (zipWith (close 1e-12) (chances a) (chances b))
 
--- | Four weights, of which the first isn't nothing.
+-- | Four weights, of which the first isn't nothing. Simplest all alike,
+-- and simpler with one of the others nothing.
 newtype Weights = Weights Belief
     deriving (Show)
 
 instance Arbitrary Weights where
     arbitrary = Weights <$> genWeights
-    shrink (Weights b) = [Weights unknown | b /= unknown]
+    shrink (Weights b) = Weights <$> shrinkTo unknown (\w -> [w{referenceMirrored = 0}, w{trackedMirrored = 0}, w{bothMirrored = 0}]) b
 
 -- | A belief with every combination clear of the least chance, by enough
 -- that some evidence keeps it so.
@@ -111,7 +112,7 @@ instance Arbitrary ClearBelief where
     arbitrary = ClearBelief . shares <$> (Belief <$> weight <*> weight <*> weight <*> weight)
       where
         weight = choose (0.5, 1)
-    shrink (ClearBelief b) = [ClearBelief unknown | b /= unknown]
+    shrink (ClearBelief b) = ClearBelief <$> shrinkBelief b
 
 -- | The chance of something, from none to certain.
 newtype Chance = Chance Double

@@ -95,10 +95,11 @@ instance Arbitrary Direction where
     shrink (Direction v) = Direction <$> shrinkDirection v
 
 -- | Two unit vectors neither the same way nor opposite ways, where the way
--- round from one to the other is no way in particular. Simplest the same
--- angle apart, along the first axis and in the plane of the first two.
+-- round from one to the other is no way in particular. Simplest the first
+-- two axes, and simpler the same angle apart, along the first axis and in
+-- the plane of the first two.
 data TwoWays = TwoWays V3 V3
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary TwoWays where
     arbitrary = do
@@ -106,10 +107,11 @@ instance Arbitrary TwoWays where
         axis <- (normalize . cross from <$> genDirection) `suchThat` ((> 0.5) . norm)
         angle <- choose (0.01, pi - 0.01)
         pure (TwoWays from (mulMV (rodrigues (angle *^ axis)) from))
-    shrink (TwoWays from to) = [TwoWays from' to' | (from', to') /= (from, to)]
+    shrink = shrinkTo (TwoWays (V3 1 0 0) (V3 0 1 0)) inPlane
       where
-        angle = angleBetween from to
-        (from', to') = (V3 1 0 0, V3 (cos angle) (sin angle) 0)
+        -- Only of ways not yet so, as working out their angle again may
+        -- give another number for it.
+        inPlane (TwoWays from to@(V3 _ _ z)) = [TwoWays (V3 1 0 0) (V3 (cos angle) (sin angle) 0) | from /= V3 1 0 0 || z /= 0, let angle = angleBetween from to]
 
 -- | The most to turn by, in radians, up to half a turn.
 newtype Limit = Limit Double
@@ -122,10 +124,11 @@ instance Arbitrary Limit where
 -- | A system of up to six equations whose matrix has, in each row, a
 -- diagonal entry at least twice the sum of the others' sizes, so that its
 -- solution is found to nearly full precision; and a solution for it.
--- Simpler with the last equation and unknown dropped, which leaves the
--- diagonal as heavy.
+-- Simplest one equation, of one for nothing; and simpler with the last
+-- equation and unknown dropped, which leaves the diagonal as heavy, and
+-- with nothing for its solution.
 data Dominant = Dominant [[Double]] [Double]
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Dominant where
     arbitrary = do
@@ -134,4 +137,4 @@ instance Arbitrary Dominant where
         signs <- vectorOf n (elements [-1, 1])
         x <- vectorOf n (choose (-100, 100))
         pure (Dominant [[if i == j then s * (2 * sum (map abs row) + 1) else v | (j, v) <- zip [0 :: Int ..] row] | (i, row, s) <- zip3 [0 ..] rows signs] x)
-    shrink (Dominant a x) = [Dominant (map init (init a)) (init x) | length a > 1]
+    shrink = shrinkTo (Dominant [[1]] [0]) (\(Dominant a x) -> [Dominant (map init (init a)) (init x) | length a > 1] ++ [Dominant a (map (const 0) x)])

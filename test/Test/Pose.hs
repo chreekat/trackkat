@@ -278,22 +278,23 @@ instance Arbitrary AClip where
     shrink (AClip m) = AClip <$> earlier clips m
 
 -- | One of 'clips' at a pose the camera sees it whole in, within the range
--- a clip is tracked in, turned any way.
+-- a clip is tracked in, turned any way. Simplest the first of them
+-- squarely facing the camera, a metre straight ahead.
 data ClipSeen = ClipSeen Model Placing
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary ClipSeen where
     arbitrary = elements clips >>= \m -> ClipSeen m <$> genSeen 180 trackedRange m
-    shrink (ClipSeen m placing) = [ClipSeen m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipSeen m <$> shrinkSeen trackedRange m placing)
+    shrink = shrinkTo (ClipSeen trackClip (squarelyAhead trackedRange)) (\(ClipSeen m placing) -> [ClipSeen m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipSeen m <$> shrinkSeen trackedRange m placing))
 
 -- | One of 'clips' as 'ClipSeen' has it, turned up to 25 degrees from
 -- squarely facing the camera.
 data ClipFacing = ClipFacing Model Placing
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary ClipFacing where
     arbitrary = elements clips >>= \m -> ClipFacing m <$> genSeen 25 trackedRange m
-    shrink (ClipFacing m placing) = [ClipFacing m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipFacing m <$> shrinkSeen trackedRange m placing)
+    shrink = shrinkTo (ClipFacing trackClip (squarelyAhead trackedRange)) (\(ClipFacing m placing) -> [ClipFacing m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipFacing m <$> shrinkSeen trackedRange m placing))
 
 -- | Degrees of yaw, pitch and roll, short of where they stop telling a
 -- turn apart: pitch straight up or down, and yaw or roll half a turn.
@@ -302,7 +303,14 @@ newtype Angles = Angles (Double, Double, Double)
 
 instance Arbitrary Angles where
     arbitrary = Angles <$> ((,,) <$> choose (-170, 170) <*> choose (-80, 80) <*> choose (-170, 170))
-    shrink (Angles angles) = Angles <$> shrink angles
+    shrink (Angles angles) =
+        Angles
+            <$> shrinkParts
+                [ \(y, p, r) -> [(y', p, r) | y' <- shrinkWithin (-170, 170) 0 y]
+                , \(y, p, r) -> [(y, p', r) | p' <- shrinkWithin (-80, 80) 0 p]
+                , \(y, p, r) -> [(y, p, r') | r' <- shrinkWithin (-170, 170) 0 r]
+                ]
+                angles
 
 -- | A turn of up to 60 degrees, as the camera is tipped from level by.
 newtype Tipped = Tipped V3
@@ -351,7 +359,8 @@ nudged :: Placing -> Pose -> Pose
 nudged (Placing turn move) (Pose r t) = Pose (rodrigues turn `mulMM` r) (t ^+^ move)
 
 -- | The sides of a triangle, each well short of the other two together;
--- simpler with whole sides, where they still make one.
+-- simplest the shortest, all alike, and simpler with whole sides, where
+-- they still make one.
 newtype Sides = Sides (Double, Double, Double)
     deriving (Show)
 
@@ -361,13 +370,13 @@ instance Arbitrary Sides where
         b <- choose (10, 300)
         c <- choose (abs (a - b) + 0.01 * (a + b), 0.99 * (a + b))
         pure (Sides (a, b, c))
-    shrink (Sides (a, b, c)) =
-        [ Sides (a', b', c')
-        | (a', b', c') <- [(whole a, b, c), (a, whole b, c), (a, b, whole c)]
-        , (a', b', c') /= (a, b, c)
-        , c' > abs (a' - b') + 0.01 * (a' + b') && c' < 0.99 * (a' + b')
-        ]
+    shrink (Sides sides) = Sides <$> shrinkTo (10, 10, 10) wholes sides
       where
+        wholes (a, b, c) =
+            [ (a', b', c')
+            | (a', b', c') <- [(whole a, b, c), (a, whole b, c), (a, b, whole c)]
+            , c' > abs (a' - b') + 0.01 * (a' + b') && c' < 0.99 * (a' + b')
+            ]
         whole x = fromIntegral (round x :: Int)
 
 -- | How many times the other two sides together a side too long for a

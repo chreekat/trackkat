@@ -6,7 +6,7 @@ import Data.Maybe (isJust)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (Fraction (..), earlier, shrinkWithin)
+import Test.Gen (Fraction (..), earlier, shrinkParts, shrinkWithin)
 import Test.Instances ()
 import Test.Simulation (headset)
 import TrackKat.Branch (newBranch)
@@ -81,12 +81,19 @@ times (Trail recent left) = Marks (recentTime <$> recent) ((\(LeftBehind r _) ->
 leftTime :: Carried -> Maybe Double
 leftTime carried = (\(LeftBehind r _) -> recentTime r) <$> carriedLeft carried
 
--- | Simpler with fewer poses.
+-- | Simplest with no poses, and simpler with fewer, and tracked at the
+-- start.
 instance Arbitrary TrailSpec where
     arbitrary = TrailSpec <$> time <*> time
       where
         time = oneof [pure Nothing, Just <$> choose (0, 2)]
-    shrink (TrailSpec recent left) = [TrailSpec Nothing left | isJust recent] ++ [TrailSpec recent Nothing | isJust left]
+    shrink =
+        shrinkParts
+            [ \spec -> [spec{lastAt = at} | at <- sooner (lastAt spec)]
+            , \spec -> [spec{leftAt = at} | at <- sooner (leftAt spec)]
+            ]
+      where
+        sooner = maybe [] (\at -> Nothing : map Just (shrinkWithin (0, 2) 0 at))
 
 -- | A time no sooner than any pose of a trail, up to a second after.
 newtype Now = Now Double

@@ -220,9 +220,10 @@ lampLit = foldl' seen (Still MaskLights noLights) [0 .. 480 :: Int]
 genBy :: Double -> Gen (Double, Double)
 genBy most = (\du dv -> (fst lampAt + du, snd lampAt + dv)) <$> choose (negate most, most) <*> choose (negate most, most)
 
--- | Places a whole number of pixels from the lamp, toward it.
+-- | The lamp's own place, and the place a whole number of pixels from
+-- it, toward it.
 shrinkBy :: (Double, Double) -> [(Double, Double)]
-shrinkBy (u, v) = [(u', v') | let (u', v') = (toward (fst lampAt) u, toward (snd lampAt) v), (u', v') /= (u, v)]
+shrinkBy = shrinkTo lampAt (\(u, v) -> [(toward (fst lampAt) u, toward (snd lampAt) v)])
   where
     toward lamp x = lamp + fromIntegral (truncate (x - lamp) :: Int)
 
@@ -302,7 +303,8 @@ instance Arbitrary Shared where
 -- for, in seconds; four times the seconds from each frame to the next, up
 -- to twice as long as a calibration watches; and the frames, by number,
 -- before which the clip was lost, and before which its pose was
--- corrected. Simpler with fewer of those, and with fewer frames.
+-- corrected. Simplest asked for at the start, with no frames; simpler
+-- with fewer frames, and with fewer of those lost or corrected.
 data Sweep = Sweep Double [Double] [Int] [Int]
     deriving (Show)
 
@@ -311,8 +313,10 @@ instance Arbitrary Sweep where
         asked <- choose (0, 10)
         gaps <- listOf (choose (0, 2 * calibrationSeconds))
         Sweep asked gaps <$> sublistOf [0 .. length gaps] <*> sublistOf [0 .. length gaps]
-    shrink (Sweep asked gaps lost corrected) =
-        [Sweep asked gaps lost' corrected | lost' <- shrinkList (const []) lost]
-            ++ [Sweep asked gaps lost corrected' | corrected' <- shrinkList (const []) corrected]
-            ++ [Sweep asked fewer (filter (<= length fewer) lost) (filter (<= length fewer) corrected) | not (null gaps), let fewer = init gaps]
-            ++ [Sweep 0 gaps lost corrected | asked /= 0]
+    shrink =
+        shrinkParts
+            [ \(Sweep asked gaps lost corrected) -> [Sweep asked fewer (filter (<= length fewer) lost) (filter (<= length fewer) corrected) | fewer <- [[] | length gaps > 1] ++ [init gaps | not (null gaps)]]
+            , \(Sweep asked gaps lost corrected) -> [Sweep asked gaps lost' corrected | lost' <- shrinkList (const []) lost]
+            , \(Sweep asked gaps lost corrected) -> [Sweep asked gaps lost corrected' | corrected' <- shrinkList (const []) corrected]
+            , \(Sweep asked gaps lost corrected) -> [Sweep 0 gaps lost corrected | asked /= 0]
+            ]

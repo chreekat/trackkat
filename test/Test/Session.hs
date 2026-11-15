@@ -302,8 +302,8 @@ instance Arbitrary Moves where
     arbitrary = Moves <$> scale (`div` 3) (listOf arbitrary)
     shrink (Moves moves) = Moves <$> shrink moves
 
--- | Simpler with a head turned less, fewer keys, and settings nearer the
--- defaults.
+-- | Simplest a frame showing nothing; and simpler with a head turned
+-- less, fewer keys, and settings nearer the defaults.
 instance Arbitrary Move where
     arbitrary =
         frequency
@@ -315,11 +315,13 @@ instance Arbitrary Move where
             , (1, Save <$> genConfig)
             , (1, elements [Seek, Connect, Stop "The camera stopped.", Corrupt])
             ]
-    shrink move = case move of
-        See y p -> [See 0 0 | (y, p) /= (0, 0)]
-        Keys keys game -> [Keys keys' game | keys' <- shrinkList (const []) keys] ++ [Keys keys NoGameAsked | game == GameAsked]
-        Save config -> Save <$> shrinkConfig config
-        _ -> []
+    shrink = shrinkTo Dark simpler
+      where
+        simpler move = case move of
+            See y p -> [See 0 0 | (y, p) /= (0, 0)]
+            Keys keys game -> [Keys [] NoGameAsked] ++ [Keys keys' game | keys' <- shrinkList (const []) keys] ++ [Keys keys NoGameAsked | game == GameAsked]
+            Save config -> Save <$> shrinkConfig config
+            _ -> []
 
 -- | A move that recenters: asked for in the window, by the hotkey, or by a
 -- game.

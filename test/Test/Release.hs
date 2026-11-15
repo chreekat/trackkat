@@ -20,7 +20,7 @@ import Test.Tasty.QuickCheck
 import Codec.Archive.Zip (addEntryToArchive, emptyArchive, fromArchive, toEntry)
 
 import Test.Check
-import Test.Gen (earlier, forAnyOrder)
+import Test.Gen (earlier, forAnyOrder, shrinkFrom, shrinkParts, shrinkTo)
 import TrackKat.Number (renderNatural)
 import TrackKat.Release
 
@@ -227,15 +227,17 @@ version :: VersionSpec -> Version
 version spec = maybe (error ("not a version: " ++ versionText spec)) id (parseVersion (versionText spec))
 
 -- | One to four numbers, small or up to the nine digits a version's number
--- has at most, and perhaps a commit. Simpler of fewer and smaller numbers,
--- built by nothing.
+-- has at most, and perhaps a commit. Simplest the one number nought,
+-- built by nothing; and simpler of fewer and smaller numbers.
 instance Arbitrary VersionSpec where
     arbitrary = VersionSpec <$> numbers <*> oneof [pure Nothing, Just <$> listOf1 (elements "0123456789abcdef.-")]
       where
         numbers = chooseInt (1, 4) >>= \n -> vectorOf n (oneof [chooseInt (0, 3), chooseInt (0, 999999999)])
-    shrink (VersionSpec numbers build) =
-        [VersionSpec numbers Nothing | build /= Nothing]
-            ++ [VersionSpec numbers' build | numbers' <- shrinkList (filter (>= 0) . shrink) numbers, not (null numbers')]
+    shrink =
+        shrinkParts
+            [ \(VersionSpec numbers build) -> [VersionSpec numbers Nothing | build /= Nothing]
+            , \(VersionSpec numbers build) -> [VersionSpec numbers' build | numbers' <- shrinkTo [0] (filter (not . null) . shrinkList (shrinkFrom 0)) numbers]
+            ]
 
 -- | What might follow a version in a folder's name.
 newtype Suffix = Suffix String

@@ -62,15 +62,16 @@ discs :: Scene -> [Disc]
 discs (Scene clip others) = maybe [] (pointDiscs defaultIntrinsics headset allLit . placed) clip ++ others
 
 -- | The clip seen whole, or not there, and a few other lights of up to a
--- reflector's size or so. Simpler with fewer lights, without the clip, and
--- with it turned less.
+-- reflector's size or so. Simplest nothing at all; simpler with fewer
+-- lights, without the clip, and with it turned less.
 instance Arbitrary Scene where
     arbitrary = Scene <$> oneof [pure Nothing, Just <$> genClipApart 30 (400, 1500) headset] <*> others
       where
         others = do
             n <- chooseInt (0, 4)
             vectorOf n ((,) <$> ((,) <$> choose (20, fromIntegral frameWidth - 20) <*> choose (20, fromIntegral frameHeight - 20)) <*> choose (2, 14))
-    shrink (Scene clip others) =
-        [Scene clip fewer | fewer <- shrinkList (const []) others]
-            ++ [Scene Nothing others | isJust clip]
-            ++ [Scene (Just simpler) others | Just placing <- [clip], simpler <- shrinkClipApart (400, 1500) headset placing]
+    shrink =
+        shrinkParts
+            [ \(Scene clip others) -> [Scene clip fewer | fewer <- shrinkList (const []) others]
+            , \(Scene clip others) -> [Scene Nothing others | isJust clip] ++ [Scene (Just simpler) others | Just placing <- [clip], simpler <- shrinkClipApart (400, 1500) headset placing]
+            ]
