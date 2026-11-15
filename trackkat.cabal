@@ -170,6 +170,7 @@ test-suite tests
     Test.Tracker.Kept
     Test.Tracker.Layout
     Test.Tracker.Sizes
+    Test.Tracker.Step
     Test.Tracker.Trail
     Test.Visibility
     Test.World
