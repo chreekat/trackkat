@@ -49,6 +49,7 @@ import TrackKat.Number
 import TrackKat.Pose (Model (..), Tabs (..), triangle)
 import TrackKat.Response
 
+-- | trackkat's settings, as trackkat.conf holds them.
 data Config = Config
     { recenterBindings :: [Binding]
     , pauseBindings :: [Binding]
@@ -107,6 +108,7 @@ clipShape lr lt rt
   where
     onTabs m = m{mTabs = Tabs{tabRadius = 10, tapeArc = 25, postBend = 37.5}}
 
+-- | The distances the shape was made from, as 'clipShape' takes them.
 clipDistances :: ClipShape -> (Double, Double, Double)
 clipDistances (ClipShape d _) = d
 
@@ -115,6 +117,7 @@ clipDistances (ClipShape d _) = d
 wornDistances :: Model -> (Double, Double, Double)
 wornDistances m = (norm (mRight m ^-^ mLeft m), norm (mTop m ^-^ mRight m), norm (mTop m ^-^ mLeft m))
 
+-- | The clip of that shape, as tracking models it.
 clipModel :: ClipShape -> Model
 clipModel (ClipShape _ m) = m
 
@@ -254,6 +257,8 @@ readSettings path =
         Left e -> Left (displayException (e :: IOException))
         Right text -> (\c -> (text, c)) <$> parseConfig text
 
+-- | The settings file for these settings, each setting under a comment
+-- that explains it.
 renderConfig :: Config -> String
 renderConfig c =
     unlines
@@ -557,6 +562,7 @@ parseBindings value
     | all isSpace value = Right []
     | otherwise = traverse parseBinding (splitOn ',' value)
 
+-- | Bindings as a settings file lists them, separated by commas.
 renderBindings :: [Binding] -> String
 renderBindings = intercalate ", " . map renderBinding
 
@@ -593,6 +599,8 @@ parseBinding s = case joystickButton (trim s) of
         "win" -> Right Win
         _ -> Left ("unknown modifier " ++ show m)
 
+-- | A binding as 'parseBinding' reads it, such as @Ctrl+F12@ or
+-- @T.16000M button 3@.
 renderBinding :: Binding -> String
 renderBinding (Key mods k) = intercalate "+" (map renderModifier (heldInOrder mods) ++ [k])
 renderBinding (JoystickButton j n) = renderJoystick j ++ " button " ++ renderNatural (toInteger n)
@@ -621,6 +629,8 @@ parseJoystick name = case reverse name of
             Right (Joystick (trim (reverse beforeIndex)) (fromInteger n))
     _ -> Right (Joystick name 1)
 
+-- | A joystick's name, with its number in brackets if it isn't the first
+-- of that name.
 renderJoystick :: Joystick -> String
 renderJoystick (Joystick name index) = name ++ (if index > 1 then " (" ++ renderNatural (toInteger index) ++ ")" else "")
 

@@ -127,6 +127,8 @@ data Turned
         -- | unalike
         !Double
 
+-- | What is believed of the tracked pose and the reference being the head's
+-- or the mirror image, and the turning that says so.
 data Branch = Branch
     { brModel :: !Model
     , brBelief :: !Belief
@@ -309,6 +311,8 @@ judged br = case brTurned br of
 data Correction = MirrorNeither | MirrorTracked | MirrorReference | MirrorBoth
     deriving (Eq, Show)
 
+-- | Which pose, if any, is sure enough the mirror image to be switched for
+-- its mirror.
 correction :: Branch -> Correction
 correction br
     | trackedMirrorChance b >= sure = if bothMirrored (brBelief br) > trackedMirrored (brBelief br) then MirrorBoth else MirrorTracked

@@ -198,6 +198,8 @@ triangle lean lr lt rt
     h = sqrt h2
     theta = lean * pi / 180
 
+-- | A rotation and a translation, in mm, that take the model's axes to
+-- the camera's.
 data Pose = Pose {poseR :: !M33, poseT :: !V3}
     deriving (Show)
 
@@ -205,6 +207,7 @@ data Pose = Pose {poseR :: !M33, poseT :: !V3}
 poseAt :: Pose -> V3 -> V3
 poseAt (Pose r t) p = mulMV r p ^+^ t
 
+-- | Where in the image, in pixels, a point of the model shows at a pose.
 project :: Intrinsics -> Pose -> V3 -> (Double, Double)
 project k pose p =
     let V3 x y z = poseAt pose p

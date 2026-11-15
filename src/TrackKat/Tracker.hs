@@ -161,6 +161,7 @@ setMasking masking t
     | masking == stillMasking (trStill t) = t
     | otherwise = t{trStill = Still masking noLights}
 
+-- | Ask for something, after anything already asked for.
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
 

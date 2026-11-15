@@ -10,6 +10,7 @@ module TrackKat.Display (
 
 import TrackKat.Pose (HeadPose, Reflector)
 
+-- | What the camera is doing, for the window's Camera light.
 data CameraState
     = Searching
     | Tracking

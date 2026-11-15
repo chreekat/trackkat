@@ -138,6 +138,7 @@ type Disc = ((Double, Double), Double)
 -- | How lit each reflector is (left, right, top), from 0 (unseen) to 1.
 type Lit = (Double, Double, Double)
 
+-- | Every reflector fully lit.
 allLit :: Lit
 allLit = (1, 1, 1)
 

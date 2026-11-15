@@ -41,6 +41,7 @@ data ServedGame = ServedGame
 data HeadTracking = TrackingStarted | TrackingStopped
     deriving (Eq, Show)
 
+-- | The file that remembers the game served.
 renderServedGame :: ServedGame -> String
 renderServedGame g =
     unlines
@@ -58,6 +59,7 @@ renderServedGame g =
   where
     whole n = renderNatural (toInteger n)
 
+-- | Read what 'renderServedGame' wrote, or say what is wrong with it.
 parseServedGame :: String -> Either String ServedGame
 parseServedGame str = do
     settings <- traverse setting (filter (not . all isSpace) (map (takeWhile (/= '#')) (lines str)))

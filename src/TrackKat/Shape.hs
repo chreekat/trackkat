@@ -430,6 +430,7 @@ confidence est
 data Difference = AsConfigured | Different
     deriving (Eq, Show)
 
+-- | See 'Difference'.
 difference :: ShapeEstimate -> Difference
 difference est
     | off >= max 2 (4 * estimateSpread est) = Different

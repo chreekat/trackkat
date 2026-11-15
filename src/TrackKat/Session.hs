@@ -331,6 +331,8 @@ describeTrim NoTrim = "straight ahead"
 describeTrim (Trim t) =
     printf "yaw %+.0f pitch %+.0f roll %+.0f, x %+.0f y %+.0f z %+.0f mm" (yaw t) (pitch t) (roll t) (tx t) (ty t) (tz t)
 
+-- | What the window says where the calibration would be, before any is
+-- learnt.
 noCalibration :: String
 noCalibration = "No calibration yet: trackkat learns it as you turn your head."
 
