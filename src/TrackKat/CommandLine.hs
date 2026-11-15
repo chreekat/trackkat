@@ -15,7 +15,7 @@ module TrackKat.CommandLine (
 
 import Data.Maybe (fromMaybe)
 
-import TrackKat.Number (parseNatural, renderNatural)
+import TrackKat.Number (parseCount, renderNatural)
 
 -- | How trackkat was started.
 data Start
@@ -60,14 +60,8 @@ parseCommand = \case
         "--by-game" : rest -> go ByGame w a rest
         "--tray" : rest -> go AtLogin w a rest
         "--window" : rest -> go s (Just WindowShown) a rest
-        "--after" : pid : rest | Just n <- processId pid -> go s w (Just n) rest
+        "--after" : pid : rest | Just n <- parseCount pid -> go s w (Just n) rest
         _ -> Nothing
-
--- | A process ID, in decimal digits.
-processId :: String -> Maybe Int
-processId str = case parseNatural str of
-    Just n | n <= toInteger (maxBound :: Int) -> Just (fromInteger n)
-    _ -> Nothing
 
 usage :: String
 usage =
