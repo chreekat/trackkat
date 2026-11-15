@@ -128,8 +128,10 @@ test-suite tests
     Test.Config
     Test.Following
     Test.Frame
+    Test.Gen
     Test.Icons
     Test.Level
+    Test.Linear
     Test.Lights
     Test.Match
     Test.Memory
@@ -146,6 +148,7 @@ test-suite tests
     Test.Term
     Test.Tracker
     Test.Visibility
+    Test.World
   ghc-options:      "-with-rtsopts=-T"
   build-depends:
     , base
