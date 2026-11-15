@@ -39,7 +39,7 @@ import Control.Exception (IOException, displayException, try)
 import Data.Bits ((.&.), (.|.))
 import Data.Char (digitToInt, isDigit, isSpace, toLower)
 import Data.Foldable (traverse_)
-import Data.List (dropWhileEnd, findIndices, intercalate, nub)
+import Data.List (dropWhileEnd, findIndices, intercalate)
 import Data.Maybe (fromMaybe)
 import System.IO (readFile')
 
@@ -152,13 +152,25 @@ defaultConfig =
         Just c -> c
         Nothing -> error "defaultClip"
 
--- | A key, or a mouse button named as one, with modifiers held; or a
--- joystick button numbered from 1.
+-- | A key, or a mouse button named as one, with modifiers held, each once
+-- and in the order of 'Modifier'; or a joystick button numbered from 1.
 data Binding = Key [Modifier] String | JoystickButton Joystick Int
     deriving (Eq, Show)
 
+-- | In the order bindings are written with them.
 data Modifier = Ctrl | Alt | Shift | Win
     deriving (Eq, Show, Enum, Bounded)
+
+-- | The modifiers among the given ones, each once, in the order of
+-- 'Modifier'.
+heldInOrder :: [Modifier] -> [Modifier]
+heldInOrder mods = [m | m <- [minBound ..], m `elem` mods]
+
+renderModifier :: Modifier -> String
+renderModifier Ctrl = "Ctrl"
+renderModifier Alt = "Alt"
+renderModifier Shift = "Shift"
+renderModifier Win = "Win"
 
 -- | A game controller: its product name, as Windows reports it, and which
 -- of the attached controllers with that name it is, from 1.
@@ -564,7 +576,7 @@ parseBinding s = case joystickButton (trim s) of
             mods <- traverse modifier (init parts)
             let k = last parts
             case lookupKey k of
-                Just (canonical, _) -> Right (Key (nub mods) canonical)
+                Just (canonical, _) -> Right (Key (heldInOrder mods) canonical)
                 Nothing
                     | map toLower k `elem` ["mouseleft", "mouseright", "mouse1", "mouse2"] ->
                         Left "the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
@@ -582,7 +594,7 @@ parseBinding s = case joystickButton (trim s) of
         _ -> Left ("unknown modifier " ++ show m)
 
 renderBinding :: Binding -> String
-renderBinding (Key mods k) = intercalate "+" (map show [m | m <- [minBound ..], m `elem` mods] ++ [k])
+renderBinding (Key mods k) = intercalate "+" (map renderModifier (heldInOrder mods) ++ [k])
 renderBinding (JoystickButton j n) = renderJoystick j ++ " button " ++ show n
 
 -- | Split a binding ending in @button N@ into the joystick's name and the
