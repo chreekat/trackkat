@@ -11,6 +11,7 @@ import TrackKat.Calibration
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Synth
+import TrackKat.World (clockAt)
 
 -- | Learning up (see Note [Learning up]) from glancing about, three minutes
 -- at a time at 60 poses a second, each with a little noise, the body
@@ -42,7 +43,7 @@ simulations = group "Level" $ do
             , let time = from + fromIntegral i / 60
                   y = 1.1 * glanceYaw time
             ]
-        learnFrom c poses = foldl' (\l (time, pose) -> fst (learn time pose l)) (newLearner m c) poses
+        learnFrom c poses = foldl' (\l (time, pose) -> fst (learn (clockAt time) pose l)) (newLearner m c) poses
         upOf (down, right) = mulMV (rotYXZ 0 down 0 `mulMM` rotYXZ 0 0 right) (V3 0 (-1) 0)
         off c up = angleBetween (levelUp (estimatedLevel c)) up * 180 / pi
         camera = (12, 4)
@@ -79,7 +80,7 @@ simulations = group "Level" $ do
     -- head, below and behind the clip, not off to one side.
     let rolled = rotYXZ 0 0 15
     forM_ [("as worn the standard way", m, rolled), ("as mounted so", mounted (Mounting rolled (V3 0 100 100)) m, identity)] $ \(how, model, worn) -> do
-        let c = learnerCalibration (foldl' (\l (time, pose) -> fst (learn time pose l)) (newLearner model defaultCalibration) (glancing camera worn 0 0 180))
+        let c = learnerCalibration (foldl' (\l (time, pose) -> fst (learn (clockAt time) pose l)) (newLearner model defaultCalibration) (glancing camera worn 0 0 180))
             centre = seen camera worn 0 0 0 0
             drawn = learntClip model (Just centre) c
             V3 x y z = maybe (V3 (1 / 0) 0 0) (\(l, r, _) -> 0.5 *^ (l ^+^ r)) drawn

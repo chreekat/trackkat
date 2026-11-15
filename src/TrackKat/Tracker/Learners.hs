@@ -20,7 +20,7 @@ import TrackKat.Linear (M33, V3, mulMM, transpose)
 import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Tracker.Outcome (Event (..))
-import TrackKat.World (Instant, Seconds, inClockSeconds, seconds, (.+^))
+import TrackKat.World (Instant, Seconds, seconds, (.+^))
 
 -- | A requested calibration of level in progress.
 data Sweep
@@ -61,8 +61,8 @@ startOver learners = (lostSightOf learners){learnersSweep = fmap (\(Sweep deadli
 learnFrom :: Intrinsics -> Instant -> V3 -> Pose -> Learners -> (Learners, [Refinement], Maybe ShapeEstimate)
 learnFrom k now pivot pose learners = (learners{learnersPivot = learner, learnersShape = shapes}, refinements, shapeNews)
   where
-    (learner, refinements) = learn (inClockSeconds now) pose (learnersPivot learners)
-    (shapes, shapeNews) = watchShape k (inClockSeconds now) pivot pose (learnersShape learners)
+    (learner, refinements) = learn now pose (learnersPivot learners)
+    (shapes, shapeNews) = watchShape k now pivot pose (learnersShape learners)
 
 -- | How long a head's turning is watched to calibrate level from.
 calibrationSeconds :: Seconds

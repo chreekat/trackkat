@@ -37,7 +37,7 @@ import TrackKat.Calibration
 import TrackKat.Linear (V3)
 import TrackKat.Pose
 import TrackKat.Term (Bound (..), Measure (..), Name (..), Score (..), Tally, Term, accepts, gate, gaussian, likelihood, noTally, score, tally, verdict)
-import TrackKat.World (World (..), inDegrees, inMillimetres, times, world)
+import TrackKat.World (Instant, World (..), inDegrees, inMillimetres, times, world, (.-.))
 
 -- Note [Which pose is the head's]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -216,14 +216,14 @@ placesRemembered = 4
 headReachDegrees :: Double
 headReachDegrees = inDegrees (headTurnSpread world)
 
--- | Take in a tracked pose seen at the given time in seconds, given the
+-- | Take in a tracked pose seen at the given time, given the
 -- pivot in the model's axes, the reference if there is one, how clearly
 -- the reflectors were seen, and the other poses that fit what was seen if
 -- all three reflectors were seen (see 'alternatives'). Its mirror image is
 -- the one nearest the mirror image in the last frame, or nearest the pose
 -- reflected (see 'reflectedPose') if there wasn't one. Where any comes
 -- close, tracking could slip onto it.
-watch :: Double -> V3 -> Maybe Pose -> Clarity -> Pose -> Maybe [Pose] -> Branch -> Branch
+watch :: Instant -> V3 -> Maybe Pose -> Clarity -> Pose -> Maybe [Pose] -> Branch -> Branch
 watch now pivot reference clarity pose seen br = case seen of
     Nothing -> br{brMirror = Nothing, brWindows = Nothing, brTurned = Nothing}
     Just others
@@ -240,7 +240,7 @@ watch now pivot reference clarity pose seen br = case seen of
             (Just _, _, Doubtful) -> br{brCloseness = Apart, brMirror = mirror, brWindows = Nothing, brTurned = turned}
             (Just other, windows, Clear) -> case maybe (startWindow now pose, startWindow now other) (\(a, b) -> (addPose pose a, addPose other b)) windows of
                 (a, b)
-                    | now - windowStart a >= windowSeconds ->
+                    | now .-. windowStart a >= windowSeconds ->
                         let (belief, places) = maybe (brBelief br, brPlaces br) counted (logOdds a b)
                          in br{brBelief = belief, brCloseness = Apart, brMirror = mirror, brWindows = Nothing, brTurned = turned, brPlaces = places, brTally = tally (verdict telling a) (brTally br)}
                     | otherwise -> br{brCloseness = Apart, brMirror = mirror, brWindows = Just (a, b), brTurned = turned}
