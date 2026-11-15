@@ -67,42 +67,55 @@ newtype Quantity u = Quantity Double
 instance Show (Quantity u) where
     showsPrec d (Quantity x) = showsPrec d x
 
--- | Units: degrees of turning, mm, pixels of the camera's image, seconds,
--- and one per another.
+-- | The unit of degrees of turning.
 data Deg
 
+-- | The unit of millimetres.
 data MM
 
+-- | The unit of pixels of the camera's image.
 data Px
 
+-- | The unit of seconds.
 data Sec
 
+-- | The unit of one unit per another.
 data Per u t
 
+-- | An angle.
 type Degrees = Quantity Deg
 
+-- | A distance in the world.
 type Millimetres = Quantity MM
 
+-- | A distance in the camera's image.
 type Pixels = Quantity Px
 
+-- | A length of time.
 type Seconds = Quantity Sec
 
+-- | How fast something turns.
 type DegreesPerSecond = Quantity (Per Deg Sec)
 
+-- | How fast something moves.
 type MillimetresPerSecond = Quantity (Per MM Sec)
 
 -- | Frames are counted, not measured: a bare number of them a second.
 type FramesPerSecond = Quantity (Per () Sec)
 
+-- | A bare number taken as so many degrees.
 degrees :: Double -> Degrees
 degrees = Quantity
 
+-- | A bare number taken as so many mm.
 millimetres :: Double -> Millimetres
 millimetres = Quantity
 
+-- | A bare number taken as so many pixels.
 pixels :: Double -> Pixels
 pixels = Quantity
 
+-- | A bare number taken as so many seconds.
 seconds :: Double -> Seconds
 seconds = Quantity
 
@@ -110,18 +123,23 @@ seconds = Quantity
 perSecond :: Double -> Quantity (Per u Sec)
 perSecond = Quantity
 
+-- | An angle as a bare number of degrees, to compute with.
 inDegrees :: Degrees -> Double
 inDegrees (Quantity x) = x
 
+-- | A distance as a bare number of mm.
 inMillimetres :: Millimetres -> Double
 inMillimetres (Quantity x) = x
 
+-- | A distance in the image as a bare number of pixels.
 inPixels :: Pixels -> Double
 inPixels (Quantity x) = x
 
+-- | A time as a bare number of seconds.
 inSeconds :: Seconds -> Double
 inSeconds (Quantity x) = x
 
+-- | A rate as a bare number of its unit a second.
 inPerSecond :: Quantity (Per u Sec) -> Double
 inPerSecond (Quantity x) = x
 

@@ -10,6 +10,7 @@ module TrackKat.Stats (
 
 import Text.Printf (printf)
 
+-- | What was measured since the status line was last written.
 data Window = Window
     { wFrames :: !Int
     , wLatencyTotal :: !Double
@@ -26,6 +27,7 @@ data Window = Window
     }
     deriving (Eq, Show)
 
+-- | Nothing measured.
 emptyWindow :: Window
 emptyWindow = Window 0 0 0 0 0 0 0 0
 
@@ -42,6 +44,7 @@ sawFrame latency gap stripes w =
         , wStripesMax = max (wStripesMax w) stripes
         }
 
+-- | A packet arrived that couldn't be read.
 sawCorrupt :: Window -> Window
 sawCorrupt w = w{wCorrupt = wCorrupt w + 1}
 

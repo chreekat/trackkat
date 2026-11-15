@@ -22,16 +22,19 @@ module TrackKat.Linear (
 
 import Data.List (unsnoc)
 
+-- | A vector, or a point, by its x, y and z.
 data V3 = V3 !Double !Double !Double
     deriving (Eq, Show)
 
 infixl 6 ^+^, ^-^
 infixl 7 *^
 
+-- | The sum and the difference of two vectors.
 (^+^), (^-^) :: V3 -> V3 -> V3
 V3 a b c ^+^ V3 x y z = V3 (a + x) (b + y) (c + z)
 V3 a b c ^-^ V3 x y z = V3 (a - x) (b - y) (c - z)
 
+-- | A vector scaled by a number.
 (*^) :: Double -> V3 -> V3
 k *^ V3 x y z = V3 (k * x) (k * y) (k * z)
 
@@ -41,6 +44,7 @@ dot (V3 a b c) (V3 x y z) = a * x + b * y + c * z
 cross :: V3 -> V3 -> V3
 cross (V3 a b c) (V3 x y z) = V3 (b * z - c * y) (c * x - a * z) (a * y - b * x)
 
+-- | A vector's length.
 norm :: V3 -> Double
 norm v = sqrt (dot v v)
 
@@ -62,9 +66,11 @@ identity = M33 (V3 1 0 0) (V3 0 1 0) (V3 0 0 1)
 transpose :: M33 -> M33
 transpose (M33 (V3 a b c) (V3 d e f) (V3 g h i)) = M33 (V3 a d g) (V3 b e h) (V3 c f i)
 
+-- | A matrix applied to a column vector.
 mulMV :: M33 -> V3 -> V3
 mulMV (M33 r0 r1 r2) v = V3 (dot r0 v) (dot r1 v) (dot r2 v)
 
+-- | The matrix that applies the second matrix, then the first.
 mulMM :: M33 -> M33 -> M33
 mulMM a b = M33 (row r0) (row r1) (row r2)
   where

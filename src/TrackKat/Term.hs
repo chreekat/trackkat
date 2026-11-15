@@ -108,9 +108,11 @@ instance Show Score where
 possible :: Score
 possible = Score 0
 
+-- | What can't be.
 impossible :: Score
 impossible = Score never
 
+-- | Whether a score is 'impossible'.
 isImpossible :: Score -> Bool
 isImpossible (Score x) = x == never
 
@@ -241,6 +243,7 @@ explain t h = [(findingName f, findingScore f) | f <- findings t h]
 data Verdict = Accepted Score | Rejected [Finding]
     deriving (Eq, Show)
 
+-- | Judge a hypothesis, running every term. This is the slow path.
 verdict :: Term h -> h -> Verdict
 verdict t h = case [f | f <- found, isImpossible (findingScore f)] of
     [] -> Accepted (Score (sum (map (nats . findingScore) found)))
@@ -265,6 +268,7 @@ rejectedBy (Rejected failed) = map (brief . findingName) failed
 data Tally = Tally ![(String, Int)] ![Finding]
     deriving (Eq, Show)
 
+-- | Nothing counted.
 noTally :: Tally
 noTally = Tally [] []
 
@@ -348,5 +352,6 @@ renderScore s
     | isImpossible s = "impossible"
     | otherwise = figure (nats s) ++ " nats"
 
+-- | Findings for a developer, separated by commas.
 renderFindings :: [Finding] -> String
 renderFindings = intercalate ", " . map renderFinding
