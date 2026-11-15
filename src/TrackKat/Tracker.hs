@@ -61,7 +61,7 @@ import TrackKat.Calibration
 import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
 import TrackKat.Lights hiding (News (..))
 import qualified TrackKat.Lights as Lights
-import TrackKat.Linear (M33, dot, mulMM, mulMV, norm, normalize, transpose, (*^), (^+^), (^-^))
+import TrackKat.Linear (M33, dot, mulMM, norm, normalize, transpose, (*^), (^-^))
 import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Shape
@@ -1267,13 +1267,12 @@ step now stripes t =
             (norm . poseT)
             <> maybe mempty reach (trReference t)
       where
-        pivotAt (Pose r p) = mulMV r pivot ^+^ p
         reach ref =
             atMost (Name "turned" "turned further from where you recentered than a head turns") "degrees" maxReachTurn (\pose -> fst (poseChange pivot ref pose))
                 <> atMost (Name "aside" "too far to the side of where you recentered") "mm" maxReachMove (aside ref)
         aside ref pose =
-            let fromCamera = normalize (pivotAt ref)
-                moved = pivotAt pose ^-^ pivotAt ref
+            let fromCamera = normalize (poseAt ref pivot)
+                moved = poseAt pose pivot ^-^ poseAt ref pivot
                 back = dot moved fromCamera
              in norm (moved ^-^ back *^ fromCamera)
     seenCount c = length (catMaybes (toList (matchSights c)))

@@ -31,7 +31,7 @@ tests = group "Pose" $ do
             Nothing -> checkShowing "solve" (show (y, p, r)) False
             Just (sol, err) -> do
                 let hp = relativePose cameraLevel neck reference sol
-                    V3 ex ey ez = (mulMV (poseR truth) neck ^+^ poseT truth) ^-^ (neck ^+^ V3 0 0 700)
+                    V3 ex ey ez = poseAt truth neck ^-^ (neck ^+^ V3 0 0 700)
                 checkShowing "reprojection" (show (y, p, r, err)) (err < 1e-3)
                 check
                     ("angles " ++ show (y, p, r) ++ " got " ++ show hp)
