@@ -70,6 +70,7 @@ import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Synth
 import TrackKat.Tracker
+import TrackKat.World (clockAt)
 
 -- | A frame's time, the head's true pose, what tracking made of the frame,
 -- and the pose tracked.
@@ -138,7 +139,7 @@ trackFramesEvents = trackFramesEventsWith (lightMasking defaultConfig)
 trackFramesEventsWith :: Masking -> Model -> [(Double, Pose, [Stripe])] -> (Tracker, [(Row, [Event])])
 trackFramesEventsWith masking m = mapAccumL frame (newTracker defaultIntrinsics m masking defaultCalibration)
   where
-    frame t (time, truth, stripes) = let (t', o, evs) = step time stripes t in (t', ((time, truth, o, trackerPose t'), evs))
+    frame t (time, truth, stripes) = let (t', o, evs) = step (clockAt time) stripes t in (t', ((time, truth, o, trackerPose t'), evs))
 
 distance :: (Double, Double) -> (Double, Double) -> Double
 distance (a, b) (c, d) = sqrt ((a - c) ^ (2 :: Int) + (b - d) ^ (2 :: Int))

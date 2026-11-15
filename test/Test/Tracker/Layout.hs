@@ -21,6 +21,7 @@ import TrackKat.Tracker.Layout
 import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Trail (Recent (..))
+import TrackKat.World (clockAt, seconds)
 
 -- | Whatever blobs are tried, by layout the clip is made only of three of
 -- them that are like the clip, and what is told of a frame adds up to its
@@ -83,13 +84,14 @@ tests =
                         other -> counterexample (either explainWhy (const "found") other) False
         , testProperty "with a pose predicting, nothing is tried by layout without three big blobs, nor of more before the clip was seen" $
             \(Blobs blobs) ->
-                length (bigAmong blobs) /= 3 ==> case findHere (knowing (pure noSize) (Just facing)) 1 (lastAt facing) Nothing (sortBlobs noMask blobs) Nothing of
+                length (bigAmong blobs) /= 3 ==> case findHere (knowing (pure noSize) (Just facing)) (clockAt 1) (lastAt facing) Nothing (sortBlobs noMask blobs) Nothing of
                     Nothing -> property True
                     Just tried -> counterexample (either show (show . layoutScore) tried) False
         , testProperty "by layout with a pose predicting, the clip is refound just when no impossible jump from it, and scored no better than nothing against it" $
-            \(Apart20 placing) (Turned turn) (FrameGap dt) ->
+            \(Apart20 placing) (Turned turn) (FrameGap gap) ->
                 let was = turnedAbout pivot (rodrigues turn) (placed placing)
-                 in case findHere (knowing (pure noSize) (Just was)) 1 (lastAt was){recentTime = 1 - dt} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
+                    dt = seconds gap
+                 in case findHere (knowing (pure noSize) (Just was)) (clockAt 1) (lastAt was){recentTime = clockAt (1 - gap)} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
                         Just (Right found) ->
                             counterexample (show (layoutScore found, layoutWay found, renderFindings (layoutJump found), renderFindings (sightingJudged (layoutFound found)), afreshCost dt)) . conjoin $
                                 [ (layoutWay found == Refound) === all (not . isImpossible . findingScore) (layoutJump found)
@@ -103,14 +105,14 @@ tests =
         , testProperty "by layout, the clip where the pose predicting has it is refound" $
             \(Apart20 placing) ->
                 let was = placed placing
-                 in case findHere (knowing (pure noSize) (Just was)) 1 (lastAt was){recentTime = 1 - 1 / 120} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
+                 in case findHere (knowing (pure noSize) (Just was)) (clockAt 1) (lastAt was){recentTime = clockAt (1 - 1 / 120)} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
                         Just (Right found) -> counterexample (renderFindings (layoutJump found) ++ show (sightingPose (layoutFound found))) (layoutWay found === Refound)
                         other -> counterexample (maybe "not tried" (either show (show . layoutScore)) other) False
         , testProperty "the three blobs following took aren't tried by layout too, nor any against following with nothing against it" $
             \(Apart20 placing) (Scored scored) ->
                 let was = placed placing
                     blobs = clipBlobs headset placing
-                    tried taken = findHere (knowing (pure noSize) (Just was)) 1 (lastAt was) Nothing (sortBlobs noMask blobs) (Just taken)
+                    tried taken = findHere (knowing (pure noSize) (Just was)) (clockAt 1) (lastAt was) Nothing (sortBlobs noMask blobs) (Just taken)
                     untried = maybe (property True) (const (counterexample "tried" False))
                  in case blobs of
                         [a, b, c] -> untried (tried (Score scored, whole <$> Three a b c)) .&&. untried (tried (possible, pure Nothing))
@@ -133,7 +135,7 @@ facing = Pose identity (V3 0 0 700)
 
 -- | A pose tracked at time 1, all three reflectors showing.
 lastAt :: Pose -> Recent
-lastAt pose = Recent pose 1 1 0
+lastAt pose = Recent pose (clockAt 1) (clockAt 1) (clockAt 0)
 
 -- | Blobs in an order that doesn't go by the order they came in.
 inOrder :: [Blob] -> [(Double, Double, Int)]

@@ -11,6 +11,7 @@ import TrackKat.Linear (V3 (..), identity)
 import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
 import TrackKat.Pose (Pose (..))
 import TrackKat.Tracker.Sizes
+import TrackKat.World (inSeconds, seconds)
 
 -- | A size is in pixels at 1 m, so it says the same of a reflector
 -- wherever it was seen. Seen as a blob of its own, a reflector's latest
@@ -21,34 +22,34 @@ tests =
     testGroup
         "Sizes"
         [ testProperty "a reflector seen as a blob of its own is the size the blob shows, and usually no smaller" $
-            \(ASize size) (Own sight) (Since since) (Metres z) ->
+            \(ASize size) (Own sight) since (Metres z) ->
                 let after = resized since z size (Just sight)
                  in sizeLatest after === sightPixels sight * z * z .&&. property (sizeUsual after >= sizeLatest after)
         , testProperty "a blob says the same of its reflector's size at any distance, for the pixels it would light at 1 m" $
-            \(ASize size) (AtOneMetre atOneMetre) (Since since) (Metres z) ->
+            \(ASize size) (AtOneMetre atOneMetre) since (Metres z) ->
                 let seenAt d = resized since d size (Just (Sight (0, 0) (atOneMetre / (d * d)) Whole))
                  in close (1e-9 * atOneMetre) (sizeLatest (seenAt z)) (sizeLatest (seenAt 1))
                         .&&. close (1e-9 * (atOneMetre + sizeUsual size)) (sizeUsual (seenAt z)) (sizeUsual (seenAt 1))
         , testProperty "a reflector unseen, or sharing a blob, keeps its latest size, and its usual size only fades" $
-            \(ASize size) sight (Since since) (Metres z) ->
+            \(ASize size) sight since (Metres z) ->
                 conjoin
                     [ sizeLatest after === sizeLatest size .&&. property (sizeUsual after <= sizeUsual size && sizeUsual after >= 0)
                     | after <- [resized since z size Nothing, resized since z size (Just sight{sightKind = Merged})]
                     ]
         , testProperty "no time passing, a reflector unseen is the size it was" $
             \(ASize size) (Metres z) ->
-                let after = resized 0 z size Nothing
+                let after = resized (seconds 0) z size Nothing
                  in sizeLatest after === sizeLatest size .&&. sizeUsual after === sizeUsual size
         , testProperty "a usual size fades as much over two times as over their sum, by e in the seconds sizes are remembered" $
-            \(ASize size) (Since first) (Since second) ->
+            \(ASize size) first second ->
                 let unseen since from = resized since 1 from Nothing
-                 in close (1e-9 * sizeUsual size) (sizeUsual (unseen second (unseen first size))) (sizeUsual (unseen (first + second) size))
+                 in close (1e-9 * sizeUsual size) (sizeUsual (unseen second (unseen first size))) (sizeUsual (unseen (seconds (inSeconds first + inSeconds second)) size))
                         .&&. close (1e-9 * sizeUsual size) (sizeUsual (unseen sizeMemory size)) (sizeUsual size / exp 1)
         , testProperty "the clip has been seen once any reflector has, and not before" $
             \(Sizes sizes) (Own sight) ->
                 conjoin
                     [ everSeen (pure noSize) === False
-                    , everSeen (resized 0 1 <$> pure noSize <*> Three Nothing (Just sight) Nothing) === True
+                    , everSeen (resized (seconds 0) 1 <$> pure noSize <*> Three Nothing (Just sight) Nothing) === True
                     , everSeen sizes === any ((> 0) . sizeUsual) sizes
                     ]
         , testProperty "the biggest reflector lights, at a pose, its usual size for the distance; nothing with no pose or no reflector seen" $
@@ -71,7 +72,7 @@ tests =
                 let shared s = Just s{sightKind = Merged}
                  in property (showing sizes z (Three (shared l) (shared r) (Just top)) `elem` [AllShowing, OneBehind])
         , testProperty "the less of the clip shows, the shorter it is followed so" $
-            once (property (showingSeconds AllShowing > showingSeconds OneBehind && showingSeconds OneBehind > showingSeconds OneOut && showingSeconds OneOut > 0))
+            once (property (showingSeconds AllShowing > showingSeconds OneBehind && showingSeconds OneBehind > showingSeconds OneOut && showingSeconds OneOut > seconds 0))
         ]
 
 -- | A reflector's size: not seen yet, or seen at up to 3000 pixels at
@@ -102,14 +103,6 @@ instance Arbitrary Owns where
 
 genOwn :: Gen Sight
 genOwn = genSight 5000 `suchThat` ((/= Merged) . sightKind)
-
--- | Seconds since the last frame tracked, up to a minute.
-newtype Since = Since Double
-    deriving (Show)
-
-instance Arbitrary Since where
-    arbitrary = Since <$> oneof [pure 0, choose (0, 0.1), choose (0, 60)]
-    shrink (Since x) = Since <$> shrinkWithin (0, 60) 0 x
 
 -- | Metres from the camera, within its range.
 newtype Metres = Metres Double

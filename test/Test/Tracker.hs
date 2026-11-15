@@ -24,6 +24,7 @@ import TrackKat.Synth
 import TrackKat.Term (Bound (..), Finding (..), Measure (..), Name (..))
 import qualified TrackKat.Term as Term
 import TrackKat.Tracker
+import TrackKat.World (clockAt)
 
 tests :: TestTree
 tests = group "Tracker" $ do
@@ -32,9 +33,9 @@ tests = group "Tracker" $ do
         facing = Pose identity (V3 0 0 700)
         turned = Pose (rotYXZ 20 0 0) (V3 0 0 700)
         t0 = newTracker defaultIntrinsics headset MaskLights defaultCalibration
-        (t1, firstOut, firstEvents) = step 0 (clipAt facing) t0
-        (t2, lostOut, lostEvents) = step 0.1 (take 5 (clipAt facing)) (request Recenter t1)
-        (_, laterOut, laterEvents) = step 0.2 (clipAt turned) t2
+        (t1, firstOut, firstEvents) = step (clockAt 0) (clipAt facing) t0
+        (t2, lostOut, lostEvents) = step (clockAt 0.1) (take 5 (clipAt facing)) (request Recenter t1)
+        (_, laterOut, laterEvents) = step (clockAt 0.2) (clipAt turned) t2
     checkShowing "first frame recenters" (show (firstOut, firstEvents)) $ case (firstOut, firstEvents) of
         (Tracked{outPose = hp}, [Recentered]) -> all ((< 0.01) . abs) [yaw hp, pitch hp, roll hp]
         _ -> False
@@ -50,7 +51,7 @@ tests = group "Tracker" $ do
     let lostFor why = Lost 3 0 why Nothing
         because name = Why Following (Unfit [Finding (Name name ("it is " ++ name)) Term.impossible Nothing])
         tracked = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Followed Nothing)
-        tellings = snd . mapAccumL (\a (t, o) -> let (a', said) = absence t o a in (a', (,) t <$> said)) noAbsence
+        tellings = snd . mapAccumL (\a (t, o) -> let (a', said) = absence (clockAt t) o a in (a', (,) t <$> said)) noAbsence
         outcomeAt t
             | t < 2 = tracked
             | t < 8 = lostFor (because "aside")

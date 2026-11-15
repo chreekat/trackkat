@@ -55,6 +55,7 @@ import TrackKat.Frame (Stripe (..))
 import TrackKat.Number (parseExact, parseNatural, renderExact)
 import TrackKat.Pose (Intrinsics (..))
 import TrackKat.Tracker
+import TrackKat.World (Instant, clockAt)
 
 -- Note [Recording format]
 -- ~~~~~~~~~~~~~~~~~~~~~~~
@@ -145,10 +146,10 @@ data Recording = Recording
     }
     deriving (Eq, Show)
 
--- | The tracker's time, in seconds, for nanoseconds on the monotonic clock,
--- as 'GHC.Clock.getMonotonicTime' gives it.
-trackerTime :: Word64 -> Double
-trackerTime ns = fromIntegral ns / 1e9
+-- | The tracker's time for nanoseconds on the monotonic clock: the moment
+-- 'GHC.Clock.getMonotonicTime' tells as as many seconds.
+trackerTime :: Word64 -> Instant
+trackerTime ns = clockAt (fromIntegral ns / 1e9)
 
 -- | Seconds since a recording's start.
 secondsSince :: Start -> Word64 -> Double

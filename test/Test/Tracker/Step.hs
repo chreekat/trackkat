@@ -12,6 +12,7 @@ import TrackKat.Frame (frameHeight, frameWidth)
 import TrackKat.Pose
 import TrackKat.Synth (Disc, allLit, pointDiscs, renderDiscs)
 import TrackKat.Tracker
+import TrackKat.World (clockAt)
 
 -- | Whatever a frame shows, every blob of it is accounted for, and what
 -- was asked for is done on the first frame tracked and not before.
@@ -23,7 +24,7 @@ tests =
             \scene ->
                 let stripes = renderDiscs (discs scene)
                     blobs = findBlobs stripes
-                    (after, outcome, _) = step 0 stripes fresh
+                    (after, outcome, _) = step (clockAt 0) stripes fresh
                     taken = trackerBlobs after
                     reflectors = length [() | (_, ReflectorBlob) <- taken]
                  in map fst taken === blobs .&&. case outcome of
@@ -36,7 +37,7 @@ tests =
                                 ]
         , testProperty "the first frame tracked recenters on its own pose, and a frame not tracked does nothing asked for" $
             \scene ->
-                case step 0 (renderDiscs (discs scene)) fresh of
+                case step (clockAt 0) (renderDiscs (discs scene)) fresh of
                     (after, Tracked{outPose = HeadPose y p r x up z}, events) ->
                         conjoin
                             [ counterexample (show events) (case events of [Recentered] -> True; _ -> False)
@@ -47,7 +48,7 @@ tests =
                         counterexample (show events) (null events) .&&. property (isNothing (trackerCentre after) && isNothing (trackerPose after))
         , testProperty "the clip alone in view, facing the camera within 20 degrees, is tracked from the first frame" $
             \(Apart20 placing) ->
-                case step 0 (renderDiscs (discs (Scene (Just placing) []))) fresh of
+                case step (clockAt 0) (renderDiscs (discs (Scene (Just placing) []))) fresh of
                     (_, Tracked{outSeen = seen, outChosen = chosen}, _) -> seen === Seen [] 0 0 0 .&&. chosen === Chosen FoundAfresh Nothing
                     (_, Lost{outWhy = why}, _) -> counterexample (explainWhy why) False
         ]

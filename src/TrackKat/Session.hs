@@ -63,6 +63,7 @@ import TrackKat.Tracker (
     trackerShape,
  )
 import qualified TrackKat.Tracker as Tracker
+import TrackKat.World (Instant, inClockSeconds)
 
 -- Note [What a session promises]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -162,7 +163,7 @@ data Event
       -- times games have asked to recenter so far
       ControlsPolled [Hotkey] Int
     | -- | a frame arrived at this time, in seconds
-      FrameArrived Double [Stripe]
+      FrameArrived Instant [Stripe]
     | -- | a packet from the camera was dropped as corrupt, and why
       PacketCorrupt String
     | RecenterAsked
@@ -267,7 +268,7 @@ recenter s = (lost s{sTracker = request Recenter (sTracker s), sTrim = NoTrim}, 
 
 -- | Track a frame, shape the view it gives, and send games the view, or
 -- the pose held.
-frame :: Double -> [Stripe] -> Session -> (Session, [Effect])
+frame :: Instant -> [Stripe] -> Session -> (Session, [Effect])
 frame now stripes s =
     ( s'
     , told
@@ -296,7 +297,7 @@ frame now stripes s =
         | any resetsShaping events = newShaper
         | otherwise = sShaper s
     (latest, shaper') = case outcome of
-        Tracked{outPose = hp} -> shape (response (sSettings s)) (sTrim s) now hp shaper
+        Tracked{outPose = hp} -> shape (response (sSettings s)) (sTrim s) (inClockSeconds now) hp shaper
         Lost{} -> (sLatest s, shaper)
     (absent, outOfSight) = absence now outcome (sAbsence s)
     s' = s{sTracker = tracker, sShaper = shaper', sOutcome = Just outcome, sLatest = latest, sAbsence = absent}

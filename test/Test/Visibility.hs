@@ -14,6 +14,7 @@ import TrackKat.Pose
 import TrackKat.Synth
 import TrackKat.Tracker
 import TrackKat.Visibility
+import TrackKat.World (clockAt)
 
 -- | The configured clip, its reflectors tape on tabs.
 tabs :: Model
@@ -57,7 +58,7 @@ simulations = group "Visibility" $ do
         path = [(t, headPose userCamera (clipWear temple) (turning t) (5 * sin (2 * pi * t / 5)) 0) | t <- framesAt 60 24]
         shown pose = length (clipDiscsOnHead defaultIntrinsics temple truthHead allLit pose)
         frames = [(t, pose, renderDiscs (jitter 0.3 i (clipDiscsOnHead defaultIntrinsics temple truthHead allLit pose))) | (i, (t, pose)) <- zip [0 ..] path]
-        rows = map fst (snd (mapAccumL (\tr (t, truth, stripes) -> let (tr', o, evs) = step t stripes tr in (tr', ((t, truth, o, trackerPose tr'), evs))) (newTracker defaultIntrinsics tabs MaskLights learnt) frames))
+        rows = map fst (snd (mapAccumL (\tr (t, truth, stripes) -> let (tr', o, evs) = step (clockAt t) stripes tr in (tr', ((t, truth, o, trackerPose tr'), evs))) (newTracker defaultIntrinsics tabs MaskLights learnt) frames))
         hiddenFrames = length [() | (_, pose) <- path, shown pose < 3]
         lostInSight = [t | ((t, truth, Lost{}, _), _) <- zip rows path, shown truth == 3]
     checkShowing "turning far with the clip on the side of the head, hidden in" (show hiddenFrames ++ " frames, lost in sight at " ++ show (take 3 lostInSight) ++ ", off by " ++ show (worstError rows)) $

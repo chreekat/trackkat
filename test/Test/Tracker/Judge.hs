@@ -16,6 +16,7 @@ import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize, siz
 import TrackKat.Pose
 import TrackKat.Term
 import TrackKat.Tracker.Judge
+import TrackKat.World (Seconds, inSeconds, seconds)
 
 -- Note [What the tracker's terms promise]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -28,8 +29,8 @@ import TrackKat.Tracker.Judge
 -- refuses scores as badly as the gate's own limit.
 tests :: TestTree
 tests = group "Judge" $ do
-    checkShowing "finding afresh gives up, a frame, 0.1 s and 0.5 s after the last pose" (show (map afreshCost [1 / 120, 0.1, 0.5])) $
-        and (zipWith (\gave roughly -> abs (gave - roughly) < 0.05) (map afreshCost [1 / 120, 0.1, 0.5]) [22.4, 7.5, 1.8])
+    checkShowing "finding afresh gives up, a frame, 0.1 s and 0.5 s after the last pose" (show (map (afreshCost . seconds) [1 / 120, 0.1, 0.5])) $
+        and (zipWith (\gave roughly -> abs (gave - roughly) < 0.05) (map (afreshCost . seconds) [1 / 120, 0.1, 0.5]) [22.4, 7.5, 1.8])
     tree gates
     tree scores
 
@@ -40,7 +41,7 @@ gates =
         [ testProperty "a jump that is possible is possible of a pose that turned and moved less, and after longer" $
             \(Jump (turn, move, dt)) (Fraction less) (Fraction longer) ->
                 let jumped = Moved facing 0 turn move
-                 in accepts (jumpable dt) jumped ==> accepts (jumpable (dt + longer)) jumped{movedTurn = less * turn, movedMove = less * move}
+                 in accepts (jumpable dt) jumped ==> accepts (jumpable (dt `longerBy` seconds longer)) jumped{movedTurn = less * turn, movedMove = less * move}
         , testProperty "a jump is possible just when neither the turn nor the move is past what a head does in the time" $
             \(Jump (turn, move, dt)) ->
                 accepts (jumpable dt) (Moved facing 0 turn move) === (turn <= maxTurn dt && move <= maxMove dt)
@@ -102,29 +103,29 @@ scores =
                         | (name, term) <- [("misfit", misfit), ("continuing", continuing dt), ("anywhere", anywhere reach dt), ("blobs", blobsSay sizes (placed placing) sights)]
                         ]
         , testProperty "a pose that neither turned nor moved continues the last as well as any can" $
-            \(Gap dt) -> score (continuing dt) (Moved facing 0 0 0) === possible
+            \dt -> score (continuing dt) (Moved facing 0 0 0) === possible
         , testProperty "a pose continues the last no better for turning or moving further, and no worse for longer between" $
             \(Jump (turn, move, dt)) (Fraction less) (Fraction longer) ->
                 let jumped = Moved facing 0 turn move
                     nearer = jumped{movedTurn = less * turn, movedMove = less * move}
-                 in property (score (continuing dt) jumped <= score (continuing dt) nearer && score (continuing dt) jumped <= score (continuing (dt + longer)) jumped)
+                 in property (score (continuing dt) jumped <= score (continuing dt) nearer && score (continuing dt) jumped <= score (continuing (dt `longerBy` seconds longer)) jumped)
         , testProperty "a pose fits no better for fitting worse, and one that fits exactly has nothing against it" $
             \(Fit fit) (Fraction less) ->
                 property (score misfit (Moved facing fit 0 0) <= score misfit (Moved facing (less * fit) 0 0)) .&&. score misfit (Moved facing 0 0 0) === possible
         , testProperty "finding afresh gives up something, less the longer since the last pose, and the same within a frame of it" $
-            \(Gap dt) (Fraction longer) ->
+            \dt longer (Fraction inFrame) ->
                 conjoin
                     [ property (afreshCost dt >= 0)
-                    , property (afreshCost (dt + longer) <= afreshCost dt)
-                    , afreshCost (dt / 240) === afreshCost (1 / 120)
+                    , property (afreshCost (dt `longerBy` longer) <= afreshCost dt)
+                    , afreshCost (seconds (inFrame / 120)) === afreshCost (seconds (1 / 120))
                     ]
         , testProperty "a head anywhere scores what finding afresh gives up, and no better for where it was recentered" $
-            \(SeenTurned placing) (CentredAt centre) (Gap dt) ->
+            \(SeenTurned placing) (CentredAt centre) dt ->
                 let moved = Moved (placed placing) 0 0 0
                  in score (anywhere (Reach pivot Nothing) dt) moved === Score (negate (afreshCost dt))
                         .&&. property (score (anywhere (Reach pivot (placed <$> centre)) dt) moved <= Score (negate (afreshCost dt)))
         , testProperty "a pose that stayed where it was is never likelier anywhere than continuing" $
-            \(SeenTurned placing) (CentredAt centre) (Gap dt) ->
+            \(SeenTurned placing) (CentredAt centre) dt ->
                 let still = Moved (placed placing) 0 0 0
                  in property (score (continuing dt) still >= score (anywhere (Reach pivot (placed <$> centre)) dt) still)
         , testProperty "sizes say nothing before the clip has been seen, nor of a reflector unseen or sharing a blob" $
@@ -157,6 +158,10 @@ scores =
 facing :: Pose
 facing = Pose identity (V3 0 0 700)
 
+-- | A length of time longer by another.
+longerBy :: Seconds -> Seconds -> Seconds
+longerBy dt longer = seconds (inSeconds dt + inSeconds longer)
+
 -- | Where the head turns about, in the clip's axes.
 pivot :: V3
 pivot = V3 0 100 100
@@ -164,27 +169,19 @@ pivot = V3 0 100 100
 -- | Degrees turned and mm moved, up to twice the most a head does in a
 -- frame, in up to half a second. Simplest none of them, and simpler with
 -- no turn, no move, or no time.
-newtype Jump = Jump (Double, Double, Double)
+newtype Jump = Jump (Double, Double, Seconds)
     deriving (Show)
 
 instance Arbitrary Jump where
-    arbitrary = Jump <$> ((,,) <$> choose (0, 2 * maxTurn 0) <*> choose (0, 2 * maxMove 0) <*> choose (0, 0.5))
+    arbitrary = Jump <$> ((,,) <$> choose (0, 2 * maxTurn (seconds 0)) <*> choose (0, 2 * maxMove (seconds 0)) <*> (seconds <$> choose (0, 0.5)))
     shrink (Jump jump) =
         Jump
             <$> shrinkParts
                 [ \(turn, move, dt) -> [(0, move, dt) | turn /= 0]
                 , \(turn, move, dt) -> [(turn, 0, dt) | move /= 0]
-                , \(turn, move, dt) -> [(turn, move, 0) | dt /= 0]
+                , \(turn, move, dt) -> [(turn, move, seconds 0) | dt /= seconds 0]
                 ]
                 jump
-
--- | Seconds since the last pose, while it predicts.
-newtype Gap = Gap Double
-    deriving (Show)
-
-instance Arbitrary Gap where
-    arbitrary = Gap <$> choose (0, 0.5)
-    shrink (Gap x) = Gap <$> shrinkWithin (0, 0.5) 0 x
 
 -- | A pose of the headset clip that the camera sees whole, from 100 mm to
 -- 3 m off, nearer and farther than a clip is tracked, turned up to 150

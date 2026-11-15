@@ -26,6 +26,7 @@ import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Sizes (everSeen)
 import TrackKat.Tracker.Trail (Recent (..))
+import TrackKat.World (Instant, (.-.))
 
 -- | Up to how many of the heaviest big blobs, when there are more than
 -- three, are searched for the only three laid out like the clip; and up
@@ -131,7 +132,7 @@ data Layout a = Layout
 -- one told: with a pose to go on, the sizes the reflectors had and where
 -- the clip was say which three, where finding afresh without one wants
 -- just one such three.
-findHere :: Known -> Double -> Recent -> Maybe Recent -> Shown -> Maybe (Score, Three (Maybe Sight)) -> Maybe (Either Reason (Layout Sighting))
+findHere :: Known -> Instant -> Recent -> Maybe Recent -> Shown -> Maybe (Score, Three (Maybe Sight)) -> Maybe (Either Reason (Layout Sighting))
 findHere known now r left shown taken = case (lefts tried, sortOn (negate . nats . layoutScore) (rights tried)) of
     (_, best : _) -> Just (Right best)
     (reason : _, []) -> Just (Left reason)
@@ -154,13 +155,13 @@ findHere known now r left shown taken = case (lefts tried, sortOn (negate . nats
 
 -- | Three blobs as the clip, with a pose still predicting, as 'findHere'
 -- tells it.
-foundHere :: Known -> Double -> Recent -> Maybe Recent -> Shown -> [Blob] -> Either Reason (Layout Sighting)
+foundHere :: Known -> Instant -> Recent -> Maybe Recent -> Shown -> [Blob] -> Either Reason (Layout Sighting)
 foundHere known now r left shown three = do
     (Found pose blobs, fit, judged) <- asClip known three
-    let dt = now - recentTime r
+    let dt = now .-. recentTime r
         reach = knownReach known
         sights = whole <$> blobs
-        -- The pose as moved from another, so many seconds before: whether
+        -- The pose as moved from another, so long before: whether
         -- that isn't an impossible jump, how likely it is, as continuing
         -- it or as anywhere, whichever makes it likelier, and what the
         -- jump was judged to be.
@@ -169,7 +170,7 @@ foundHere known now r left shown three = do
                 moved = Moved pose fit turn move
                 likelier = if score (continuing since) moved >= score (anywhere reach dt) moved then continuing since else anywhere reach dt
              in (accepts (jumpable since) moved, about (const moved) likelier, findings (jumpable since) moved)
-        (way, prior, jump) = case (from r dt, (\was -> from was (now - recentTime was)) <$> left) of
+        (way, prior, jump) = case (from r dt, (\was -> from was (now .-. recentTime was)) <$> left) of
             ((True, continued, jumped), _) -> (Refound, continued, jumped)
             (_, Just (True, continued, jumped)) -> (Resumed, continued, jumped)
             ((False, _, jumped), _) -> (FoundAfresh, anywhere reach dt, jumped)

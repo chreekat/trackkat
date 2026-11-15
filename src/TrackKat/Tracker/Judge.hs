@@ -45,7 +45,7 @@ import TrackKat.Linear (V3, dot, norm, normalize, (*^), (^-^))
 import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Term
-import TrackKat.World (Seconds, World (..), during, inDegrees, inMillimetres, inPerSecond, inPixels, seconds, times, world)
+import TrackKat.World (Seconds, World (..), during, inDegrees, inMillimetres, inPerSecond, inPixels, inSeconds, seconds, times, world)
 
 -- | What says where a head can be.
 data Reach = Reach
@@ -75,27 +75,27 @@ metres :: Pose -> Double
 metres pose = norm (poseT pose) / 1000
 
 -- | The most a head turns (degrees) and moves (mm, at its pivot) between
--- frames the given number of seconds apart: from one frame to the next,
+-- frames the given time apart: from one frame to the next,
 -- the world's 'headStepTurn' and 'headStepMove', which is what the shaping
 -- for games allows, and more the longer apart, by its 'headTurnRate' and
 -- 'headMoveRate'. A bigger jump means the blobs were matched to the wrong
 -- reflectors.
-maxTurn, maxMove :: Double -> Double
-maxTurn dt = inDegrees (headStepTurn world) + inPerSecond (headTurnRate world) * dt
-maxMove dt = inMillimetres (headStepMove world) + inPerSecond (headMoveRate world) * dt
+maxTurn, maxMove :: Seconds -> Double
+maxTurn dt = inDegrees (headStepTurn world) + inPerSecond (headTurnRate world) * inSeconds dt
+maxMove dt = inMillimetres (headStepMove world) + inPerSecond (headMoveRate world) * inSeconds dt
 
 -- | The spreads of how far a head turns (degrees) and its pivot moves (mm)
--- in the given seconds: the world's 'headTurnSpeed' and 'headMoveSpeed'
--- for that long, or for a frame if that is longer.
-turnSpread, moveSpread :: Double -> Double
+-- in the given time: the world's 'headTurnSpeed' and 'headMoveSpeed' for
+-- that long, or for a frame if that is longer.
+turnSpread, moveSpread :: Seconds -> Double
 turnSpread dt = inDegrees (headTurnSpeed world `during` sinceSeen dt)
 moveSpread dt = inMillimetres (headMoveSpeed world `during` sinceSeen dt)
 
-sinceSeen :: Double -> Seconds
-sinceSeen dt = seconds (max dt (1 / inPerSecond (frameRate world)))
+sinceSeen :: Seconds -> Seconds
+sinceSeen dt = max dt (seconds (1 / inPerSecond (frameRate world)))
 
--- | How much likelier, in nats, a pose is where a pose so many seconds
--- before says it most likely is than where a head most likely is with
+-- | How much likelier, in nats, a pose is where a pose so long before
+-- says it most likely is than where a head most likely is with
 -- nothing known of where it was: what finding the clip afresh gives up
 -- (see Note [Following or finding afresh] in "TrackKat.Tracker.Choose").
 --
@@ -106,7 +106,7 @@ sinceSeen dt = seconds (max dt (1 / inPerSecond (frameRate world)))
 -- 'farthest') against a gaussian of 'moveSpread' each way. Neither is
 -- less than nothing: after long enough, a pose says no more than that the
 -- head is somewhere.
-afreshCost :: Double -> Double
+afreshCost :: Seconds -> Double
 afreshCost dt = 3 * log (max 1 (inDegrees (headTurnSpread world) / turnSpread dt)) + log (max 1 (box / (moveSpread dt * sqrt (2 * pi)) ^ (3 :: Int)))
   where
     box = (2 * maxReachMove) ^ (2 :: Int) * (farthest - nearest)
@@ -161,9 +161,8 @@ canBeThere (Reach pivot centre) =
             back = dot moved fromCamera
          in norm (moved ^-^ back *^ fromCamera)
 
--- | A pose isn't an impossible jump from the last, so many seconds
--- before.
-jumpable :: Double -> Term Moved
+-- | A pose isn't an impossible jump from the last, so long before.
+jumpable :: Seconds -> Term Moved
 jumpable dt =
     gate
         (Name "turn" "the head would have turned faster than heads turn")
@@ -174,9 +173,9 @@ jumpable dt =
             (\moved -> movedMove moved / maxMove dt <= 1)
             (\moved -> Measure (movedMove moved) AtMost (maxMove dt) "mm")
 
--- | A pose follows the last, so many seconds before: it fits what was
--- seen, it isn't an impossible jump, and it is somewhere a head can be.
-followable :: Reach -> Double -> Term Moved
+-- | A pose follows the last, so long before: it fits what was seen, it
+-- isn't an impossible jump, and it is somewhere a head can be.
+followable :: Reach -> Seconds -> Term Moved
 followable reach dt =
     atMost (Name "fit" "the lights in view don't fit the clip's shape") "px" maxFit movedFit
         <> jumpable dt
@@ -211,16 +210,16 @@ misfit :: Term Moved
 misfit = gaussian (Name "misfit" "the lights in view don't quite fit the clip's shape") "px" (inPixels (centroidNoise world) / sqrt 3) movedFit
 
 -- | How likely a head turned and moved as far as a pose is from the
--- last, so many seconds before.
-continuing :: Double -> Term Moved
+-- last, so long before.
+continuing :: Seconds -> Term Moved
 continuing dt =
     gaussian (Name "turning" "the head would have turned faster than heads mostly turn") "degrees" (turnSpread dt) movedTurn
         <> gaussian (Name "moving" "the head would have moved faster than heads mostly move") "mm" (moveSpread dt) movedMove
 
 -- | How likely a head is at a pose with nothing known of where it was,
--- beside how likely one followed for so many seconds is where it was:
--- anywhere it can be, and turned from the centre as heads are.
-anywhere :: Reach -> Double -> Term Moved
+-- beside how likely one followed for so long is where it was: anywhere it
+-- can be, and turned from the centre as heads are.
+anywhere :: Reach -> Seconds -> Term Moved
 anywhere (Reach pivot centre) dt =
     cost (Name "afresh" "nothing says where the clip would be") (const (afreshCost dt))
         <> maybe mempty (\ref -> gaussian (Name "reach" "turned further than heads mostly turn") "degrees" (inDegrees (headTurnSpread world)) (\moved -> fst (poseChange pivot ref (movedPose moved)))) centre

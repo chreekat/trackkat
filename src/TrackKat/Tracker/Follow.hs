@@ -25,6 +25,7 @@ import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Sizes
 import TrackKat.Tracker.Trail (Recent (..))
+import TrackKat.World (Instant, inSeconds, (.-.))
 
 -- | Up to how many matches as good as the best are tried when the best
 -- is an impossible jump.
@@ -40,7 +41,7 @@ jumpRetries = 5
 -- When none is followed, the reason is the best match's; or, if there is
 -- no match to try, that the best there would be shows too little of the
 -- clip for too long, if there is one.
-follow :: Known -> Double -> Recent -> Shown -> Either Why (Score, Sighting)
+follow :: Known -> Instant -> Recent -> Shown -> Either Why (Score, Sighting)
 follow known now r shown =
     case candidates of
         [] -> Left . Why Following $ case allMatches of
@@ -58,7 +59,7 @@ follow known now r shown =
     m = knownClip known
     sizes = knownSizes known
     reach = knownReach known
-    dt = now - recentTime r
+    dt = now .-. recentTime r
     allMatches = matches k m (recentPose r) sizes (shownVisible shown)
     candidates = filter (accepts stillShowing) allMatches
     stillShowing = partlySeen sizes now r
@@ -85,12 +86,12 @@ follow known now r shown =
 -- | The clip is followed showing less than all three reflectors only for
 -- so long since all three last showed (see 'showingSeconds'), given the
 -- reflectors' sizes, the time, and the pose followed.
-partlySeen :: Three Size -> Double -> Recent -> Term Match
+partlySeen :: Three Size -> Instant -> Recent -> Term Match
 partlySeen sizes now r =
     gate
         (Name "partly seen" "a reflector has been out of sight for too long")
-        (\c -> now - recentAllSeen r <= allowed c)
-        (\c -> Measure (now - recentAllSeen r) AtMost (allowed c) "s")
+        (\c -> now .-. recentAllSeen r <= allowed c)
+        (\c -> Measure (inSeconds (now .-. recentAllSeen r)) AtMost (inSeconds (allowed c)) "s")
   where
     allowed c = showingSeconds (showing sizes (metres (recentPose r)) (matchSights c))
 
@@ -118,9 +119,9 @@ observations sizes z c = catMaybes (toList (observe <$> reflectors <*> sizes <*>
 -- view near where they are predicted, and what that scores, each of them
 -- out of sight; impossible once the clip has shown less than all three for
 -- longer than it may.
-stillThere :: Intrinsics -> Model -> Double -> Recent -> [Blob] -> (Int, Score)
+stillThere :: Intrinsics -> Model -> Instant -> Recent -> [Blob] -> (Int, Score)
 stillThere k m now r visible
-    | now - recentAllSeen r > showingSeconds OneOut = (missing, impossible)
+    | now .-. recentAllSeen r > showingSeconds OneOut = (missing, impossible)
     | otherwise = (missing, Score (fromIntegral missing * nats unseenScore))
   where
     -- Reflectors with a blob near their place, but no more of them than

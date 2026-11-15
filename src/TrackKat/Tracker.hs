@@ -89,6 +89,7 @@ import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Sizes
 import TrackKat.Tracker.Still
 import TrackKat.Tracker.Trail
+import TrackKat.World (Instant, seconds, (.-.))
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
@@ -174,8 +175,8 @@ setModel m t = request Recenter t{trClip = m, trTrail = noTrail, trLearners = ch
 -- kept are given of it.
 data Look
     = Look
-        -- | when it was seen, in seconds
-        Double
+        -- | when it was seen
+        Instant
         -- | its blobs, heaviest first
         [Blob]
         -- | how the lights learnt sort them
@@ -185,9 +186,9 @@ data Look
         -- | what the blobs are judged against
         Known
 
--- | Handle one frame's stripes, seen at the given time in seconds. Pending
--- requests wait for a frame where the clip is tracked.
-step :: Double -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
+-- | Handle one frame's stripes, seen at the given time. Pending requests
+-- wait for a frame where the clip is tracked.
+step :: Instant -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
 step now stripes t = case makeOut known now from shown of
     Left (why, held) -> unseenFrame look why held t
     Right (chosen, sighting) -> seenFrame look chosen sighting t
@@ -269,7 +270,7 @@ seenFrame (Look now blobs shown from known) chosen@(Chosen way _) (Sighting seen
     Told pose centre fix evidence = tellApart k m pivot now clear seenPose sights (Centre (centrePose (trCentre t)) believed)
     correcting = fix /= MirrorNeither
     recent = Recent pose now (if showing (trSizes t) (metres seenPose) sights == AllShowing then now else maybe now recentAllSeen lastTracked) since
-    sizes = resized (maybe 0 (\r -> now - recentTime r) lastTracked) (metres pose) <$> trSizes t <*> sights
+    sizes = resized (maybe (seconds 0) (\r -> now .-. recentTime r) lastTracked) (metres pose) <$> trSizes t <*> sights
     ((asked, restarted), requested) = mapAccumL (carryOut now pose) (centre, if correcting then startOver (trLearners t) else trLearners t) (trPending t)
     ref = fromMaybe pose (centrePose asked)
     -- What was believed of a pose left behind was believed of the centre
@@ -293,6 +294,6 @@ seenFrame (Look now blobs shown from known) chosen@(Chosen way _) (Sighting seen
 
 -- | Carry out a request at the given time, on a frame tracked at the
 -- given pose: what it changes, and the event that says so.
-carryOut :: Double -> Pose -> (Centre, Learners) -> Request -> ((Centre, Learners), Event)
+carryOut :: Instant -> Pose -> (Centre, Learners) -> Request -> ((Centre, Learners), Event)
 carryOut _ pose (centre, learners) Recenter = ((recenterOn pose centre, learners), Recentered)
 carryOut now _ (centre, learners) Calibrate = ((centre, startSweep now learners), CalibrationStarted)
