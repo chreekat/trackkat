@@ -15,6 +15,7 @@ import qualified Test.Tracker.Judge
 import qualified Test.Tracker.Kept
 import qualified Test.Tracker.Layout
 import qualified Test.Tracker.Sizes
+import qualified Test.Tracker.Step
 import qualified Test.Tracker.Trail
 import TrackKat.Calibration
 import TrackKat.Linear
@@ -76,6 +77,7 @@ tests = group "Tracker" $ do
     tree Test.Tracker.Follow.tests
     tree Test.Tracker.Choose.tests
     tree Test.Tracker.Kept.tests
+    tree Test.Tracker.Step.tests
 
 simulations :: TestTree
 simulations = testGroup "Tracker" [followed, explained]
