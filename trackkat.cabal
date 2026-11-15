@@ -155,6 +155,7 @@ test-suite tests
     Test.Gen
     Test.Icons
     Test.Idle
+    Test.Instances
     Test.Level
     Test.Linear
     Test.Lights

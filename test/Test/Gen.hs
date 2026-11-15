@@ -6,6 +6,14 @@ module Test.Gen (
     closeV,
     closeM,
 
+    -- * Numbers and choices
+    shrinkWithin,
+    shrinkFrom,
+    earlier,
+    forAnyOrder,
+    forSomeOf,
+    forOneOf,
+
     -- * Vectors and turns
     genV3,
     shrinkV3,
@@ -14,6 +22,7 @@ module Test.Gen (
     genTurn,
     shrinkTurn,
     degreesOf,
+    Turn (..),
 
     -- * Poses
     Placing (..),
@@ -26,6 +35,11 @@ module Test.Gen (
     inView,
     movedCamera,
     turnedAbout,
+    SeenWhole (..),
+
+    -- * Beliefs
+    genWeights,
+    shares,
 
     -- * What the camera shows
     clipBlobs,
@@ -39,6 +53,7 @@ module Test.Gen (
     shrinkSight,
     genThree,
     shrinkThree,
+    Sizes (..),
 
     -- * Settings
     genWritten,
@@ -48,11 +63,14 @@ module Test.Gen (
     shrinkBinding,
     genConfig,
     shrinkConfig,
+    Sayable (..),
 ) where
 
 import Data.Maybe (fromMaybe)
 import Test.Tasty.QuickCheck
 
+import Test.Simulation (headset)
+import TrackKat.Belief (Belief (..))
 import TrackKat.Config
 import TrackKat.Frame (Blob (..), frameHeight, frameWidth)
 import TrackKat.Lights (Masking (..))
@@ -78,6 +96,40 @@ closeV slack a b =
 -- | That each row of two matrices is within a tolerance of the other's.
 closeM :: Double -> M33 -> M33 -> Property
 closeM slack (M33 a b c) (M33 x y z) = conjoin [closeV slack a x, closeV slack b y, closeV slack c z]
+
+-- * Numbers and choices
+
+-- | Numbers of a range simpler than one of them: the simplest of the
+-- range, and the whole number toward nothing, where the range has it.
+shrinkWithin :: (Double, Double) -> Double -> Double -> [Double]
+shrinkWithin (least, most) simplest x =
+    [simplest | x /= simplest]
+        ++ [whole | let whole = fromIntegral (truncate x :: Int), whole /= x, whole /= simplest, whole >= least, whole <= most]
+
+-- | Whole numbers nearer the least of a range.
+shrinkFrom :: Int -> Int -> [Int]
+shrinkFrom least n = map (+ least) (shrink (n - least))
+
+-- | The values that come before one in a list of them all, as simpler.
+earlier :: (Eq a) => [a] -> a -> [a]
+earlier every x = takeWhile (/= x) every
+
+-- | That something holds of a list in any order; simplest in the order it
+-- came.
+forAnyOrder :: (Eq a, Show a, Testable prop) => [a] -> ([a] -> prop) -> Property
+forAnyOrder xs = forAllShrink (shuffle xs) (\shuffled -> [xs | shuffled /= xs])
+
+-- | That something holds of any of a list's members, in their order;
+-- simpler of fewer.
+forSomeOf :: (Show a, Testable prop) => [a] -> ([a] -> prop) -> Property
+forSomeOf xs = forAllShrink (sublistOf xs) (shrinkList (const []))
+
+-- | That something holds of each of a list's members; the earlier ones
+-- simpler.
+forOneOf :: (Eq a, Show a, Testable prop) => [a] -> (a -> prop) -> Property
+forOneOf xs = forAllShrink (elements xs) (earlier xs)
+
+-- * Vectors and turns
 
 -- | A vector with each component no bigger than the given size.
 genV3 :: Double -> Gen V3
@@ -112,6 +164,14 @@ shrinkTurn w = [V3 0 0 0 | norm w > 0] ++ [0.5 *^ w | norm w > 1e-3] ++ [w' | w'
 degreesOf :: V3 -> Double
 degreesOf w = norm w * 180 / pi
 
+-- | Any turn, of up to half a turn (see 'genTurn').
+newtype Turn = Turn V3
+    deriving (Show)
+
+instance Arbitrary Turn where
+    arbitrary = Turn <$> genTurn 180
+    shrink (Turn w) = Turn <$> shrinkTurn w
+
 -- * Poses
 
 -- | A pose as what to make it from: its turn, as 'genTurn' gives one, and
@@ -130,6 +190,11 @@ genPlacing size = Placing <$> genTurn 180 <*> genV3 size
 -- | Motions that turn less and move less.
 shrinkPlacing :: Placing -> [Placing]
 shrinkPlacing (Placing turn at) = [Placing turn' at | turn' <- shrinkTurn turn] ++ [Placing turn at' | at' <- shrinkV3 at]
+
+-- | Up to two metres each way.
+instance Arbitrary Placing where
+    arbitrary = genPlacing 2000
+    shrink = shrinkPlacing
 
 -- | The nearest and farthest the world has a clip tracked, mm.
 trackedRange :: (Double, Double)
@@ -166,6 +231,16 @@ shrinkSeen :: Model -> Placing -> [Placing]
 shrinkSeen m (Placing turn at@(V3 _ _ z)) =
     filter (inView m) ([Placing turn' at | turn' <- shrinkTurn turn] ++ [Placing turn (V3 0 0 z) | at /= V3 0 0 z])
 
+-- | A pose of the headset clip that the camera sees whole, within the
+-- range the clip is tracked in, turned up to 60 degrees from squarely
+-- facing the camera.
+newtype SeenWhole = SeenWhole Placing
+    deriving (Show)
+
+instance Arbitrary SeenWhole where
+    arbitrary = SeenWhole <$> genSeen 60 trackedRange headset
+    shrink (SeenWhole placing) = SeenWhole <$> shrinkSeen headset placing
+
 -- | A pose as a camera itself moved would see it: the motion after the
 -- pose.
 movedCamera :: Pose -> Pose -> Pose
@@ -177,6 +252,20 @@ turnedAbout :: V3 -> M33 -> Pose -> Pose
 turnedAbout pivot turn pose@(Pose r _) = Pose turned (poseAt pose pivot ^-^ mulMV turned pivot)
   where
     turned = turn `mulMM` r
+
+-- * Beliefs
+
+-- | Four weights, of which the first isn't nothing.
+genWeights :: Gen Belief
+genWeights = Belief <$> choose (0.01, 1) <*> weight <*> weight <*> weight
+  where
+    weight = oneof [pure 0, choose (0, 1)]
+
+-- | Weights as shares of their sum, which are a belief.
+shares :: Belief -> Belief
+shares b = Belief (bothTrue b / whole) (referenceMirrored b / whole) (trackedMirrored b / whole) (bothMirrored b / whole)
+  where
+    whole = bothTrue b + referenceMirrored b + trackedMirrored b + bothMirrored b
 
 -- * What the camera shows
 
@@ -240,6 +329,15 @@ shrinkSizes :: Three Size -> [Three Size]
 shrinkSizes sizes =
     [pure noSize | any ((> 0) . sizeUsual) sizes]
         ++ [settled | let settled = (\s -> s{sizeUsual = sizeLatest s}) <$> sizes, or ((/=) <$> (sizeUsual <$> sizes) <*> (sizeUsual <$> settled))]
+
+-- | The sizes the reflectors have had, each seen at up to 3000 pixels at
+-- 1 m (see 'genSizes').
+newtype Sizes = Sizes (Three Size)
+    deriving (Show)
+
+instance Arbitrary Sizes where
+    arbitrary = Sizes <$> genSizes 3000
+    shrink (Sizes sizes) = Sizes <$> shrinkSizes sizes
 
 -- | How a reflector showed: a blob of its own, two taken as one, or its
 -- share of a blob, of up to the given number of pixels, anywhere in the
@@ -365,3 +463,11 @@ shrinkConfig c =
     d = defaultConfig
     r = response c
     dr = response d
+
+-- | Settings a settings file can say (see 'genConfig').
+newtype Sayable = Sayable Config
+    deriving (Show)
+
+instance Arbitrary Sayable where
+    arbitrary = Sayable <$> genConfig
+    shrink (Sayable c) = Sayable <$> shrinkConfig c
