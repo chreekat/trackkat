@@ -9,7 +9,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, withAsync)
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
-import Control.Monad (forM_, forever, unless, void, when, (<=<))
+import Control.Monad (foldM, forM_, forever, unless, void, when, (<=<))
 import Data.Functor (($>), (<&>))
 import Data.IORef
 import Data.Time.Clock (UTCTime)
@@ -36,11 +36,10 @@ import TrackKat.Install
 import TrackKat.Log
 import TrackKat.Pose
 import TrackKat.Release
-import TrackKat.Response
 import TrackKat.ServedGame
-import TrackKat.Shape
+import TrackKat.Session
 import TrackKat.Stats
-import TrackKat.Tracker
+import TrackKat.Tracker (Outcome (..))
 import qualified TrackKat.USB as USB
 import TrackKat.Windows
 
@@ -131,17 +130,21 @@ run start window after = do
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say (describeBindings config)
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
-        session <- newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile
+        shell <-
+            Shell paths
+                <$> (newIORef . newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile)
+                <*> newEmptyMVar
+                <*> newEmptyMVar
         (naming, named) <- nameButtons <$> getMonotonicTime
         logLine named
-        withAsync (watchSettings paths settingsFile session stamp config) $ \_ ->
+        withAsync (watchSettings settingsFile shell stamp) $ \_ ->
             withAsync (joysticks naming) $ \_ ->
-                withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
+                withAsync (saveCalibrations calibrationFile (shSaving shell)) $ \_ ->
                     withAsync (rememberServedGame gameFile) $ \_ ->
-                        withAsync (maintain paths place session offered) $ \_ ->
-                            withAsync (cameraLoop session) $ \camera -> do
+                        withAsync (maintain place shell offered) $ \_ ->
+                            withAsync (cameraLoop shell) $ \camera -> do
                                 link camera
-                                controls start settingsFile session (takeOffer paths start offered)
+                                controls start settingsFile shell (takeOffer paths start offered)
                                 -- Let the camera go, turning its lights off, but
                                 -- not for long: after sleep a USB read may never
                                 -- return.
@@ -244,16 +247,16 @@ data Reach = Reached | Unreached
 
 -- | Keep an installed trackkat tidy and up to date: delete older versions
 -- once games have let go of them, and look for a newer one now and then,
--- unless updates are off, and whenever the user asks with 'sCheckAsked'.
+-- unless updates are off, and whenever the user asks with 'shCheckAsked'.
 -- Portable copies and development builds do neither. Only this thread
 -- looks, so two looks never run at once.
-maintain :: Paths -> Placement -> Session -> IORef Offer -> IO ()
-maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothing NoFailureLogged
+maintain :: Placement -> Shell -> IORef Offer -> IO ()
+maintain place sh ref = forM_ (selfUpdating place) $ \self -> go self Nothing NoFailureLogged
   where
     go self checked logged = do
         _ <- cleanUp say paths place
         now <- getMonotonicTime
-        wanted <- (== UpdatesOn) . updates <$> readIORef (sSettings s)
+        wanted <- (== UpdatesOn) . updates . sSettings <$> readIORef (shSession sh)
         (checked', logged') <-
             if wanted && maybe True (\t -> now - t >= updateEvery) checked
                 then
@@ -266,11 +269,11 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
         -- Read, not taken, so a click the timeout cuts off is still there
         -- next time round; emptied once a look has answered it, along with
         -- any clicks while it looked.
-        timeout (10 * 60 * 1000000) (readMVar (sCheckAsked s)) >>= \case
+        timeout (10 * 60 * 1000000) (readMVar (shCheckAsked sh)) >>= \case
             Nothing -> go self checked' logged'
             Just () -> do
                 (_, logged'') <- look self Asked logged'
-                _ <- tryTakeMVar (sCheckAsked s)
+                _ <- tryTakeMVar (shCheckAsked sh)
                 looked <- getMonotonicTime
                 go self (Just looked) logged''
     look self why logged = bracket_ (showUpdateCheck CheckRunning) (showUpdateCheck CheckIdle) $ do
@@ -325,6 +328,7 @@ maintain paths place s ref = forM_ (selfUpdating place) $ \self -> go self Nothi
                     Due -> pure ()
                 answer (UpToDate ("Up to date (" ++ versionFolder self ++ ")."))
                 pure (Reached, NoFailureLogged)
+    paths = shPaths sh
     ready v = "trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time."
     readyShort v = versionFolder v ++ " is ready."
 
@@ -393,27 +397,25 @@ consoleLine :: String -> IO ()
 consoleLine line = putStrLn line `catch` \e -> const (pure ()) (e :: IOException)
 
 -- | Connect to the camera and track, again and again if it goes away.
-cameraLoop :: Session -> IO ()
-cameraLoop s = forever $ do
-    showCamera Searching
+cameraLoop :: Shell -> IO ()
+cameraLoop sh = forever $ do
+    advance sh CameraSought
     problem <-
-        (USB.withContext (\ctx -> withCamera ctx (say . ("# " ++)) defaultSettings (track s)) $> "The camera stopped.")
+        (USB.withContext (\ctx -> withCamera ctx (say . ("# " ++)) defaultSettings (track sh)) $> "The camera stopped.")
             `catches` [ Handler $ pure . explain
                       , Handler $ \e -> pure ("USB error: " ++ displayException (e :: USB.USBError))
                       , Handler $ \(ExceptionInLinkedThread _ e) -> pure ("Camera stopped: " ++ displayException e)
                       , Handler $ \CameraSilent -> pure "The camera went quiet, perhaps after sleep."
                       ]
-    say problem
-    showCamera (CameraDown problem)
-    say "Trying the camera again in 3 seconds."
+    advance sh (CameraStopped problem)
     threadDelay 3000000
 
 -- | Act on what is asked of trackkat's window and tray icon, and keep the
 -- window's count of games current, until the user quits, or, when a game
 -- started trackkat, until neither a game nor the window has used it for
 -- 'idleSeconds'.
-controls :: Start -> FilePath -> Session -> IO Bool -> IO ()
-controls start path s takeUp = go 0 Nothing
+controls :: Start -> FilePath -> Shell -> IO Bool -> IO ()
+controls start path sh takeUp = go 0 Nothing
   where
     go checked idleSince = do
         threadDelay 20000
@@ -449,14 +451,14 @@ controls start path s takeUp = go 0 Nothing
     quits QuitAction = True
     quits _ = False
 
-    act RecenterAction = recenter s
-    act PauseAction = togglePause s
-    act TrimAction = trim s
-    act CalibrateAction = calibrate s
-    act ClearCalibrationAction = clearCalibration s
+    act RecenterAction = advance sh RecenterAsked
+    act PauseAction = advance sh PauseAsked
+    act TrimAction = advance sh TrimAsked
+    act CalibrateAction = advance sh CalibrateAsked
+    act ClearCalibrationAction = advance sh ClearCalibrationAsked
     act QuitAction = say "Quitting."
     act OfferAction = pure ()
-    act CheckForUpdatesAction = void (tryPutMVar (sCheckAsked s) ())
+    act CheckForUpdatesAction = void (tryPutMVar (shCheckAsked sh) ())
     act SaveAction = saveSettings path
     act (KeyChosen k (Just b)) = addBinding k b
     act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
@@ -505,9 +507,6 @@ loadCalibration m path = do
             showCalibration noCalibration
             pure defaultCalibration
 
-noCalibration :: String
-noCalibration = "No calibration yet: trackkat learns it as you turn your head."
-
 -- | Save each calibration handed over, only the latest when several wait,
 -- so that saving never holds up tracking. The file is replaced whole.
 saveCalibrations :: FilePath -> MVar Calibration -> IO ()
@@ -548,34 +547,20 @@ modificationTime path = (Just <$> getModificationTime path) `catch` \e -> const 
 -- | Apply the settings file each time it is saved. A file that is missing
 -- or doesn't parse leaves the settings as they were; an editor still
 -- writing it changes its time again when done, so it is read again then.
-watchSettings :: Paths -> FilePath -> Session -> Maybe UTCTime -> Config -> IO ()
-watchSettings paths path s = go
+watchSettings :: FilePath -> Shell -> Maybe UTCTime -> IO ()
+watchSettings path sh = go
   where
-    go stamp config = do
+    go stamp = do
         threadDelay 500000
         stamp' <- modificationTime path
         case stamp' of
             Just _
-                | stamp' /= stamp ->
+                | stamp' /= stamp -> do
                     readSettings path >>= \case
-                        Left err -> do
-                            say (path ++ ": " ++ err ++ "; keeping the previous settings.")
-                            go stamp' config
-                        Right (text, new) -> do
-                            writeIORef (sSettings s) new
-                            rebindHotkeys (hotkeyBindings new)
-                            when (npclient new /= npclient config) $ pointGames (exeDir paths) (npclient new)
-                            when (startup new /= startup config) $ setStartup say paths (startup new)
-                            -- Clicking through the head view saves it; that is no news.
-                            unless (new == config{headView = headView new}) $ say (describeChanges config new)
-                            when (lightMasking new /= lightMasking config) $
-                                atomicModifyIORef' (sTracker s) (\t -> (setMasking (lightMasking new) t, ()))
-                            when (clip new /= clip config) $ do
-                                atomicModifyIORef' (sTracker s) (\t -> (setModel (clipModel (clip new)) t, ()))
-                                say "Tracking the clip's new shape; recentering."
-                            showSettings text
-                            go stamp' new
-            _ -> go stamp config
+                        Left err -> say (path ++ ": " ++ err ++ "; keeping the previous settings.")
+                        Right (text, new) -> advance sh (SettingsSaved text new)
+                    go stamp'
+            _ -> go stamp
 
 explain :: OpenError -> String
 explain NoCamera = "No TrackIR 5 found. Is it plugged in?"
@@ -583,107 +568,60 @@ explain (WrongDriver err) = "The TrackIR isn't using the WinUSB driver (" ++ err
 explain InUse = "The TrackIR is in use by another program, perhaps NaturalPoint's software."
 explain (OpenFailed e) = "USB error: " ++ show e
 
--- | Whether the last frame showed the clip.
-data Clip = ClipSeen | ClipLost
-
--- | State that outlives any one connection to the camera.
-data Session = Session
-    { sTracker :: IORef Tracker
-    , sSettings :: IORef Config
-    -- ^ replaced when the settings file is saved
-    , sShaper :: IORef Shaper
-    , sClip :: IORef Clip
-    , sPaused :: IORef (Maybe HeadPose)
-    -- ^ the pose games see while paused
-    , sTrim :: IORef Trim
-    -- ^ where forward is for the view, until the next recenter
-    , sLatest :: IORef HeadPose
-    -- ^ the last pose sent, shaped
-    , sSaving :: MVar Calibration
+-- | What trackkat's threads share.
+data Shell = Shell
+    { shPaths :: Paths
+    , shSession :: IORef Session
+    -- ^ changed only by 'transition', by the camera's thread, the window's
+    -- and the settings file's
+    , shSaving :: MVar Calibration
     -- ^ a calibration waiting to be saved
-    , sCheckAsked :: MVar ()
+    , shCheckAsked :: MVar ()
     -- ^ full from when the user asks to look for a newer version until
     -- 'maintain' has looked
     }
 
-newSession :: Config -> Calibration -> IO Session
-newSession config c =
-    Session
-        <$> newIORef (newTracker defaultIntrinsics (clipModel (clip config)) (lightMasking config) c)
-        <*> newIORef config
-        <*> newIORef newShaper
-        <*> newIORef ClipLost
-        <*> newIORef Nothing
-        <*> newIORef NoTrim
-        <*> newIORef centred
-        <*> newEmptyMVar
-        <*> newEmptyMVar
+-- | Take the session through an event: the session after it, and what the
+-- event asks to be done.
+transition :: Shell -> Event -> IO (Session, [Effect])
+transition sh event = atomicModifyIORef' (shSession sh) $ \s -> let (s', effects) = step event s in (s', (s', effects))
 
--- | The head at its centre.
-centred :: HeadPose
-centred = HeadPose 0 0 0 0 0 0
+-- | Take the session through an event, and do what it asks.
+advance :: Shell -> Event -> IO ()
+advance sh event = transition sh event >>= mapM_ (perform sh) . snd
 
--- | Recenter on the next frame that shows the clip, undoing any trim. If
--- the clip is out of sight, games see the view centred straight away.
-recenter :: Session -> IO ()
-recenter s = do
-    atomicModifyIORef' (sTracker s) (\t -> (request Recenter t, ()))
-    atomicModifyIORef' (sTrim s) (NoTrim,) >>= \case
-        NoTrim -> pure ()
-        Trim _ -> do
-            showTrim NoTrim
-            say "Trim cleared."
-    readIORef (sClip s) >>= \case
-        ClipSeen -> pure ()
-        ClipLost -> do
-            writeIORef (sShaper s) newShaper
-            writeIORef (sLatest s) centred
+perform :: Shell -> Effect -> IO ()
+perform sh = \case
+    Log line -> logLine line
+    ShowCamera state -> showCamera state
+    ShowOutput output -> showOutput output
+    ShowTrim t -> showTrim t
+    ShowCalibration c -> showCalibration c
+    ShowClip reflectors -> showClip reflectors
+    ShowFrame sighting view -> showFrame sighting view
+    ShowBlobs blobs areas -> showBlobs blobs areas
+    ShowSettings text -> showSettings text
+    Publish pose -> publish pose
+    SaveCalibration c -> tryTakeMVar (shSaving sh) >> putMVar (shSaving sh) c
+    BindHotkeys config -> rebindHotkeys (hotkeyBindings config)
+    PointGames choice -> pointGames (exeDir (shPaths sh)) choice
+    SetStartup choice -> setStartup say (shPaths sh) choice
 
-calibrate :: Session -> IO ()
-calibrate s = atomicModifyIORef' (sTracker s) (\t -> (request Calibrate t, ()))
-
--- | Forget the learnt calibration, saved too, and track afresh, solving the
--- next frame from scratch and recentering on it.
-clearCalibration :: Session -> IO ()
-clearCalibration s = do
-    config <- readIORef (sSettings s)
-    atomicWriteIORef (sTracker s) (newTracker defaultIntrinsics (clipModel (clip config)) (lightMasking config) defaultCalibration)
-    writeIORef (sShaper s) newShaper
-    _ <- tryTakeMVar (sSaving s)
-    putMVar (sSaving s) defaultCalibration
-    say "Calibration cleared: trackkat learns it afresh as you turn your head."
-    showCalibration noCalibration
-    showClip Nothing
-
--- | Pause, holding the pose games see, or resume.
-togglePause :: Session -> IO ()
-togglePause s = do
-    latest <- readIORef (sLatest s)
-    output <- atomicModifyIORef' (sPaused s) $ \case
-        Just _ -> (Nothing, Live)
-        Nothing -> (Just latest, Paused)
-    showOutput output
-    say $ case output of
-        Live -> "Resumed."
-        Paused -> "Paused: games see your head held still."
-
--- | Make where games look now the view's forward. While paused, that is the
--- view games are held at, and they stay held there; the trim applies from
--- when the view moves again.
-trim :: Session -> IO ()
-trim s = do
-    paused <- readIORef (sPaused s)
-    view <- maybe (readIORef (sLatest s)) pure paused
-    let t = trimTo view
-    writeIORef (sTrim s) t
-    showTrim t
-    say ("Trimmed: forward is now " ++ describeTrim t ++ ".")
-
--- | A trim as the console and log show it.
-describeTrim :: Trim -> String
-describeTrim NoTrim = "straight ahead"
-describeTrim (Trim t) =
-    printf "yaw %+.0f pitch %+.0f roll %+.0f, x %+.0f y %+.0f z %+.0f mm" (yaw t) (pitch t) (roll t) (tx t) (ty t) (tz t)
+-- | What the camera's thread keeps while the camera is connected.
+data Connection = Connection
+    { cGamesChecked :: !Double
+    -- ^ when the games tracking were last counted, in monotonic seconds
+    , cGames :: !Int
+    -- ^ how many there were
+    , cStatusShown :: !Double
+    -- ^ when the status was last shown
+    , cLastArrival :: !(Maybe Double)
+    -- ^ when the frame before arrived
+    , cWindow :: !Window
+    -- ^ the figures since the status was last shown
+    , cGCs :: !Int
+    -- ^ garbage collections when last looked at
+    }
 
 -- | Report joysticks coming and going, and the buttons pressed, as
 -- 'joystickEffects' has it.
@@ -697,78 +635,55 @@ joysticks naming = forever $ do
         OfferButton b -> capturing >>= mapM_ (`addBinding` b)
 
 -- | Track until the camera goes away.
-track :: Session -> Camera -> IO ()
-track s cam = do
-    say "Tracking."
-    showCamera Tracking
-    seenRecenters <- newIORef =<< recenterCount
-    games <- newIORef (0, 0)
-    lastStatus <- newIORef 0
-    lastArrival <- newIORef Nothing
-    window <- newIORef emptyWindow
-    gcsSeen <- newIORef =<< gcCount
-    absent <- newIORef noAbsence
-    withLights cam $ \lights -> withPackets cam $ \next -> forever $ do
-        (arrived, packets) <- next
-        forM_ packets $ \case
-            Frame _ stripes -> do
-                now <- getMonotonicTime
-                handleControls s seenRecenters
-                (outcome, events, tracker) <- atomicModifyIORef' (sTracker s) $ \t ->
-                    let (t', o, evs) = step now stripes t in (t', (o, evs, t'))
-                let centre = trackerCentre tracker
-                forM_ events $ \e -> do
-                    say (describeEvent centre e)
-                    forM_ (calibrationNews centre (trackerCalibration tracker) (sureEstimate (trackerShape tracker)) e) $ \news -> do
-                        showCalibration news
-                        showClip (learntClip (trackerModel tracker) centre (trackerCalibration tracker))
-                forM_ (concatMap learnt events) $ \c -> tryTakeMVar (sSaving s) >> putMVar (sSaving s) c
-                -- A new centre or level is a jump the shaper must not smooth.
-                when (any resetsShaping events) $ writeIORef (sShaper s) newShaper
-                case outcome of
-                    Tracked{outPose = hp} -> do
-                        writeIORef (sClip s) ClipSeen
-                        r <- response <$> readIORef (sSettings s)
-                        t <- readIORef (sTrim s)
-                        shaped <- atomicModifyIORef' (sShaper s) $ \sh ->
-                            let (p, sh') = shape r t now hp sh in (sh', p)
-                        writeIORef (sLatest s) shaped
-                    Lost{} -> writeIORef (sClip s) ClipLost
-                mapM_ say =<< atomicModifyIORef' absent (absence now outcome)
-                paused <- readIORef (sPaused s)
-                sent <- maybe (readIORef (sLatest s)) pure paused
-                publish (toGamePose sent)
-                published <- getMonotonicTime
-                showFrame (case outcome of Tracked{outPose = hp, outSeen = seen} -> InSight hp (seenMissing seen); Lost{outBlobs = n} -> OutOfSight n) sent
-                showBlobs (trackerBlobs tracker) (trackerLights tracker)
-                previous <- atomicModifyIORef' lastArrival (\p -> (Just arrived, p))
-                modifyIORef' window (sawFrame (published - arrived) (maybe 0 (arrived -) previous) (length stripes))
-                noteGCs gcsSeen window
+track :: Shell -> Camera -> IO ()
+track sh cam = do
+    advance sh . CameraConnected =<< recenterCount
+    collections <- gcCount
+    withLights cam $ \lights -> withPackets cam $ \next ->
+        let go c = do
+                (arrived, packets) <- next
+                foldM (packet lights arrived) c packets >>= go
+         in go (Connection 0 0 0 Nothing emptyWindow collections)
+  where
+    packet :: (Light -> Light -> IO ()) -> Double -> Connection -> Packet -> IO Connection
+    packet lights arrived c = \case
+        Frame _ stripes -> do
+            now <- getMonotonicTime
+            keys <- takeHotkeys
+            advance sh . ControlsPolled keys =<< recenterCount
+            (s, effects) <- transition sh (FrameArrived now stripes)
+            -- When games were sent the frame's pose.
+            published <- foldM (\at e -> perform sh e >> case e of Publish _ -> Just <$> getMonotonicTime; _ -> pure at) Nothing effects
+            let timed = maybe id (\at -> sawFrame (at - arrived) (maybe 0 (arrived -) (cLastArrival c)) (length stripes)) published (cWindow c)
+            (collections, window) <- noteGCs (cGCs c) timed
 
-                -- Checking game processes is a few system calls; twice a
-                -- second is plenty.
-                (checked, _) <- readIORef games
-                when (now - checked >= 0.5) $ writeIORef games . (now,) =<< gamesTracking
-                gameConnected <- (> 0) . snd <$> readIORef games
-                lights (case outcome of Tracked{} -> On; Lost{} -> Off) (if gameConnected then On else Off)
+            -- Checking game processes is a few system calls; twice a
+            -- second is plenty.
+            (checked, games) <-
+                if now - cGamesChecked c >= 0.5
+                    then (now,) <$> gamesTracking
+                    else pure (cGamesChecked c, cGames c)
+            lights (case sOutcome s of Just Tracked{} -> On; _ -> Off) (if games > 0 then On else Off)
 
-                shown <- readIORef lastStatus
-                when (now - shown >= 1) $ do
-                    writeIORef lastStatus now
-                    w <- atomicModifyIORef' window (\w -> (emptyWindow, w))
+            let c' = c{cGamesChecked = checked, cGames = games, cLastArrival = Just arrived, cWindow = window, cGCs = collections}
+            if now - cStatusShown c >= 1
+                then do
                     -- The window shows the pose and figures live, so its
                     -- log is left to events, as is a terminal's, which
                     -- has its prompt back; only output captured or piped
                     -- gets them.
                     consoleOutput >>= \case
-                        OutputRedirected -> consoleLine (status outcome paused gameConnected ++ "   " ++ summary w)
+                        OutputRedirected -> forM_ (sOutcome s) $ \outcome ->
+                            consoleLine (status outcome (sSending s) games ++ "   " ++ summary window)
                         ParentConsole -> pure ()
                         NoConsole -> pure ()
-                    showStats (summary w)
-            Corrupt why _ -> do
-                say ("# dropped a corrupt packet: " ++ why)
-                modifyIORef' window sawCorrupt
-            _ -> pure ()
+                    showStats (summary window)
+                    pure c'{cStatusShown = now, cWindow = emptyWindow}
+                else pure c'
+        Corrupt why _ -> do
+            advance sh (PacketCorrupt why)
+            pure c{cWindow = sawCorrupt (cWindow c)}
+        _ -> pure c
 
 -- | Garbage collections so far, if the runtime is counting (+RTS -T).
 gcCount :: IO Int
@@ -776,89 +691,16 @@ gcCount = do
     enabled <- getRTSStatsEnabled
     if enabled then fromIntegral . gcs <$> getRTSStats else pure 0
 
--- | Count collections since the last call, with the latest one's pause.
+-- | Add to a window the collections since there were the given number,
+-- with the latest one's pause: how many there are now, and the window.
 -- Sampled every frame, so a pause hidden behind a later one in the same
 -- frame is missed.
-noteGCs :: IORef Int -> IORef Window -> IO ()
-noteGCs seen window = do
+noteGCs :: Int -> Window -> IO (Int, Window)
+noteGCs before window = do
     enabled <- getRTSStatsEnabled
-    when enabled $ do
-        stats <- getRTSStats
-        let n = fromIntegral (gcs stats)
-        before <- atomicModifyIORef' seen (\b -> (n, b))
-        when (n /= before) $
-            modifyIORef' window (sawGCs (n - before) (fromIntegral (gcdetails_elapsed_ns (gc stats)) / 1e9))
-
--- | Act on hotkeys and on recenter requests from games.
-handleControls :: Session -> IORef Int -> IO ()
-handleControls s seenRecenters = do
-    keys <- takeHotkeys
-    fromGames <- recenterCount
-    before <- atomicModifyIORef' seenRecenters (\b -> (fromGames, b))
-    when (RecenterKey `elem` keys || fromGames /= before) $ recenter s
-    when (PauseKey `elem` keys) $ togglePause s
-    when (TrimKey `elem` keys) $ trim s
-
--- | Refinements are applied slowly, so only a new centre or a requested
--- calibration resets shaping.
-resetsShaping :: Event -> Bool
-resetsShaping Recentered = True
-resetsShaping (Calibrated _) = True
-resetsShaping _ = False
-
--- | Describe an event, given the clip's pose at the centre.
-describeEvent :: Maybe Pose -> Event -> String
-describeEvent _ Recentered = "Recentered."
-describeEvent _ CalibrationStarted = "Calibrating: turn your head left and right."
-describeEvent _ CalibrationFailed = "Calibration failed: not enough turning, try again."
-describeEvent _ (Calibrated c) =
-    let (down, right) = cameraTilt (estimatedLevel c)
-     in printf "Calibrated: camera tipped %.1f degrees down, %.1f to its right." down right
-describeEvent _ (Refined LevelRefined c) = describeLevel c
-describeEvent centre (Refined PivotRefined c) = describePivot centre c
-describeEvent _ (ShapeEstimated est) = describeShape est
-describeEvent _ Corrected{} = "Corrected a mirror-image pose."
-describeEvent _ (LightIgnored p why) = describeLightIgnored p why
-describeEvent _ (LightForgotten p) = describeLightForgotten p
-describeEvent _ (LightMoved p how) = describeLightMoved p how
-
--- | A calibration to save.
-learnt :: Event -> [Calibration]
-learnt (Calibrated c) = [c]
-learnt (Refined _ c) = [c]
-learnt _ = []
-
--- | What the calibration box in trackkat's window says after an event, if
--- the event is about calibration or moves the centre, given the clip's pose
--- at the centre, the calibration so far and any sure estimate of the
--- clip's shape.
-calibrationNews :: Maybe Pose -> Calibration -> Maybe ShapeEstimate -> Event -> Maybe String
-calibrationNews centre c estimate Recentered = Just (describeCalibration centre c estimate)
-calibrationNews centre _ estimate (Calibrated c) =
-    let (down, right) = cameraTilt (estimatedLevel c)
-     in Just (printf "Calibrated: camera tipped %.1f° down and %.1f° to its right." down right ++ "\n" ++ describePivotBriefly centre c ++ maybe "" (("\n" ++) . describeShapeBriefly) estimate)
-calibrationNews centre _ estimate (Refined _ c) = Just (describeCalibration centre c estimate)
-calibrationNews centre c estimate (ShapeEstimated _) = Just (describeCalibration centre c estimate)
-calibrationNews _ _ _ Corrected{} = Nothing
-calibrationNews _ _ _ LightIgnored{} = Nothing
-calibrationNews _ _ _ (LightForgotten _) = Nothing
-calibrationNews _ _ _ LightMoved{} = Nothing
-calibrationNews centre _ _ e = Just (describeEvent centre e)
-
--- | The window's account of a calibration, on two lines, and a third for
--- a sure estimate of the clip's shape.
-describeCalibration :: Maybe Pose -> Calibration -> Maybe ShapeEstimate -> String
-describeCalibration centre c estimate = describeLevelBriefly c ++ "\n" ++ describePivotBriefly centre c ++ maybe "" (("\n" ++) . describeShapeBriefly) estimate
-
-status :: Outcome -> Maybe HeadPose -> Bool -> String
-status outcome paused gameConnected =
-    concat
-        [ case outcome of
-            Tracked{outPose = hp, outSeen = seen} ->
-                printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
-                    ++ describeSeen seen
-            Lost n masked why _ ->
-                "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ "): " ++ describeWhy why
-        , maybe "" (const "   PAUSED") paused
-        , if gameConnected then "   game connected" else ""
-        ]
+    if enabled
+        then do
+            stats <- getRTSStats
+            let n = fromIntegral (gcs stats)
+            pure (n, if n /= before then sawGCs (n - before) (fromIntegral (gcdetails_elapsed_ns (gc stats)) / 1e9) window else window)
+        else pure (before, window)
