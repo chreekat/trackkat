@@ -23,6 +23,7 @@ library
     TrackKat.Camera
     TrackKat.CommandLine
     TrackKat.Config
+    TrackKat.Display
     TrackKat.Frame
     TrackKat.GamePose
     TrackKat.Lights

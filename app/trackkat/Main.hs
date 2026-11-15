@@ -180,18 +180,25 @@ refreshOffer paths place ref = do
         NoOffer -> Nothing
         OfferInstall v ->
             Just
-                ( "trackkat " ++ versionFolder v ++ " is running from " ++ exeDir paths ++ ". Install it to start it from the Start menu and keep it up to date."
-                , "Install trackkat"
-                , Nothing
-                )
+                Notice
+                    { noticeText = "trackkat " ++ versionFolder v ++ " is running from " ++ exeDir paths ++ ". Install it to start it from the Start menu and keep it up to date."
+                    , noticeButton = "Install trackkat"
+                    , noticeTray = Nothing
+                    }
         OfferInstalled v ->
-            Just ("trackkat " ++ versionFolder v ++ " is installed; this copy, in " ++ exeDir paths ++ ", isn't.", "Use installed trackkat", Nothing)
+            Just
+                Notice
+                    { noticeText = "trackkat " ++ versionFolder v ++ " is installed; this copy, in " ++ exeDir paths ++ ", isn't."
+                    , noticeButton = "Use installed trackkat"
+                    , noticeTray = Nothing
+                    }
         OfferUpdate v ->
             Just
-                ( versionFolder v ++ " is ready. It starts next time trackkat does."
-                , "Restart to update"
-                , Just ("Restart to update to " ++ versionFolder v)
-                )
+                Notice
+                    { noticeText = versionFolder v ++ " is ready. It starts next time trackkat does."
+                    , noticeButton = "Restart to update"
+                    , noticeTray = Just ("Restart to update to " ++ versionFolder v)
+                    }
 
 -- | Take up what the window offers: install this copy, or switch to an
 -- installed one, handing over to it. True if trackkat should now quit.
