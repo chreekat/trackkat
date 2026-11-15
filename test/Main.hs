@@ -7,6 +7,7 @@ import qualified Test.Belief
 import qualified Test.Branch
 import qualified Test.Calibration
 import qualified Test.Clips
+import qualified Test.CommandLine
 import qualified Test.Config
 import qualified Test.Following
 import qualified Test.Frame
@@ -64,6 +65,7 @@ main = do
                 , Test.Stats.tests
                 , Test.Release.tests
                 , Test.ServedGame.tests
+                , Test.CommandLine.tests
                 , Test.Icons.tests
                 ]
             , testGroup

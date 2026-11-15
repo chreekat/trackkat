@@ -38,6 +38,7 @@ import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, (</>
 import System.IO (readFile')
 import Text.Printf (printf)
 
+import TrackKat.CommandLine (Uninstall (..))
 import TrackKat.Config (Startup (..))
 import TrackKat.Gui (quitRunning)
 import TrackKat.Release
@@ -297,10 +298,6 @@ sha256 f = withCWString f $ \path -> allocaBytes 65 $ \out ->
 -- | An HRESULT or NTSTATUS, as Windows writes them.
 hex :: CInt -> String
 hex rc = printf "0x%08x" (fromIntegral rc :: Word32)
-
--- | How to uninstall: asking whether to keep settings, or quietly keeping
--- them.
-data Uninstall = AskFirst | Quietly
 
 -- | Remove trackkat: quit it if it is running, and remove its shortcut,
 -- uninstall entry, start at login, games' pointer to its NPClient, and
