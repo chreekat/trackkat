@@ -3,12 +3,13 @@
 module Test.Lights (tests, simulations) where
 
 import Control.Monad (forM_)
-import Data.List (mapAccumL, sort, sortOn, (\\))
+import Data.List (inits, mapAccumL, sort, sortOn, tails, (\\))
 import Data.Maybe (fromMaybe, isNothing)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Check
+import Test.Gen (InPicture (..), earlier, shrinkFrom)
 import Test.Simulation
 import TrackKat.Frame
 import TrackKat.Lights
@@ -232,7 +233,7 @@ tests =
     testGroup
         "Lights"
         [ testProperty "a blob that stays put is learnt as a light there once it has, and forgotten once it has gone" $
-            forAll genSpot $ \(place, size) -> forAll (elements [30, 60, 120]) $ \rate -> forAll (vectorOf 8 (choose (-1, 1))) $ \wobble ->
+            \(Spot (place, size)) (Rate rate) (Wobble wobble) ->
                 let lit = [(fromIntegral i / rate, [blobAt (nudged place dx dy) size]) | (i, dx, dy) <- zip3 [0 .. ceiling ((learnSeconds + 0.2) * rate) :: Int] (cycle wobble) (drop 3 (cycle wobble))]
                     gone = [(learnSeconds + 0.3 + fromIntegral i / 4, []) | i <- [0 .. ceiling (4 * forgetSeconds) + 4 :: Int]]
                     (learnt, told) = watched noLights lit
@@ -249,11 +250,11 @@ tests =
                                     ]
                             _ -> property False
         , testProperty "nothing is learnt in less time than a light must stay put" $
-            forAllShrink genScene shrinkScene $ \scene ->
+            \scene ->
                 let early = takeWhile ((< learnSeconds) . fst) (sceneFrames scene)
                  in lightAreas (fst (watched noLights early)) === [] .&&. snd (watched noLights early) === []
         , testProperty "lights are told as they come and go, their areas within bounds and never smaller" $
-            forAllShrink genScene shrinkScene $ \scene ->
+            \scene ->
                 cover 20 (any (\(_, _, _, news) -> not (null news)) (steps scene)) "lights come or go" . conjoin $
                     [ counterexample (show (t, news, before, now)) $
                         conjoin
@@ -264,17 +265,17 @@ tests =
                     | (t, before, now, news) <- steps scene
                     ]
         , testProperty "no light is learnt where the clip's reflectors are" $
-            forAllShrink genScene shrinkScene $ \scene ->
+            \scene ->
                 property (and [distance p q > radius | (_, _, _, news) <- steps scene, Learnt p _ <- news, (q, radius) <- maybe [] viewDiscs (sceneClip scene)])
         , testProperty "a blob is masked just when it is in a light's area, and never where a reflector is predicted" $
-            forAllShrink genScene shrinkScene $ \scene -> forAll genSpot $ \(place, size) ->
+            \scene (Spot (place, size)) ->
                 let ls = fst (watched noLights (sceneFrames scene))
                     b = blobAt place size
                  in inMask (activeMask [] ls) b === any (\(centre, radius) -> distance place centre <= radius) (lightAreas ls)
                         .&&. property (not (inMask (activeMask [place] ls) b))
                         .&&. property (not (inMask noMask b))
         , testProperty "of the blobs in masked areas, the heaviest in each are kept in their order" $
-            forAllShrink genScene shrinkScene $ \scene -> forAll (listOf genSpot) $ \spots ->
+            \scene (Spots spots) ->
                 let ls = fst (watched noLights (sceneFrames scene))
                     mask = activeMask [] ls
                     blobs = sortOn (negate . blobPoints) (map (uncurry blobAt) spots)
@@ -286,8 +287,9 @@ tests =
                         , property (null kept == not (any (inMask mask) blobs))
                         ]
         , testProperty "lights unlearnt hold nothing, and the rest are left" $
-            forAllShrink genScene shrinkScene $ \scene -> forAll (listOf (fst <$> genSpot)) $ \places ->
-                let ls = fst (watched noLights (sceneFrames scene))
+            \scene (Spots spots) ->
+                let places = map fst spots
+                    ls = fst (watched noLights (sceneFrames scene))
                     centres = map fst (lightAreas ls)
                     (left, gone) = unlearn centres places ls
                  in conjoin
@@ -297,9 +299,46 @@ tests =
                         ]
         ]
 
--- | Somewhere in the picture, and a blob's pixels there.
+-- | Somewhere in the picture, and a blob's pixels there, from a
+-- reflector's to a lamp's; simpler at a whole number of pixels, and
+-- smaller.
+newtype Spot = Spot ((Double, Double), Int)
+    deriving (Show)
+
+instance Arbitrary Spot where
+    arbitrary = Spot <$> genSpot
+    shrink (Spot spot) = Spot <$> shrinkSpot spot
+
+-- | A few of 'Spot'.
+newtype Spots = Spots [((Double, Double), Int)]
+    deriving (Show)
+
+instance Arbitrary Spots where
+    arbitrary = Spots <$> listOf genSpot
+    shrink (Spots spots) = Spots <$> shrinkList shrinkSpot spots
+
 genSpot :: Gen ((Double, Double), Int)
 genSpot = (,) <$> ((,) <$> choose (0, 640) <*> choose (0, 480)) <*> chooseInt (20, 2000)
+
+shrinkSpot :: ((Double, Double), Int) -> [((Double, Double), Int)]
+shrinkSpot (place, size) = [(place', size) | InPicture place' <- shrink (InPicture place)] ++ [(place, size') | size' <- shrinkFrom 20 size]
+
+-- | How many frames a second the camera sends.
+newtype Rate = Rate Double
+    deriving (Show)
+
+instance Arbitrary Rate where
+    arbitrary = Rate <$> elements [30, 60, 120]
+    shrink (Rate rate) = Rate <$> earlier [30, 60, 120] rate
+
+-- | How far a still blob's centre wanders, in pixels each way, from frame
+-- to frame, over and over; simpler wandering less.
+newtype Wobble = Wobble [Double]
+    deriving (Show)
+
+instance Arbitrary Wobble where
+    arbitrary = Wobble <$> vectorOf 8 (choose (-1, 1))
+    shrink (Wobble wobble) = [Wobble (before ++ [0] ++ rest) | (before, off : rest) <- zip (inits wobble) (tails wobble), off /= 0]
 
 nudged :: (Double, Double) -> Double -> Double -> (Double, Double)
 nudged (x, y) dx dy = (x + dx, y + dy)
@@ -336,33 +375,31 @@ steps scene = snd (mapAccumL step' noLights (sceneFrames scene))
 
 -- | A few lamps, each lit in most frames, with a fragment beside it in
 -- some, and strays that come and go; perhaps the clip, tracked throughout;
--- a fifth of a second between frames, and now and then a minute.
-genScene :: Gen Scene
-genScene = do
-    lamps <- scale (`div` 20) (listOf genSpot)
-    clip <- oneof [pure Nothing, Just <$> vectorOf 3 genSpot]
-    gaps <- listOf (frequency [(30, pure 0.2), (1, pure 60)])
-    frames <- mapM (frame lamps (fromMaybe [] clip)) (drop 1 (scanl (+) 0 gaps))
-    pure (Scene (tracked <$> clip) frames)
-  where
-    frame lamps clip t = do
-        lit <- mapM (\lamp -> frequency [(9, core lamp), (1, pure [])]) lamps
-        strays <- scale (`div` 30) (listOf genSpot)
-        pure (t, map (uncurry blobAt) (concat lit ++ strays ++ clip))
-    core (place, size) = do
-        dx <- choose (-1, 1)
-        dy <- choose (-1, 1)
-        fragment <- frequency [(3, pure []), (1, (\fx fy -> [(nudged place fx fy, size `div` 4)]) <$> choose (-18, 18) <*> choose (-18, 18))]
-        pure ((nudged place dx dy, size) : fragment)
-    tracked clip =
-        View
-            { viewSights = [Just (Sight place (fromIntegral size) Whole) | (place, size) <- clip]
-            , viewDiscs = [(place, 15) | (place, _) <- clip]
-            , viewUsual = Just (maximum [fromIntegral size | (_, size) <- clip])
-            }
-
--- | Scenes that end sooner, and without the clip.
-shrinkScene :: Scene -> [Scene]
-shrinkScene scene =
-    [scene{sceneFrames = take k (sceneFrames scene)} | k <- [0, length (sceneFrames scene) `div` 2, length (sceneFrames scene) - 1], k >= 0, k < length (sceneFrames scene)]
-        ++ [scene{sceneClip = Nothing} | Just _ <- [sceneClip scene]]
+-- a fifth of a second between frames, and now and then a minute. Simpler
+-- ending sooner, and without the clip.
+instance Arbitrary Scene where
+    arbitrary = do
+        lamps <- scale (`div` 20) (listOf genSpot)
+        clip <- oneof [pure Nothing, Just <$> vectorOf 3 genSpot]
+        gaps <- listOf (frequency [(30, pure 0.2), (1, pure 60)])
+        frames <- mapM (frame lamps (fromMaybe [] clip)) (drop 1 (scanl (+) 0 gaps))
+        pure (Scene (tracked <$> clip) frames)
+      where
+        frame lamps clip t = do
+            lit <- mapM (\lamp -> frequency [(9, core lamp), (1, pure [])]) lamps
+            strays <- scale (`div` 30) (listOf genSpot)
+            pure (t, map (uncurry blobAt) (concat lit ++ strays ++ clip))
+        core (place, size) = do
+            dx <- choose (-1, 1)
+            dy <- choose (-1, 1)
+            fragment <- frequency [(3, pure []), (1, (\fx fy -> [(nudged place fx fy, size `div` 4)]) <$> choose (-18, 18) <*> choose (-18, 18))]
+            pure ((nudged place dx dy, size) : fragment)
+        tracked clip =
+            View
+                { viewSights = [Just (Sight place (fromIntegral size) Whole) | (place, size) <- clip]
+                , viewDiscs = [(place, 15) | (place, _) <- clip]
+                , viewUsual = Just (maximum [fromIntegral size | (_, size) <- clip])
+                }
+    shrink scene =
+        [scene{sceneFrames = take k (sceneFrames scene)} | k <- [0, length (sceneFrames scene) `div` 2, length (sceneFrames scene) - 1], k >= 0, k < length (sceneFrames scene)]
+            ++ [scene{sceneClip = Nothing} | Just _ <- [sceneClip scene]]
