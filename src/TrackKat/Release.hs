@@ -61,6 +61,8 @@ import System.FilePath (dropTrailingPathSeparator, equalFilePath, isAbsolute, sp
 
 import Codec.Archive.Zip (Entry (..), fromEntry, toArchiveOrFail, zEntries)
 
+import TrackKat.Number (parseNatural, renderNatural)
+
 -- | A release's version: numbers compared in order, as 0.1.123, and what
 -- built it, as a commit, which comparisons ignore.
 data Version = Version [Int] (Maybe String)
@@ -81,7 +83,7 @@ parseVersion s = case break (== '+') s of
     (numbers, rest) -> Version <$> traverse number (splitOn '.' numbers) <*> build rest
   where
     number n
-        | not (null n), all isDigit n, length n <= 9 = Just (read n)
+        | length n <= 9 = fromInteger <$> parseNatural n
         | otherwise = Nothing
     build "" = Just Nothing
     build ('+' : b)
@@ -97,7 +99,7 @@ describeVersion v@(Version _ b) = versionFolder v ++ maybe "" (\c -> " (" ++ c +
 
 -- | The name of the folder a version is installed in: its numbers.
 versionFolder :: Version -> String
-versionFolder (Version ns _) = intercalate "." (map show ns)
+versionFolder (Version ns _) = intercalate "." (map (renderNatural . toInteger) ns)
 
 -- | The version installed in a folder of the install root, by its name.
 folderVersion :: String -> Maybe Version
