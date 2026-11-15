@@ -3,6 +3,7 @@
 module Test.Response (tests) where
 
 import Control.Monad (forM_)
+import Data.Functor ((<&>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck hiding (once)
 
@@ -14,7 +15,7 @@ import Test.Simulation (deg)
 import TrackKat.GamePose
 import TrackKat.Pose (HeadPose (..))
 import TrackKat.Response
-import TrackKat.World (World (..), clockAt, inDegrees, inMillimetres, world)
+import TrackKat.World (Instant, World (..), clockAt, inDegrees, inMillimetres, inSeconds, world)
 
 tests :: TestTree
 tests = group "Response" $ do
@@ -50,13 +51,13 @@ tests = group "Response" $ do
     -- Shaping: jumps a head can't make are held off unless they persist;
     -- smoothing settles still jitter and follows steps.
     let linear = Points [(1, 1)]
-        plain = Response NoSmoothing linear linear linear linear linear linear LeanWithScreen
+        plain = Response NoSmoothing linear linear linear linear linear linear LeanWithScreen (Aim NoSmoothing linear linear linear)
         smooth = plain{smoothing = Smoothing 1 0.05}
         at y = HeadPose{yaw = y, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0}
         run r frames = go newShaper (zip (map clockAt [0, 1 / 120 ..]) frames)
           where
             go _ [] = []
-            go sh ((t, p) : rest) = let (out, sh') = shape r NoTrim t p sh in yaw out : go sh' rest
+            go sh ((t, p) : rest) = let (out, sh') = shape r NoTrim NotAiming t p sh in yaw out : go sh' rest
     checkShowing "one-frame spike ignored" (show (run plain (map at [0, 1, 60, 2, 3]))) $
         run plain (map at [0, 1, 60, 2, 3]) == [0, 1, 1, 2, 3]
     checkShowing "persistent jump accepted" (show (run plain (map at [0, 60, 61, 62, 63]))) $
@@ -83,13 +84,13 @@ tests = group "Response" $ do
     check "looking ahead, leaning is unchanged" $ abs (tx ahead - 4) < 1e-12 && abs (tz ahead + 7) < 1e-12
     -- The lean turns by the yaw the game shows, after the curves.
     let viewing = plain{yawCurve = Points [(1, 6)], lean = LeanWithView}
-        (shapedBack, _) = shape viewing NoTrim (clockAt 0) HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+        (shapedBack, _) = shape viewing NoTrim NotAiming (clockAt 0) HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     checkShowing "lean follows the curved yaw" (show shapedBack) $
         abs (yaw shapedBack - 160) < 1e-9 && abs (tx shapedBack - 10 * cos (deg 160)) < 1e-9 && abs (tz shapedBack + 10 * sin (deg 160)) < 1e-9
 
     -- Trimming: where the view looks, and where it is, becomes forward,
     -- until recentering.
-    let trimmed t y p = fst (shape plain t (clockAt 0) HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
+    let trimmed t y p = fst (shape plain t NotAiming (clockAt 0) HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
         axes hp = [yaw hp, pitch hp, roll hp, tx hp, ty hp, tz hp]
         lookingAt = trimmed NoTrim (-40) 20
         once = trimTo lookingAt
@@ -105,11 +106,11 @@ tests = group "Response" $ do
     check "trimmed roll wraps" $ roll (trimmed (Trim (HeadPose 0 0 179 0 0 0)) 0 0) == -178
     check "trim of a view turned past behind" $
         trimTo HeadPose{yaw = 200, pitch = 100, roll = 190, tx = 0, ty = 0, tz = 0} == Trim (HeadPose (-160) 90 (-170) 0 0 0)
-    let (trimmedLean, _) = shape viewing (turnedBy 150 0) (clockAt 0) HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+    let (trimmedLean, _) = shape viewing (turnedBy 150 0) NotAiming (clockAt 0) HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     checkShowing "lean follows the trimmed yaw" (show trimmedLean) $
         abs (yaw trimmedLean - 160) < 1e-9 && abs (tx trimmedLean - 10 * cos (deg 160)) < 1e-9 && abs (tz trimmedLean + 10 * sin (deg 160)) < 1e-9
     let craned = Trim HeadPose{yaw = 0, pitch = 30, roll = 0, tx = 0, ty = -40, tz = -80}
-        (lookingAway, _) = shape viewing craned (clockAt 0) HeadPose{yaw = 90 / 6, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0} newShaper
+        (lookingAway, _) = shape viewing craned NotAiming (clockAt 0) HeadPose{yaw = 90 / 6, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0} newShaper
     checkShowing "trimmed movement stays put as the view turns" (show lookingAway) $
         abs (tx lookingAway) < 1e-9 && abs (ty lookingAway + 40) < 1e-9 && abs (tz lookingAway + 80) < 1e-9
     tree properties
@@ -161,10 +162,11 @@ properties =
                  in Gen.close (rounding 8 600) (sqrt (tx leant ^ (2 :: Int) + tz leant ^ (2 :: Int))) (sqrt (tx p ^ (2 :: Int) + tz p ^ (2 :: Int)))
                         .&&. leant{tx = tx p, tz = tz p} === p
                         .&&. leanWithView p{yaw = 0} === p{yaw = 0}
-        , testProperty "a head held still is shaped to the same view in every frame, and with straight curves to itself" $
-            \r (Seated p) ->
-                let views response = shaped response NoTrim (replicate 5 p)
-                 in views r === concat (replicate 5 (take 1 (views r))) .&&. views straight === replicate 5 p
+        , testProperty "a head held still is shaped to the same view in every frame, whenever aiming is asked for, and with straight curves to itself" $
+            \r (Seated p) asks ->
+                let frames = [(wanted, p) | wanted <- NotAiming : asks]
+                    views response = aimedViews response NoTrim frames
+                 in views r === concatMap (const (take 1 (views r))) frames .&&. views straight === map (const p) frames
         , testProperty "a jump no head makes is left out for a frame" $
             \(Seated p) (Jump beyond) (Axis axis) ->
                 shaped straight NoTrim [p, jumped axis beyond p, p] === [p, p, p]
@@ -179,11 +181,57 @@ properties =
                     [ property (yaw out >= -180 && yaw out < 180 && roll out >= -180 && roll out < 180 && pitch out >= -90 && pitch out <= 90)
                     | out <- shaped r (trimTo view{yaw = 3 * yaw view, roll = 3 * roll view, pitch = 3 * pitch view}) [p]
                     ]
+        , -- See Note [Aiming] in "TrackKat.Response".
+          testProperty "a frame's view never depends on whether aiming is asked for in that frame" $
+            \r (Seated forward) frames (Seated p) ->
+                let (_, sh) = shapedFrom newShaper r (trimTo forward) [(wanted, seen) | (wanted, Seated seen) <- frames]
+                    view wanted = fst (shape r (trimTo forward) wanted (frameTime (length frames)) p sh)
+                 in view Aiming === view NotAiming
+        , testProperty "while aiming, the view turns from where it was when aiming began by the aim's curves of how far the head has turned since" $
+            \r (Walk walk) (Step turned) ->
+                let began = lastOf walk
+                    now = began{yaw = yaw began + yaw turned, pitch = pitch began + pitch turned, roll = roll began + roll turned}
+                    views = aimedViews (unsmooth r) NoTrim (walk ++ [(NotAiming, began), (Aiming, began), (Aiming, now)])
+                 in case reverse views of
+                        aimed : anchored : _ ->
+                            conjoin
+                                [ counterexample name (axis aimed === axis anchored + applyCurve (curve (aim r)) (axis now - axis began))
+                                | (name, axis, curve) <- [("yaw", yaw, aimYaw), ("pitch", pitch, aimPitch), ("roll", roll, aimRoll)]
+                                ]
+                        _ -> property False
+        , testProperty "aiming never changes how the view moves, only how it turns" $
+            \r (Seated forward) (Walk walk) ->
+                let views = aimedViews r{lean = LeanWithScreen} (trimTo forward)
+                    movement v = (tx v, ty v, tz v)
+                 in map movement (views walk) === map movement (views (unasked walk))
+        , testProperty "once aiming has ended and the view has glided back, the view is as if it had never been aimed" $
+            \r (Seated forward) (Walk walk) (Walk after) ->
+                let same = r{aim = (aim r){aimSmoothing = smoothing r}}
+                    frames = walk ++ replicate glideFrames (NotAiming, lastOf walk) ++ unasked (from (lastOf walk) after)
+                    settled = drop (length walk + glideFrames)
+                 in settled (aimedViews same (trimTo forward) frames) === settled (aimedViews same (trimTo forward) (unasked frames))
+        , testProperty "as the view glides back it is never further from the view unaimed than the frame before, but for rounding" $
+            \r (Walk walk) ->
+                let same = r{aim = (aim r){aimSmoothing = smoothing r}}
+                    frames = walk ++ replicate glideFrames (NotAiming, lastOf walk)
+                    aimed = aimedViews same NoTrim frames
+                    unaimed = aimedViews same NoTrim (unasked frames)
+                    off = drop (length walk) (zipWith (\a u -> [axis a - axis u | axis <- [yaw, pitch, roll]]) aimed unaimed)
+                    size = maximum (1 : [abs (axis v) | v <- aimed ++ unaimed, axis <- [yaw, pitch, roll]])
+                 in counterexample (show off) $
+                        and [abs later <= abs sooner + rounding 8 size | (sooner, later) <- concat (zipWith zip off (drop 1 off))]
         ]
   where
-    straight = Response NoSmoothing one one one one one one LeanWithScreen
+    straight = Response NoSmoothing one one one one one one LeanWithScreen (Aim NoSmoothing one one one)
     one = Points [(1, 1)]
     centre = HeadPose 0 0 0 0 0 0
+    unsmooth r = r{smoothing = NoSmoothing, aim = (aim r){aimSmoothing = NoSmoothing}}
+    unasked = map (\(_, p) -> (NotAiming, p))
+    lastOf = snd . last
+    -- Frames enough for the view to have glided back, and two over.
+    glideFrames = ceiling (inSeconds aimGlide * 120) + 2 :: Int
+    -- A walk's frames, begun from a pose rather than from its own first.
+    from start walk = [(wanted, start `moved` (p `less` first)) | (_, first) <- take 1 walk, (wanted, p) <- walk]
 
 -- | The rounding of so many sums or products of numbers of a size.
 rounding :: Double -> Double -> Double
@@ -191,10 +239,32 @@ rounding count size = count * 2 ** (-52) * size
 
 -- | The views of poses seen one after another at 120 frames a second.
 shaped :: Response -> Trim -> [HeadPose] -> [HeadPose]
-shaped r forward = go newShaper . zip (map clockAt [0, 1 / 120 ..])
+shaped r forward = aimedViews r forward . map ((,) NotAiming)
+
+-- | The views of poses seen one after another at 120 frames a second,
+-- with whether aiming is asked for in each.
+aimedViews :: Response -> Trim -> [(Aiming, HeadPose)] -> [HeadPose]
+aimedViews r forward = fst . shapedFrom newShaper r forward
+
+-- | The views of frames as 'aimedViews' takes them, and the shaper after
+-- them.
+shapedFrom :: Shaper -> Response -> Trim -> [(Aiming, HeadPose)] -> ([HeadPose], Shaper)
+shapedFrom start r forward = go start . zip [0 ..]
   where
-    go _ [] = []
-    go sh ((t, p) : rest) = let (out, sh') = shape r forward t p sh in out : go sh' rest
+    go sh [] = ([], sh)
+    go sh ((i, (wanted, p)) : rest) =
+        let (out, sh') = shape r forward wanted (frameTime i) p sh
+            (outs, final) = go sh' rest
+         in (out : outs, final)
+
+-- | When the frame of a number arrives, at 120 a second.
+frameTime :: Int -> Instant
+frameTime i = clockAt (fromIntegral i / 120)
+
+-- | A pose moved by another, axis by axis, and how far one is from another.
+moved, less :: HeadPose -> HeadPose -> HeadPose
+moved p d = HeadPose (yaw p + yaw d) (pitch p + pitch d) (roll p + roll d) (tx p + tx d) (ty p + ty d) (tz p + tz d)
+less b a = HeadPose (yaw b - yaw a) (pitch b - pitch a) (roll b - roll a) (tx b - tx a) (ty b - ty a) (tz b - tz a)
 
 -- | A pose with one of its six axes moved by so many times what a head
 -- can move it in a frame.
@@ -222,6 +292,48 @@ instance Arbitrary Seated where
     shrink (Seated pose) = Seated <$> Gen.shrinkParts [centred yaw (\p x -> p{yaw = x}), centred pitch (\p x -> p{pitch = x}), centred roll (\p x -> p{roll = x}), centred tx (\p x -> p{tx = x}), centred ty (\p x -> p{ty = x}), centred tz (\p x -> p{tz = x})] pose
       where
         centred axis with p = [p `with` 0 | axis p /= 0]
+
+-- | How far a head moves from one frame to the next: along each axis, up
+-- to a third of what a head can in a frame. Simplest not at all.
+newtype Step = Step HeadPose
+    deriving (Show)
+
+instance Arbitrary Step where
+    arbitrary = Step <$> (HeadPose <$> turn <*> turn <*> turn <*> move <*> move <*> move)
+      where
+        turn = choose (-1, 1) <&> (* (inDegrees (headStepTurn world) / 3))
+        move = choose (-1, 1) <&> (* (inMillimetres (headStepMove world) / 3))
+    shrink (Step step) = [Step unmoved | step /= unmoved]
+
+unmoved :: HeadPose
+unmoved = HeadPose 0 0 0 0 0 0
+
+-- | A head's poses in a few frames one after another, each a 'Step' from
+-- the one before, so that none is taken for a jump, with whether aiming
+-- is asked for in each. Simplest one frame at centre with no aiming; and
+-- simpler of fewer frames, with no aiming, with the head still, and from
+-- the centre.
+newtype Walk = Walk [(Aiming, HeadPose)]
+    deriving (Show)
+
+instance Arbitrary Walk where
+    arbitrary = do
+        Seated start <- arbitrary
+        first <- arbitrary
+        Walk . walked (first, start) <$> scale (`div` 2) (listOf ((,) <$> arbitrary <*> arbitrary))
+    shrink (Walk frames) = Walk <$> Gen.shrinkTo [(NotAiming, unmoved)] simpler frames
+      where
+        steps = zipWith (\(_, a) (wanted, b) -> (wanted, Step (b `less` a))) frames (drop 1 frames)
+        simpler [] = []
+        simpler (first@(_, start) : _) =
+            [walked first fewer | fewer <- shrinkList (const []) steps]
+                ++ [walked (NotAiming, start) [(NotAiming, step) | (_, step) <- steps]]
+                ++ [walked first [(wanted, Step unmoved) | (wanted, _) <- steps]]
+                ++ [walked (fst first, unmoved) steps]
+
+-- | The frames of a head that starts at a pose and takes steps from it.
+walked :: (Aiming, HeadPose) -> [(Aiming, Step)] -> [(Aiming, HeadPose)]
+walked = scanl (\(_, p) (wanted, Step d) -> (wanted, p `moved` d))
 
 -- | A curve's points: inputs going up from above zero, and any outputs;
 -- simpler of fewer.

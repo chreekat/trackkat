@@ -621,7 +621,7 @@ genConfig = do
             <*> curve leanRange
     leaning <- elements [LeanWithView, LeanWithScreen]
     worn <- clip' `suchThatMap` id
-    Config recenter pause trim (curves leaning) worn
+    Config recenter pause trim (curves leaning (aim (response defaultConfig))) worn
         <$> elements [TrackKatNPClient, TrackIRNPClient]
         <*> elements [UpdatesOn, UpdatesOff]
         <*> elements [StartAtLogin, NoStartAtLogin]

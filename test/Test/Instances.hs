@@ -142,13 +142,35 @@ instance Arbitrary Curve where
         steps (Points points) = map Points (shrinkPoints points)
         steps (Expo e) = Points [(1, factor e)] : map Expo (shrink e)
 
--- | A response of any curves, smoothing and leaning; simplest with every
--- curve a straight line of one for one, no smoothing, and leaning with
--- the screen; and simpler with one of them so, or a simpler curve.
+instance Arbitrary Aiming where
+    arbitrary = elements [NotAiming, Aiming]
+    shrink = earlier [NotAiming, Aiming]
+
+-- | Any smoothing; simplest none.
+genSmoothing :: Gen Smoothing
+genSmoothing = oneof [pure NoSmoothing, tuned <$> choose (0, 100) <*> choose (0, 100)]
+
+-- | Aiming of any curves and smoothing; simplest with every curve a
+-- straight line of one for one and no smoothing; and simpler with one of
+-- them so, or a simpler curve.
+instance Arbitrary Aim where
+    arbitrary = Aim <$> genSmoothing <*> arbitrary <*> arbitrary <*> arbitrary
+    shrink =
+        shrinkParts
+            [ \a -> [a{aimSmoothing = NoSmoothing} | aimSmoothing a /= NoSmoothing]
+            , \a -> [a{aimYaw = curve} | curve <- shrink (aimYaw a)]
+            , \a -> [a{aimPitch = curve} | curve <- shrink (aimPitch a)]
+            , \a -> [a{aimRoll = curve} | curve <- shrink (aimRoll a)]
+            ]
+
+-- | A response of any curves, smoothing, leaning and aiming; simplest with
+-- every curve a straight line of one for one, no smoothing, leaning with
+-- the screen, and aiming at its simplest; and simpler with one of them so,
+-- or a simpler curve.
 instance Arbitrary Response where
     arbitrary =
         Response
-            <$> oneof [pure NoSmoothing, tuned <$> choose (0, 100) <*> choose (0, 100)]
+            <$> genSmoothing
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
@@ -156,6 +178,7 @@ instance Arbitrary Response where
             <*> arbitrary
             <*> arbitrary
             <*> elements [LeanWithView, LeanWithScreen]
+            <*> arbitrary
     shrink =
         shrinkParts
             [ \r -> [r{smoothing = NoSmoothing} | smoothing r /= NoSmoothing]
@@ -166,6 +189,7 @@ instance Arbitrary Response where
             , \r -> [r{yCurve = curve} | curve <- shrink (yCurve r)]
             , \r -> [r{zCurve = curve} | curve <- shrink (zCurve r)]
             , \r -> [r{lean = LeanWithScreen} | lean r /= LeanWithScreen]
+            , \r -> [r{aim = aiming} | aiming <- shrink (aim r)]
             ]
 
 instance Arbitrary HeadView where

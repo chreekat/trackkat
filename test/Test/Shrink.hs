@@ -94,10 +94,10 @@ tests =
         , shrinksWell "whether trackkat is used" Used (const True)
         , shrinksWell "a multiplier" (Multiplier 1 0 yawRange) multiplier
         , shrinksWell "a curve" (Points [(1, 1)]) curve
-        , shrinksWell "a response" (Response NoSmoothing straight straight straight straight straight straight LeanWithScreen) $ \r ->
-            all curve [yawCurve r, pitchCurve r, rollCurve r, xCurve r, yCurve r, zCurve r] && case smoothing r of
-                NoSmoothing -> True
-                Smoothing cutoff b -> cutoff >= 0.2 - 1e-9 && cutoff <= 20 && b >= 0.001 && b <= 1 + 1e-9
+        , shrinksWell "whether aiming is asked for" NotAiming (const True)
+        , shrinksWell "aiming" unaimed aiming
+        , shrinksWell "a response" (Response NoSmoothing straight straight straight straight straight straight LeanWithScreen unaimed) $ \r ->
+            all curve [yawCurve r, pitchCurve r, rollCurve r, xCurve r, yCurve r, zCurve r] && smooth (smoothing r) && aiming (aim r)
         , shrinksWell "a view of the head" VirtualView (const True)
         , shrinksWell "a game served" (ServedGame 1 Nothing 0 Nothing TrackingStopped) (\g -> servedProcess g >= 1 && maybe True (\profile -> profile >= 0 && profile <= 65535) (servedProfile g))
         , shrinksWell "why an update is looked for" Due (const True)
@@ -106,6 +106,10 @@ tests =
         ]
   where
     straight = Points [(1, 1)]
+    unaimed = Aim NoSmoothing straight straight straight
+    aiming a = all curve [aimYaw a, aimPitch a, aimRoll a] && smooth (aimSmoothing a)
+    smooth NoSmoothing = True
+    smooth (Smoothing cutoff b) = cutoff >= 0.2 - 1e-9 && cutoff <= 20 && b >= 0.001 && b <= 1 + 1e-9
     turnOf most w = degreesOf w <= most + 1e-9
     upTo size (V3 x y z) = all ((<= size) . abs) [x, y, z]
     seen most (nearest, farthest) placing@(Placing turn at) = turnOf most turn && norm at >= nearest - 1e-9 && norm at <= farthest + 1e-9 && inView headset placing

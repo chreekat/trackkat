@@ -26,8 +26,9 @@ simulations =
                     flat =<< liveWhileTracking frameAt [2000, 20000]
               | (name, frameAt) <- [("held nearly still", stillFrame), ("turning", turningFrame), ("gone", goneFrame)]
               ]
-            ++ [ testCase "memory in use stays flat from 2000 frames to 20000 shaping while paused" $
-                    flat =<< liveWhileStepping shapeUnused newShaper [2000, 20000]
+            ++ [ testCase ("memory in use stays flat from 2000 frames to 20000 shaping while paused" ++ name) $
+                    flat =<< liveWhileStepping (shapeUnused wanted) newShaper [2000, 20000]
+               | (name, wanted) <- [("", const NotAiming), (", aiming", const Aiming), (", aiming now and then", \i -> if even (i `div` 100) then Aiming else NotAiming)]
                ]
   where
     flat lives = assertBool (show lives) $ case lives of
@@ -45,7 +46,7 @@ simulations =
          in if t < 10 then fireLit i t (fidgeting t) else (t, renderDiscs (fireDiscs fireAt i))
     -- Shaping while paused, its output unused.
     swaying i = let t = fromIntegral i / 120 in HeadPose{yaw = 30 * sin t, pitch = 10 * sin (t / 2), roll = 0, tx = 20 * sin (t / 3), ty = 0, tz = 0}
-    shapeUnused i sh = pure (snd (shape (response defaultConfig) NoTrim (clockAt (fromIntegral i / 120)) (swaying i) sh))
+    shapeUnused wanted i sh = pure (snd (shape (response defaultConfig) NoTrim (wanted i) (clockAt (fromIntegral i / 120)) (swaying i) sh))
 
 -- | Track the i-th frame of (time, stripes) for i from 0, as the app does,
 -- keeping only the tracker: the bytes of memory in use, after a major

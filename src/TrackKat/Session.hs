@@ -297,7 +297,7 @@ frame now stripes s =
         | any resetsShaping events = newShaper
         | otherwise = sShaper s
     (latest, shaper') = case outcome of
-        Tracked{outPose = hp} -> shape (response (sSettings s)) (sTrim s) now hp shaper
+        Tracked{outPose = hp} -> shape (response (sSettings s)) (sTrim s) NotAiming now hp shaper
         Lost{} -> (sLatest s, shaper)
     (absent, outOfSight) = absence now outcome (sAbsence s)
     s' = s{sTracker = tracker, sShaper = shaper', sOutcome = Just outcome, sLatest = latest, sAbsence = absent}

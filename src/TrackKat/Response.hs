@@ -1,6 +1,6 @@
 -- | Shaping the head pose for games: rejecting impossible jumps, smoothing,
--- per-axis response curves, trimming where forward is, and turning leans to
--- follow the view.
+-- per-axis response curves, aiming, trimming where forward is, and turning
+-- leans to follow the view.
 module TrackKat.Response (
     Curve (..),
     Multiplier (..),
@@ -16,6 +16,9 @@ module TrackKat.Response (
     leanWithView,
     Trim (..),
     trimTo,
+    Aim (..),
+    Aiming (..),
+    aimGlide,
     Response (..),
     Shaper,
     newShaper,
@@ -23,7 +26,7 @@ module TrackKat.Response (
 ) where
 
 import TrackKat.Pose (HeadPose (..))
-import TrackKat.World (Instant, World (..), inDegrees, inMillimetres, inSeconds, world, (.-.))
+import TrackKat.World (Instant, Seconds, World (..), inDegrees, inMillimetres, inSeconds, seconds, world, (.-.))
 
 -- | A response curve, the same on both sides of centre: in degrees for
 -- rotations, mm for translations.
@@ -171,14 +174,78 @@ wrapDegrees a = a - 360 * fromIntegral (floor ((a + 180) / 360) :: Integer)
 clampPitch :: Double -> Double
 clampPitch = max (-90) . min 90
 
+-- Note [Aiming]
+-- ~~~~~~~~~~~~~
+-- The curves make a small turn of the head a large turn of the view, to
+-- look around a cockpit without looking away from the screen: too large to
+-- lay a gunsight on something by head. Aiming is for that: from when it
+-- begins, the view turns from where it then was by the head's turning
+-- since, through gentler curves ('Aim') and with a smoothing of its own.
+--
+--  * A frame's view never depends on whether aiming is asked for in that
+--    frame, only on what was asked before it: the frame aiming begins on
+--    is shaped as if it hadn't, and is where the view and the head are
+--    taken from; the frame it ends on is shaped as if it hadn't ended. So
+--    the view never jumps as aiming begins or ends.
+--
+--  * While aiming, a head that turns by some angle from where aiming began
+--    turns the view by the aim's curve of that angle, from where the view
+--    was then: the curve is of the turn since, not of the head's turn from
+--    centre.
+--
+--  * When aiming ends the view glides back onto what the curves make of
+--    the head: how far the aimed view was from that is added on, shrinking
+--    to nothing over 'aimGlide'. Aiming begun again meanwhile begins from
+--    the view as it then is.
+--
+--  * Only turning is aimed. The view's movement is what it is without
+--    aiming, smoothing included.
+--
+--  * The smoothing's memory of the head carries across, so changing from
+--    one smoothing to the other moves nothing either.
+--
+-- Trimming and leaning with the view come after, as they do without
+-- aiming.
+
+-- | How the view turns as the head does while aiming: a smoothing for the
+-- head's turning, and a curve for each axis of it, taking how far the head
+-- has turned since aiming began to how far the view has. See Note [Aiming].
+data Aim = Aim
+    { aimSmoothing :: Smoothing
+    , aimYaw, aimPitch, aimRoll :: Curve
+    }
+    deriving (Eq, Show)
+
+-- | Whether aiming is asked for.
+data Aiming = NotAiming | Aiming
+    deriving (Eq, Show)
+
+-- | How long the view takes to glide back once aiming ends.
+aimGlide :: Seconds
+aimGlide = seconds 0.2
+
 -- | How the head's pose becomes the view games see: smoothing, a curve
--- for each axis, and what leaning follows.
+-- for each axis, what leaning follows, and how aiming turns the view.
 data Response = Response
     { smoothing :: Smoothing
     , yawCurve, pitchCurve, rollCurve, xCurve, yCurve, zCurve :: Curve
     , lean :: Lean
+    , aim :: Aim
     }
     deriving (Eq, Show)
+
+-- | Yaw, pitch and roll, in degrees.
+data Turning = Turning !Double !Double !Double
+
+-- | How aiming stands. See Note [Aiming].
+data Anchorage
+    = -- | not aiming: the view is what the curves make of the head
+      Free
+    | -- | aiming: the smoothed head's turning when it began, and the view's
+      Anchored !Turning !Turning
+    | -- | aiming ended then, with the view so far from what the curves made
+      -- of the head
+      Gliding !Instant !Turning
 
 -- | One axis's 1€ filter state: the filtered value and its filtered rate of
 -- change.
@@ -193,11 +260,12 @@ data Shaper = Shaper
     , shAxes :: !(Maybe [Axis])
     -- ^ all evaluated, so that shaping whose output isn't used, as while
     -- paused, doesn't hold on to every frame before
+    , shAim :: !Anchorage
     }
 
--- | A shaper that has seen no frame.
+-- | A shaper that has seen no frame, and isn't aiming.
 newShaper :: Shaper
-newShaper = Shaper Nothing 0 Nothing
+newShaper = Shaper Nothing 0 Nothing Free
 
 -- | Largest change in one frame that a head can make: the world's
 -- 'headStepTurn' and 'headStepMove', about 1800 degrees or 5 m a second.
@@ -213,39 +281,82 @@ jumpPersistence = 3
 
 -- | Shape a pose seen at the given time. Impossible jumps are
 -- ignored unless they persist, then each axis is smoothed and put through
--- its curve, the view is turned by the trim, leaning follows the view if
--- the response says so, by the yaw the game will show, and the view is moved
--- by the trim.
-shape :: Response -> Trim -> Instant -> HeadPose -> Shaper -> (HeadPose, Shaper)
-shape r forward now pose s = case shLast s of
+-- its curve, or its turning through the aim's as Note [Aiming] has it, the
+-- view is turned by the trim, leaning follows the view if the response
+-- says so, by the yaw the game will show, and the view is moved by the
+-- trim. Whether aiming is asked for tells on the frames after this one.
+shape :: Response -> Trim -> Aiming -> Instant -> HeadPose -> Shaper -> (HeadPose, Shaper)
+shape r forward wanted now pose s = case shLast s of
     Just (_, previous)
         | jump previous pose && shRejected s + 1 < jumpPersistence ->
-            (output (shAxes s) previous, s{shRejected = shRejected s + 1})
+            (output (maybe (values previous) (map (\(Axis v _) -> v)) (shAxes s)) previous, s{shRejected = shRejected s + 1})
     _ ->
         let axes = smoothAll (fst <$> shLast s) (shAxes s)
-         in (output (Just axes) pose, foldr seq (Shaper (Just (now, pose)) 0 (Just axes)) axes)
+            smoothed = map (\(Axis v _) -> v) axes
+         in (output smoothed pose, foldr seq (Shaper (Just (now, pose)) 0 (Just axes) (anchorage smoothed)) axes)
   where
     values p = [yaw p, pitch p, roll p, tx p, ty p, tz p]
     jump a b =
         or (zipWith3 (\limit u v -> abs (u - v) > limit) (replicate 3 maxStepDegrees ++ replicate 3 maxStepMm) (values a) (values b))
-    smoothAll lastTime axes = case (smoothing r, lastTime, axes) of
-        (Smoothing mc b, Just t, Just old) | now > t -> zipWith (oneEuro mc b (inSeconds (now .-. t))) old (values pose)
+    smoothAll lastTime axes = case (lastTime, axes) of
+        (Just t, Just old) | now > t -> zipWith3 (smooth (inSeconds (now .-. t))) smoothings old (values pose)
         _ -> [Axis v 0 | v <- values pose]
-    output axes fallback = case maybe (values fallback) (map (\(Axis v _) -> v)) axes of
+    smooth dt (Smoothing mc b) old v = oneEuro mc b dt old v
+    smooth _ NoSmoothing _ v = Axis v 0
+    smoothings = replicate 3 turningSmoothing ++ replicate 3 (smoothing r)
+    turningSmoothing = case shAim s of
+        Anchored _ _ -> aimSmoothing (aim r)
+        _ -> smoothing r
+    output smoothed fallback = case smoothed of
         [y, p, ro, x, yy, z] ->
-            moveByTrim forward . leaning . turnByTrim forward $
-                HeadPose
-                    { yaw = applyCurve (yawCurve r) y
-                    , pitch = applyCurve (pitchCurve r) p
-                    , roll = applyCurve (rollCurve r) ro
-                    , tx = applyCurve (xCurve r) x
-                    , ty = applyCurve (yCurve r) yy
-                    , tz = applyCurve (zCurve r) z
-                    }
+            let Turning vy vp vr = turning (Turning y p ro)
+             in moveByTrim forward . leaning . turnByTrim forward $
+                    HeadPose
+                        { yaw = vy
+                        , pitch = vp
+                        , roll = vr
+                        , tx = applyCurve (xCurve r) x
+                        , ty = applyCurve (yCurve r) yy
+                        , tz = applyCurve (zCurve r) z
+                        }
         _ -> fallback
     leaning = case lean r of
         LeanWithView -> leanWithView
         LeanWithScreen -> id
+    -- The view's turning for the smoothed head's, as aiming stood before
+    -- this frame.
+    turning h = case shAim s of
+        Free -> curved h
+        Anchored h0 v0 -> v0 `plus` aimed (h `minus` h0)
+        Gliding since off -> curved h `plus` scaled (glideLeft (now .-. since)) off
+    curved (Turning y p ro) = Turning (applyCurve (yawCurve r) y) (applyCurve (pitchCurve r) p) (applyCurve (rollCurve r) ro)
+    aimed (Turning y p ro) = Turning (applyCurve (aimYaw (aim r)) y) (applyCurve (aimPitch (aim r)) p) (applyCurve (aimRoll (aim r)) ro)
+    -- How aiming stands after this frame.
+    anchorage smoothed = case (smoothed, wanted, shAim s) of
+        (y : p : ro : _, Aiming, Free) -> anchor (Turning y p ro)
+        (y : p : ro : _, Aiming, Gliding _ _) -> anchor (Turning y p ro)
+        (y : p : ro : _, NotAiming, Anchored _ _) -> let h = Turning y p ro in Gliding now (turning h `minus` curved h)
+        (_, NotAiming, Gliding since _) | now .-. since >= aimGlide -> Free
+        (_, _, unchanged) -> unchanged
+    anchor h = Anchored h (turning h)
+
+plus, minus :: Turning -> Turning -> Turning
+plus (Turning a b c) (Turning x y z) = Turning (a + x) (b + y) (c + z)
+minus (Turning a b c) (Turning x y z) = Turning (a - x) (b - y) (c - z)
+
+scaled :: Double -> Turning -> Turning
+scaled k (Turning x y z) = Turning (k * x) (k * y) (k * z)
+
+-- | How much of what the aimed view was off by is still to go, so long
+-- after aiming ended: all of it, easing out and in to none of it after
+-- 'aimGlide', never more as time goes on.
+glideLeft :: Seconds -> Double
+glideLeft since
+    | u <= 0 = 1
+    | u >= 1 = 0
+    | otherwise = 1 - u * u * (3 - 2 * u)
+  where
+    u = inSeconds since / inSeconds aimGlide
 
 -- | One step of the 1€ filter, of so many seconds.
 oneEuro :: Double -> Double -> Double -> Axis -> Double -> Axis

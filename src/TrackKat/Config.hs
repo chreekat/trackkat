@@ -122,9 +122,10 @@ clipModel :: ClipShape -> Model
 clipModel (ClipShape _ m) = m
 
 -- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
--- DCS; strong smoothing; the headset clip trackkat was developed with, its
--- post as it is now bent; trackkat's own NPClient; still lights ignored;
--- the head view as games see it.
+-- DCS; strong smoothing; aiming that turns the view half as far again as
+-- the head, smoothed more strongly still; the headset clip trackkat was
+-- developed with, its post as it is now bent; trackkat's own NPClient;
+-- still lights ignored; the head view as games see it.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -141,6 +142,7 @@ defaultConfig =
                 , yCurve = gain 4
                 , zCurve = gain 2.5
                 , lean = LeanWithView
+                , aim = Aim{aimSmoothing = tuned 95 45, aimYaw = gain 1.5, aimPitch = gain 1.5, aimRoll = gain 1.5}
                 }
         , clip = defaultClip
         , npclient = TrackKatNPClient
