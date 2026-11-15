@@ -15,6 +15,7 @@ import Test.Tasty.QuickCheck
 
 import Test.Check
 import Test.Gen
+import Test.Instances ()
 import TrackKat.Config
 import TrackKat.Response
 
@@ -235,31 +236,31 @@ properties =
     testGroup
         "properties"
         [ testProperty "settings are read back as written" $
-            forAllShrink genConfig shrinkConfig $
-                \c -> parseConfig (renderConfig c) === Right c
+            \(Sayable c) ->
+                parseConfig (renderConfig c) === Right c
         , testProperty "written settings set each setting once, in the order of their names, none of them retired" $
-            forAllShrink genConfig shrinkConfig $ \c ->
+            \(Sayable c) ->
                 map fst (settingValues (renderConfig c)) === settingNames .&&. retiredSettings (renderConfig c) === []
         , testProperty "nothing is said to have changed just when nothing but the head view has" $
-            forAllShrink genConfig shrinkConfig $ \a -> forAllShrink genConfig shrinkConfig $ \b ->
+            \(Sayable a) (Sayable b) ->
                 let same = a{headView = headView b} == b
                  in describeChanges a a === "Settings reloaded." .&&. (describeChanges a b == "Settings reloaded.") === same
         , testProperty "bindings are read back as written" $
-            forAllShrink (listOf genBinding) (shrinkList shrinkBinding) $
-                \bs -> parseBindings (renderBindings bs) === Right bs
+            \bs ->
+                parseBindings (renderBindings bs) === Right bs
         , testProperty "modifiers written in any order are the same binding" $
-            forAllShrink (genBinding `suchThat` isKey) shrinkBinding $ \b ->
+            \(KeyBinding b) ->
                 let parts = splitOn '+' (renderBinding b)
-                 in forAll (shuffle (init parts)) $ \mods -> parseBinding (intercalate " + " (mods ++ mods ++ [last parts])) === Right b
+                 in forAnyOrder (init parts) $ \mods -> parseBinding (intercalate " + " (mods ++ mods ++ [last parts])) === Right b
         , testProperty "a key's binding is the one for its codes" $
-            forAllShrink (genBinding `suchThat` isKey) shrinkBinding $ \b -> case b of
+            \(KeyBinding b) -> case b of
                 Key mods k -> bindingFromCodes (modifierMask mods) (virtualKey k) === Just b
                 JoystickButton{} -> property True
         , testProperty "a file edited to the values it has is left alone" $
-            forAllShrink genFile shrinkFile $ \file ->
+            \(Edited file) ->
                 let text = fileText file in editSettings (settingValues text) text === Right text
         , testProperty "a file edited to other settings says those settings, its other lines and comments kept" $
-            forAllShrink genFile shrinkFile $ \file -> forAllShrink genConfig shrinkConfig $ \c ->
+            \(Edited file) (Sayable c) ->
                 let text = fileText file
                  in case editSettings (settingValues (renderConfig c)) text of
                         Left err -> counterexample err False
@@ -272,14 +273,12 @@ properties =
                                     , property (all (null . comment) (drop (length (lines text)) (lines edited)))
                                     ]
         , testProperty "a file edited twice to the same settings is edited once" $
-            forAllShrink genFile shrinkFile $ \file -> forAllShrink genConfig shrinkConfig $ \c ->
+            \(Edited file) (Sayable c) ->
                 let values = settingValues (renderConfig c)
                     once' = editSettings values (fileText file)
                  in (once' >>= editSettings values) === once'
         ]
   where
-    isKey Key{} = True
-    isKey JoystickButton{} = False
     comment = dropWhile (/= '#')
     -- The name a line sets, if it sets one.
     named line = case break (== '=') (takeWhile (/= '#') line) of
@@ -301,13 +300,24 @@ fileText = unlines . map line
     line (Setting name value remark) = name ++ " = " ++ value ++ remark
 
 -- | Some of the settings of some settings, in any order and some of them
--- more than once, among comments.
-genFile :: Gen [Line]
-genFile = do
-    c <- genConfig
-    let settings = [Setting name value | (name, value) <- settingValues (renderConfig c)]
-    listOf (oneof [Remark <$> elements ["", "# mine", "#", "  # as Zoë likes it"], elements settings <*> elements ["", " # mine", "   #"]])
+-- more than once, among comments; simpler of fewer lines.
+newtype Edited = Edited [Line]
+    deriving (Show)
 
--- | Files of fewer lines.
-shrinkFile :: [Line] -> [[Line]]
-shrinkFile = shrinkList (const [])
+instance Arbitrary Edited where
+    arbitrary = do
+        c <- genConfig
+        let settings = [Setting name value | (name, value) <- settingValues (renderConfig c)]
+        Edited <$> listOf (oneof [Remark <$> elements ["", "# mine", "#", "  # as Zoë likes it"], elements settings <*> elements ["", " # mine", "   #"]])
+    shrink (Edited file) = Edited <$> shrinkList (const []) file
+
+-- | A key or mouse button with modifiers.
+newtype KeyBinding = KeyBinding Binding
+    deriving (Show)
+
+instance Arbitrary KeyBinding where
+    arbitrary = KeyBinding <$> arbitrary `suchThat` isKey
+      where
+        isKey Key{} = True
+        isKey JoystickButton{} = False
+    shrink (KeyBinding b) = KeyBinding <$> shrink b
