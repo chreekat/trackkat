@@ -16,6 +16,7 @@ import qualified Test.Match
 import qualified Test.Memory
 import qualified Test.Mount
 import qualified Test.Pose
+import qualified Test.Protocol
 import qualified Test.Recording
 import qualified Test.Release
 import qualified Test.Response
@@ -40,7 +41,8 @@ main = do
             "trackkat"
             [ testGroup
                 "unit"
-                [ Test.Frame.tests
+                [ Test.Protocol.tests
+                , Test.Frame.tests
                 , Test.Pose.tests
                 , Test.Term.tests
                 , Test.Match.tests
