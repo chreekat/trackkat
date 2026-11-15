@@ -20,6 +20,7 @@ import Test.Tasty.QuickCheck
 import Codec.Archive.Zip (addEntryToArchive, emptyArchive, fromArchive, toEntry)
 
 import Test.Check
+import Test.Gen (earlier, forAnyOrder)
 import TrackKat.Number (renderNatural)
 import TrackKat.Release
 
@@ -144,18 +145,18 @@ properties =
     testGroup
         "properties"
         [ testProperty "a version is read back as written, numbers and build" $
-            forAllShrink genVersion shrinkVersion $ \(numbers, build) ->
-                let text = versionText (numbers, build)
+            \spec@(VersionSpec numbers _) ->
+                let text = versionText spec
                  in fmap versionNumbers (parseVersion text) === Just numbers .&&. fmap renderVersion (parseVersion text) === Just text
         , testProperty "versions are in the order of their numbers, whatever built them" $
-            forAllShrink genVersion shrinkVersion $ \a -> forAllShrink genVersion shrinkVersion $ \b ->
+            \a b ->
                 let (va, vb) = (version a, version b)
-                 in compare va vb === compare (fst a) (fst b) .&&. (va == vb) === (fst a == fst b)
+                 in compare va vb === compare (specNumbers a) (specNumbers b) .&&. (va == vb) === (specNumbers a == specNumbers b)
         , testProperty "a version's folder is named for its numbers alone, and names it" $
-            forAllShrink genVersion shrinkVersion $ \v ->
-                versionFolder (version v) === versionText (fst v, Nothing)
+            \v ->
+                versionFolder (version v) === versionText v{specBuild = Nothing}
                     .&&. folderVersion (versionFolder (version v)) === Just (version v)
-                    .&&. (folderVersion (versionText v) == Nothing) === (snd v /= Nothing)
+                    .&&. (folderVersion (versionText v) == Nothing) === (specBuild v /= Nothing)
         , testProperty "a status from the web means try again later, or that the look failed, never that there is no network" $ \status ->
             let unavailable = status == 404 || (status >= 500 && status <= 599)
              in case httpFailure "https://example.com/x" status of
@@ -168,16 +169,16 @@ properties =
                 Offline said -> property ("https://example.com/x" `isPrefixOf` said)
                 LookFailed said -> property ("https://example.com/x" `isPrefixOf` said)
         , testProperty "a version installed in the root is installed, and anything else there is portable" $
-            forAllShrink genVersion shrinkVersion $ \v -> forAll (elements ["", ".partial", "x", " "]) $ \more ->
+            \v (Suffix more) ->
                 placement root (root </> versionFolder (version v)) === Installed (version v)
-                    .&&. (placement root (root </> (versionText v ++ more)) == Portable) === (snd v /= Nothing || more /= "")
+                    .&&. (placement root (root </> (versionText v ++ more)) == Portable) === (specBuild v /= Nothing || more /= "")
         , testProperty "a portable copy offers the newest installed if that is no older, and else itself" $
-            forAllShrink genVersion shrinkVersion $ \self -> forAllShrink (listOf genVersion) (shrinkList shrinkVersion) $ \installed ->
+            \self installed ->
                 let vs = map version installed
                  in offer (Just (version self)) Portable vs
                         === (if any (>= version self) vs then OfferInstalled (maximum vs) else OfferInstall (version self))
         , testProperty "an installed copy offers the newest installed if that is newer than its folder's, whatever it is itself" $
-            forAllShrink genVersion shrinkVersion $ \self -> forAllShrink genVersion shrinkVersion $ \own -> forAllShrink (listOf genVersion) (shrinkList shrinkVersion) $ \installed ->
+            \self own installed ->
                 let vs = map version installed
                     newer = if any (> version own) vs then Just (maximum vs) else Nothing
                  in offer (Just (version self)) (Installed (version own)) vs === maybe NoOffer OfferUpdate newer
@@ -185,15 +186,15 @@ properties =
                         .&&. newerInstalled Portable vs === Nothing
                         .&&. offer Nothing (Installed (version own)) vs === NoOffer
         , testProperty "stale folders are the unfinished ones and older versions', never the running one's or a newer's" $
-            forAllShrink genVersion shrinkVersion $ \own -> forAllShrink (listOf genVersion) (shrinkList shrinkVersion) $ \others ->
-                forAll (shuffle (versionFolder (version own) : "notes" : concat [[versionFolder (version v), versionFolder (version v) ++ partialSuffix] | v <- others])) $ \names ->
+            \own others ->
+                forAnyOrder (versionFolder (version own) : "notes" : concat [[versionFolder (version v), versionFolder (version v) ++ partialSuffix] | v <- others]) $ \names ->
                     let stale = staleFolders (Installed (version own)) names
                         older n = maybe False (< version own) (folderVersion n)
                      in stale === filter (\n -> partialSuffix `isSuffixOf` n || older n) names
                             .&&. property (versionFolder (version own) `notElem` stale)
                             .&&. staleFolders Portable names === []
         , testProperty "files are deleted each once, games' DLLs first and trackkat.exe last, the rest in their order" $
-            forAll (sublistOf (releaseFiles ++ ["notes.txt", "TRACKKAT.EXE", "npclient.DLL"]) >>= shuffle) $ \files ->
+            \(Files files) ->
                 let ordered = deletionOrder files
                     lower = map (map toLower)
                     dlls = ["npclient64.dll", "npclient.dll"]
@@ -207,7 +208,7 @@ properties =
                         , filter (`elem` middle) (lower files) === middle
                         ]
         , testProperty "digests are the same whatever their letters' case" $
-            forAll (listOf (elements "0123456789abcdefABCDEF")) $ \digest -> forAll (listOf (elements "0123456789abcdef")) $ \other ->
+            \(Digest digest) (LowerDigest other) ->
                 property (sameDigest digest (map toUpper digest) && sameDigest (map toLower digest) digest)
                     .&&. sameDigest digest other === (map toLower digest == other)
         ]
@@ -215,24 +216,59 @@ properties =
     root = if pathSeparator == '\\' then "C:\\Users\\zoe\\Programs\\trackkat" else "/home/zoe/Programs/trackkat"
 
 -- | A version as what to write it from: its numbers, and what built it.
-type VersionSpec = ([Int], Maybe String)
+data VersionSpec = VersionSpec {specNumbers :: [Int], specBuild :: Maybe String}
+    deriving (Show)
 
 versionText :: VersionSpec -> String
-versionText (numbers, build) = intercalate "." (map (renderNatural . toInteger) numbers) ++ maybe "" ('+' :) build
+versionText (VersionSpec numbers build) = intercalate "." (map (renderNatural . toInteger) numbers) ++ maybe "" ('+' :) build
 
 -- | The version a spec writes.
 version :: VersionSpec -> Version
 version spec = maybe (error ("not a version: " ++ versionText spec)) id (parseVersion (versionText spec))
 
 -- | One to four numbers, small or up to the nine digits a version's number
--- has at most, and perhaps a commit.
-genVersion :: Gen VersionSpec
-genVersion = (,) <$> numbers <*> oneof [pure Nothing, Just <$> listOf1 (elements "0123456789abcdef.-")]
-  where
-    numbers = chooseInt (1, 4) >>= \n -> vectorOf n (oneof [chooseInt (0, 3), chooseInt (0, 999999999)])
+-- has at most, and perhaps a commit. Simpler of fewer and smaller numbers,
+-- built by nothing.
+instance Arbitrary VersionSpec where
+    arbitrary = VersionSpec <$> numbers <*> oneof [pure Nothing, Just <$> listOf1 (elements "0123456789abcdef.-")]
+      where
+        numbers = chooseInt (1, 4) >>= \n -> vectorOf n (oneof [chooseInt (0, 3), chooseInt (0, 999999999)])
+    shrink (VersionSpec numbers build) =
+        [VersionSpec numbers Nothing | build /= Nothing]
+            ++ [VersionSpec numbers' build | numbers' <- shrinkList (filter (>= 0) . shrink) numbers, not (null numbers')]
 
--- | Versions of fewer and smaller numbers, built by nothing.
-shrinkVersion :: VersionSpec -> [VersionSpec]
-shrinkVersion (numbers, build) =
-    [(numbers, Nothing) | build /= Nothing]
-        ++ [(numbers', build) | numbers' <- shrinkList (filter (>= 0) . shrink) numbers, not (null numbers')]
+-- | What might follow a version in a folder's name.
+newtype Suffix = Suffix String
+    deriving (Show)
+
+instance Arbitrary Suffix where
+    arbitrary = Suffix <$> elements suffixes
+    shrink (Suffix more) = Suffix <$> earlier suffixes more
+
+suffixes :: [String]
+suffixes = ["", ".partial", "x", " "]
+
+-- | Some of a release's files and a few others, in any order; simpler of
+-- fewer.
+newtype Files = Files [FilePath]
+    deriving (Show)
+
+instance Arbitrary Files where
+    arbitrary = Files <$> (sublistOf (releaseFiles ++ ["notes.txt", "TRACKKAT.EXE", "npclient.DLL"]) >>= shuffle)
+    shrink (Files files) = Files <$> shrinkList (const []) files
+
+-- | A digest's hexadecimal digits, of either case; simpler shorter.
+newtype Digest = Digest String
+    deriving (Show)
+
+instance Arbitrary Digest where
+    arbitrary = Digest <$> listOf (elements "0123456789abcdefABCDEF")
+    shrink (Digest digits) = Digest <$> shrinkList (const []) digits
+
+-- | A digest's hexadecimal digits in lower case; simpler shorter.
+newtype LowerDigest = LowerDigest String
+    deriving (Show)
+
+instance Arbitrary LowerDigest where
+    arbitrary = LowerDigest <$> listOf (elements "0123456789abcdef")
+    shrink (LowerDigest digits) = LowerDigest <$> shrinkList (const []) digits
