@@ -108,13 +108,13 @@ tests =
                         Just (Right found) -> counterexample (renderFindings (layoutJump found) ++ show (sightingPose (layoutFound found))) (layoutWay found === Refound)
                         other -> counterexample (maybe "not tried" (either show (show . layoutScore)) other) False
         , testProperty "the three blobs following took aren't tried by layout too, nor any against following with nothing against it" $
-            \(Apart20 placing) (Scored scored) ->
+            \(Apart20 placing) (Likely scored) ->
                 let was = placed placing
                     blobs = clipBlobs headset placing
                     tried taken = findHere (knowing (pure noSize) (Just was)) (clockAt 1) (lastAt was) Nothing (sortBlobs noMask blobs) (Just taken)
                     untried = maybe (property True) (const (counterexample "tried" False))
                  in case blobs of
-                        [a, b, c] -> untried (tried (Score scored, whole <$> Three a b c)) .&&. untried (tried (possible, pure Nothing))
+                        [a, b, c] -> untried (tried (scored, whole <$> Three a b c)) .&&. untried (tried (possible, pure Nothing))
                         _ -> counterexample "not three blobs" False
         ]
 
@@ -161,11 +161,3 @@ newtype Turned = Turned V3
 instance Arbitrary Turned where
     arbitrary = Turned <$> genTurn 30
     shrink (Turned w) = Turned <$> shrinkTurn w
-
--- | What following scored, in nats, from nothing against it down to 60.
-newtype Scored = Scored Double
-    deriving (Show)
-
-instance Arbitrary Scored where
-    arbitrary = Scored <$> choose (-60, 0)
-    shrink (Scored x) = Scored <$> shrinkWithin (-60, 0) 0 x
