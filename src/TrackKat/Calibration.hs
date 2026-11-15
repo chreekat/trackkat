@@ -91,7 +91,7 @@ data Calibration = Calibration
     -- ^ where the pivot is on most heads, for the clip as it is mounted
     -- (see 'mountPivot'), in the head's axes
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | Nothing learnt yet: the camera is taken to be level, and the pivot is
 -- where it is on most heads, for a clip mounted the standard way (see

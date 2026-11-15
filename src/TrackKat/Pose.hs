@@ -58,7 +58,7 @@ data Intrinsics = Intrinsics
     , cx :: Double
     , cy :: Double
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | TrackIR 5: 640x480, 51.7 degree horizontal field of view.
 defaultIntrinsics :: Intrinsics
@@ -78,7 +78,7 @@ data Model = Model
     , mMount :: Mounting
     -- ^ how the clip sits on the head
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- Note [Mounting]
 -- ~~~~~~~~~~~~~~~
@@ -111,7 +111,7 @@ data Mounting = Mounting
     -- ^ where the neck pivot is on most heads, from the clip, in the head's
     -- axes, mm
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | A TrackClip on a headset clip or cap, facing forward with its
 -- crossbar level. A headset clip sits on the side of the head at about the
@@ -147,7 +147,7 @@ data Tabs = Tabs
     -- ^ degrees the top tab's axis leans toward the camera from the lower
     -- tabs'
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | Reflectors that are points, each always seen where its centre is.
 pointReflectors :: Tabs
@@ -201,7 +201,7 @@ triangle lean lr lt rt
 -- | A rotation and a translation, in mm, that take the model's axes to
 -- the camera's.
 data Pose = Pose {poseR :: !M33, poseT :: !V3}
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | Where a pose puts a point of the model, in the camera's axes.
 poseAt :: Pose -> V3 -> V3
@@ -556,7 +556,7 @@ data Observation = Observation
     , obWeight :: Double
     , obSeen :: (Double, Double)
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | Refine a pose to fit what was seen, starting from a recent pose and held
 -- gently toward it, so that what the observations leave free (with one
@@ -657,7 +657,7 @@ levenbergMarquardt steps residuals = go steps 1e-3
 
 -- | Rotation from the camera's axes to level axes facing the camera.
 newtype Level = Level M33
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | Level axes for a camera that is itself level.
 cameraLevel :: Level

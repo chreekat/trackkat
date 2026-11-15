@@ -107,7 +107,7 @@ data Start = Start
     , startClock :: Word64
     -- ^ nanoseconds on the monotonic clock that times count from
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | What the tracker knew about level and pivot when it started.
 data StartingCalibration
@@ -143,7 +143,7 @@ data Recording = Recording
     { recStart :: Start
     , recEntries :: [Entry]
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | The tracker's time, in seconds, for nanoseconds on the monotonic clock,
 -- as 'GHC.Clock.getMonotonicTime' gives it.
