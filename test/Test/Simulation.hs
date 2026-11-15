@@ -110,7 +110,7 @@ shapeSession truth configured minutes = go (0 :: Int) (seenPose 0) (newShapeLear
                 seen which j = noisy j (seenAt defaultIntrinsics truth (seenPose t) which)
              in case solvePose defaultIntrinsics configured (Just prev) (seen LeftReflector 0, seen RightReflector 1, seen TopReflector 2) of
                     Just (pose, _) ->
-                        let (sl', new) = watchShape defaultIntrinsics t (V3 0 100 100) pose sl
+                        let (sl', new) = watchShape defaultIntrinsics (clockAt t) (V3 0 100 100) pose sl
                          in sl' `seq` go (i + 1) pose sl' (maybe told (: told) new)
                     Nothing -> go (i + 1) prev (shapeLostSight sl) told
 
@@ -195,7 +195,7 @@ outputError turned rows = maximum (0 : [max (abs (yaw hp - y)) (abs (pitch hp - 
 -- | Learn from (time, pose) pairs from scratch, for a head wearing the
 -- given clip: the learner, and what it reported.
 runLearnerWith :: Model -> [(Double, Pose)] -> (Learner, [Refinement])
-runLearnerWith m = foldl (\(l, rs) (time, pose) -> let (l', new) = learn time pose l in (l', rs ++ new)) (newLearner m defaultCalibration, [])
+runLearnerWith m = foldl (\(l, rs) (time, pose) -> let (l', new) = learn (clockAt time) pose l in (l', rs ++ new)) (newLearner m defaultCalibration, [])
 
 -- | Degrees of turning and mm of movement between two poses.
 poseError :: Pose -> Pose -> (Double, Double)

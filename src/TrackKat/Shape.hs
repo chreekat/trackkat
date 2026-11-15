@@ -27,7 +27,7 @@ import TrackKat.Config (wornDistances)
 import TrackKat.Linear
 import TrackKat.Pose
 import TrackKat.Term (Bound (..), Finding (..), Measure (..), Name (..), Tally, Term, Verdict (..), about, accepts, atMost, gate, impossible, noTally, possible, rejections, tally)
-import TrackKat.World (World (..), inMillimetres, times, world)
+import TrackKat.World (Instant, Seconds, World (..), inMillimetres, inSeconds, seconds, times, world, (.-.))
 
 -- Note [Clip shape from movement]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -86,7 +86,7 @@ data ShapeLearner = ShapeLearner
     , slBlock :: !(Maybe Block)
     , slBefore :: !(Maybe Pose)
     -- ^ the mean pose of the block before the last
-    , slLast :: !(Maybe (Double, Pose))
+    , slLast :: !(Maybe (Instant, Pose))
     -- ^ the last block's end and mean pose, which becomes a sample when
     -- the next block ends
     , slWindow :: !(Maybe Window)
@@ -117,7 +117,7 @@ data Sample = Sample !Pose !V3 !V3 !V3 !V3
 
 -- | The samples of a window of turning so far, the latest first, and when
 -- it started.
-data Window = Window !Double ![Sample]
+data Window = Window !Instant ![Sample]
 
 -- | What windows say about the top reflector's move d: the quadratic
 -- d' H d - 2 g' d, as H's three entries (uu, uv, vv) and g's two; and how
@@ -144,9 +144,9 @@ groups = 8
 blockFrames :: Int
 blockFrames = 8
 
--- | Seconds in a window of turning.
-windowSeconds :: Double
-windowSeconds = 1
+-- | Length of a window of turning.
+windowSeconds :: Seconds
+windowSeconds = seconds 1
 
 -- | Degrees a window must turn through.
 windowSpan :: Double
@@ -176,7 +176,7 @@ shapeWindows = slWindows
 -- | Learn from a pose seen clearly at the given time, surely the head's,
 -- given the pivot it turns about, in the model's axes. The estimate is
 -- returned too when it is newly sure, or has moved since it was.
-watchShape :: Intrinsics -> Double -> V3 -> Pose -> ShapeLearner -> (ShapeLearner, Maybe ShapeEstimate)
+watchShape :: Intrinsics -> Instant -> V3 -> Pose -> ShapeLearner -> (ShapeLearner, Maybe ShapeEstimate)
 watchShape k now pivot pose sl = case maybe (Block 1 pose (V3 0 0 0) (poseT pose)) (addToBlock pose) (slBlock sl) of
     b
         | bCount b < blockFrames -> (sl{slBlock = Just b}, Nothing)
@@ -207,11 +207,11 @@ meanPose [] = Pose identity (V3 0 0 0)
 meanPose (p : ps) = blockMean (foldl' (flip addToBlock) (Block 1 p (V3 0 0 0) (poseT p)) ps)
 
 -- | Take a sample, ending the window if it is long enough.
-addSample :: V3 -> Double -> Sample -> ShapeLearner -> (ShapeLearner, Maybe ShapeEstimate)
+addSample :: V3 -> Instant -> Sample -> ShapeLearner -> (ShapeLearner, Maybe ShapeEstimate)
 addSample pivot at s sl = case slWindow sl of
     Nothing -> (sl{slWindow = Just (Window at [s])}, Nothing)
     Just (Window start samples)
-        | at - start < windowSeconds -> (sl{slWindow = Just (Window start (s : samples))}, Nothing)
+        | at .-. start < windowSeconds -> (sl{slWindow = Just (Window start (s : samples))}, Nothing)
         | otherwise -> case windowEvidence (slModel sl) pivot (s : samples) of
             Left failed -> (sl{slWindow = Nothing, slWindows = tally (Rejected failed) (slWindows sl)}, Nothing)
             Right e -> news (taken sl{slWindow = Nothing, slWindows = tally (Accepted possible) (slWindows sl)} e)
@@ -405,7 +405,7 @@ shapeEstimate sl = do
             Nothing -> 1 / 0
         g = fromIntegral groups
     move <- solveEvidence total
-    pure (ShapeEstimate (moveTop m move) m spread (eWindows total * windowSeconds / 60))
+    pure (ShapeEstimate (moveTop m move) m spread (eWindows total * inSeconds windowSeconds / 60))
 
 -- | The estimate so far, if it is sure.
 sureEstimate :: ShapeLearner -> Maybe ShapeEstimate

@@ -71,7 +71,7 @@ import TrackKat.Linear
 import TrackKat.Number
 import TrackKat.Pose
 import TrackKat.Term (Bound (..), Finding, Measure (..), Name (..), Tally, Term, Verdict (..), about, accepts, atLeast, atMost, gate, noTally, possible, rejections, tally)
-import TrackKat.World (World (..), inMillimetres, inPerSecond, times, world)
+import TrackKat.World (Instant, Seconds, World (..), inMillimetres, inPerSecond, inSeconds, seconds, times, world, (.-.))
 
 -- | Estimates of up and of the neck pivot, with the evidence for each.
 data Calibration = Calibration
@@ -261,9 +261,11 @@ learntClip _ _ _ = Nothing
 -- * Up
 
 -- | Turns must reach this many degrees within 'turnSeconds' to count.
-turnDegrees, turnSeconds :: Double
+turnDegrees :: Double
 turnDegrees = 10
-turnSeconds = 0.6
+
+turnSeconds :: Seconds
+turnSeconds = seconds 0.6
 
 -- | A turn counts for at most this many degrees, so that a pose the
 -- tracker got wrong for a moment, which looks like a big quick turn, counts
@@ -464,9 +466,9 @@ countMemory = 1000
 holdStrength :: Double
 holdStrength = 1
 
--- | Length of a window, in seconds.
-windowSeconds :: Double
-windowSeconds = 0.5
+-- | Length of a window.
+windowSeconds :: Seconds
+windowSeconds = seconds 0.5
 
 -- | Degrees a window must turn through to say anything.
 windowSpan :: Double
@@ -479,7 +481,7 @@ windowFit = inMillimetres (times 2 (neckWander world))
 
 -- | Sums over a window's poses, enough to fit the point that stays still.
 data TurnWindow = TurnWindow
-    { windowStart :: !Double
+    { windowStart :: !Instant
     -- ^ time of the first pose
     , wFirst :: !M33
     -- ^ rotation of the first pose
@@ -496,9 +498,9 @@ data TurnWindow = TurnWindow
     -- ^ furthest the head turned from the first pose, radians
     }
 
--- | A window of turning that starts at the time given, in seconds, with
--- the pose given.
-startWindow :: Double -> Pose -> TurnWindow
+-- | A window of turning that starts at the time given, with the pose
+-- given.
+startWindow :: Instant -> Pose -> TurnWindow
 startWindow now (Pose r t) = TurnWindow now r 1 r (mulMV (transpose r) t) t (dot t t) 0
 
 -- | The window with one more pose.
@@ -670,10 +672,10 @@ data Learner = Learner
     { lModel :: !Model
     -- ^ the clip, which says where a neck can be
     , lCalibration :: !Calibration
-    , lTurn :: !(Maybe (Double, M33))
+    , lTurn :: !(Maybe (Instant, M33))
     -- ^ time and rotation at the start of the turn being watched
     , lWindow :: !(Maybe TurnWindow)
-    , lLast :: !(Maybe Double)
+    , lLast :: !(Maybe Instant)
     -- ^ time of the last pose seen
     , lUp :: !V3
     -- ^ up as applied
@@ -725,10 +727,10 @@ upRate, pivotRate :: Double
 upRate = 0.25
 pivotRate = 2
 
--- | Seconds between poses beyond which the applied values don't move
+-- | The time between poses beyond which the applied values don't move
 -- further, so that they never jump.
-longestStep :: Double
-longestStep = 0.1
+longestStep :: Seconds
+longestStep = seconds 0.1
 
 -- | Changes worth mentioning, in degrees and mm.
 upNews, pivotNews :: Double
@@ -739,9 +741,9 @@ pivotNews = 5
 pivotConfident :: Double
 pivotConfident = 10
 
--- | Learn from the pose seen at the given time in seconds, and move what is
--- applied toward the estimates.
-learn :: Double -> Pose -> Learner -> (Learner, [Refinement])
+-- | Learn from the pose seen at the given time, and move what is applied
+-- toward the estimates.
+learn :: Instant -> Pose -> Learner -> (Learner, [Refinement])
 learn now pose l =
     ( l
         { lCalibration = c2
@@ -758,11 +760,11 @@ learn now pose l =
     )
   where
     r = poseR pose
-    dt = maybe 0 (\t -> max 0 (min longestStep (now - t))) (lLast l)
+    dt = maybe 0 (\t -> inSeconds (max (seconds 0) (min longestStep (now .-. t)))) (lLast l)
     -- A turn ends when it has turned far enough, or taken too long.
     (c1, turn') = case lTurn l of
         Just (t0, r0)
-            | now - t0 > turnSeconds -> (lCalibration l, Just (now, r))
+            | now .-. t0 > turnSeconds -> (lCalibration l, Just (now, r))
             | norm (rotationVector turned) >= turnDegrees * pi / 180 ->
                 (fromMaybe (lCalibration l) (addTurn turned (lCalibration l)), Just (now, r))
             | otherwise -> (lCalibration l, lTurn l)
@@ -771,7 +773,7 @@ learn now pose l =
         Nothing -> (lCalibration l, Just (now, r))
     (c2, window', windows') = case maybe (startWindow now pose) (addPose pose) (lWindow l) of
         w
-            | now - windowStart w >= windowSeconds -> case addWindow (lModel l) w c1 of
+            | now .-. windowStart w >= windowSeconds -> case addWindow (lModel l) w c1 of
                 Right added -> (added, Nothing, tally (Accepted possible) (lWindows l))
                 Left failed -> (c1, Nothing, tally (Rejected failed) (lWindows l))
             | otherwise -> (c1, Just w, lWindows l)
@@ -863,7 +865,7 @@ windowInfo saved = foldr add zeroM [(min limit (max 0 e), u) | (e, u) <- eigenSy
 -- | Poses in a window of earlier builds: a window's at the world's
 -- 'frameRate', 60.
 olderWindowPoses :: Int
-olderWindowPoses = round (windowSeconds * inPerSecond (frameRate world))
+olderWindowPoses = round (inSeconds windowSeconds * inPerSecond (frameRate world))
 
 -- | Read a calibration file. Settings it lacks start from scratch; the
 -- error names the offending line.
