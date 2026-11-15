@@ -23,13 +23,12 @@ import TrackKat.Tracker.Trail
 -- in two ways: by following, each reflector matched to a blob near where
 -- that pose predicts it ('follow'); or by layout alone, the big blobs in
 -- view taken for the clip as when there is no pose to go on ('findHere').
--- Following used to be the only way tried for as long as the pose
--- predicted ('predictionSeconds'), so that a jump following wouldn't
--- make, as after a frame followed to a wrong pose, cost up to half a
--- second out of sight before the clip was looked for afresh; and a pose
--- followed onto the wrong blobs stayed there while its gates let it. Now
--- they are hypotheses about the same frame, scored alike, and the best is
--- taken.
+-- They are hypotheses about the same frame, scored alike, and the best
+-- is taken. Following alone for as long as the pose predicts
+-- ('predictionSeconds') would cost up to half a second out of sight
+-- after a jump following won't make, as after a frame followed to a
+-- wrong pose, and would leave a pose followed onto the wrong blobs there
+-- while its gates let it.
 --
 -- What they are scored by, in nats (see "TrackKat.Term"):
 --
@@ -74,8 +73,7 @@ import TrackKat.Tracker.Trail
 -- followed: the belief about the mirror image and its window of turning
 -- (see "TrackKat.Branch"), the time tracked that lets lights be learnt,
 -- and what learns from poses. Only one that isn't ('FoundAfresh') starts
--- them over, as finding the clip afresh always has: either pose may then
--- be the mirror image.
+-- them over: either pose may then be the mirror image.
 --
 -- When following is rejected, a pose found by layout that continues the
 -- last is taken. One that doesn't has a third hypothesis to beat
@@ -86,40 +84,39 @@ import TrackKat.Tracker.Trail
 -- where the reflectors were, are taken at once, at 22 nats against 54;
 -- but two reflectors still in their places and a stray, as a reflector
 -- fades for a moment, are not: the clip is likelier where it was, one
--- reflector out of sight, at 18 nats. This is the wait that following
--- alone amounted to, as a hypothesis with a score: it holds while the
--- pose predicts and the clip may show less ('showingSeconds'), it gives
--- way as finding afresh gets cheaper with the time since the pose, a few
+-- reflector out of sight, at 18 nats. This is waiting for the clip to
+-- show again, as a hypothesis with a score: it holds while the pose
+-- predicts and the clip may show less ('showingSeconds'), it gives way
+-- as finding afresh gets cheaper with the time since the pose, a few
 -- frames for a head that has really jumped, and the frame is lost
--- meanwhile, as it was, with what was passed over told ('Held').
+-- meanwhile, with what was passed over told ('Held').
 --
 -- A pose left for one found afresh elsewhere isn't forgotten at once
 -- ('LeftBehind'). Blobs that look like the clip somewhere else for a
--- frame or two used to be frames out of sight, with the clip followed
--- again from where it was when they passed. Now, if none of the
--- reflectors is still in its place, they are tracked; but if the clip is
--- then found by layout where the pose left behind still predicts it
+-- frame or two, none of the reflectors still in its place, are tracked;
+-- but if the clip is then found by layout where the pose left behind
+-- still predicts it
 -- ('Resumed', scored as continuing that pose), that pose's continuity is
 -- taken up again as if those frames had been out of sight: a brief wrong
 -- sight doesn't cost what was known of the mirror image.
 --
--- What the wait protected is kept otherwise:
+-- What following alone would protect is kept:
 --
 --  * A pose still predicts for 'predictionSeconds' out of sight, and a
 --    frame where no hypothesis makes out the clip is lost with following's
---    reason as before, so a brief occlusion or merge is followed through
+--    reason, so a brief occlusion or merge is followed through
 --    when the reflectors show again.
 --
 --  * The clip showing two reflectors, or one behind another
---    ('showingSeconds'), is followed for as long as it was. A reflector
+--    ('showingSeconds'), is followed for that long. A reflector
 --    unseen costs 18 nats, less than finding afresh a frame on, so such a
 --    pose is outscored only once it also jumps; and what would be found
 --    instead, a stray taken for the third reflector, pays for its size.
 --
 --  * Blobs masked as still lights are never taken for the clip while a
 --    pose predicts: only blobs in view are tried by layout, exactly three
---    big ones or the best scored three of a few. Masked ones are tried,
---    as before, only with no pose to go on.
+--    big ones or the best scored three of a few. Masked ones are tried
+--    only with no pose to go on.
 --
 -- Finding by layout costs a solve or several, so it isn't tried on every
 -- frame: only when following is rejected, or scores below 'weakScore';
@@ -132,7 +129,7 @@ import TrackKat.Tracker.Trail
 -- follow what is tracked within seconds ('sizeMemory', and the latest at
 -- once), and each frame is scored by itself, with no memory of how well
 -- the frames before fitted. So a pose followed onto such a stray is left
--- only when a gate rejects it, as before.
+-- only when a gate rejects it.
 
 -- | The score below which a followed pose is doubted, and the clip looked
 -- for by layout in the same frame too (see Note [Following or finding
