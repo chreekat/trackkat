@@ -4,7 +4,7 @@ Roughly in order.
 
 - Straighten tracking's heuristics, the last two steps of four (see
   [docs/heuristics.md](docs/heuristics.md), which lists every number and
-  thirteen contradictions among them): choose among a frame's candidates by
+  nineteen contradictions among them): choose among a frame's candidates by
   their terms' scores, with the gates that have bitten softened into
   likelihoods and one term for a blob's size; then one way of remembering,
   evidence that fades at a stated rate, in place of six.
@@ -26,7 +26,7 @@ Roughly in order.
   It happens in simulation (the clip worn pitched 30 degrees forward, the
   head pitched 20 and glancing) even with the tape drawn exactly as the
   tracker models it, so it is the tracking near the meeting of the poses,
-  not the model of the tape. The mirror-image tests in `clipChecks` leave
+  not the model of the tape. The mirror-image tests in `Test.Clips` leave
   those clips out until it is fixed.
 - On tabs, the clip's lean is more than a hint for the mirror image: it says
   which way the tape faces from the triangle. In simulation, a post 30
@@ -84,3 +84,52 @@ Roughly in order.
   switch doesn't change its USB identity, so it doesn't help.
 - Head movements as desktop controls (switching virtual desktops or window
   manager panes), on Linux too.
+
+## Promises that don't hold yet
+
+Things the code looks as if it promises, or that would be good to promise,
+that tests found false. None is fixed.
+
+- A frame is dropped if its stripe bytes happen to spell the next frame's
+  header.
+- The mirror-image belief's least chance (`Belief.leastChance`) is applied
+  before scaling, so strong evidence goes below it; `normalise` is not
+  idempotent.
+- A saved level more than about 45° from the camera's reloads as a
+  perpendicular one.
+- `verdict`'s accepted score and `score` sum in different orders and can
+  differ in the last bit; a NaN score is accepted.
+- `rotationVector` loses turns below about 1e-7 rad; `rotateToward` does
+  not turn toward the exactly opposite direction; `levelFromUp (V3 0 0 1)`
+  is not a rotation.
+- Not every `Config` value survives render-then-parse: out-of-range
+  steadiness, empty or sub-0.0001 Points, joystick names ending in "(n)".
+- `parseNumber` is not correctly rounded and accepts "--5"; `renderNumber`
+  can write "-0".
+- A recording cut inside its first entry line is refused whole.
+- A Points curve can turn back by one ulp at a knot.
+- `NoTrim` and a trim of zero disagree once the curved view passes half a
+  turn.
+- `solvePose` promises reprojection, not pose: up to about 0.07° and
+  0.16 mm off at under 1e-3 px.
+- `parseVersion "0.1" < parseVersion "0.1.0"`.
+- `matches` considers only the first 8 blobs, in the order given.
+- Finding the clip by layout: a pose found needn't fit the blobs, a pose
+  refound is taken without weighing the clip still where it was, the clip
+  still where it was can be impossible with every reflector in place after
+  1 s, and a reflector's usual size can fall below its latest. These are
+  contradictions 16 to 19 in [docs/heuristics.md](docs/heuristics.md).
+- A settings reload that changes nothing still rebinds hotkeys and
+  re-shows settings.
+- Hotkeys are only read when frames arrive, so they do nothing while the
+  camera is away.
+- Pause after a recenter with the clip out of sight holds the centred
+  view, not the pose games last saw.
+- A "Check for updates" click with no network still puts off the next
+  automatic look by four hours.
+- The trim log line can print "-0".
+- An unwritable settings folder kills trackkat at start with nothing in
+  the window.
+- A failed write of the served-game file is never retried.
+- Camera diagnostics ("# …" lines) are developer lines but go to the
+  window log.
