@@ -25,10 +25,12 @@ import Data.List (partition, sortOn)
 import Data.Ord (Down (..))
 import Data.Word (Word8)
 
+-- | The camera's image, in pixels.
 frameWidth, frameHeight :: Int
 frameWidth = 640
 frameHeight = 480
 
+-- | A run of bright pixels on one scan line.
 data Stripe = Stripe
     { stLine :: !Int
     , stStart :: !Int
@@ -43,6 +45,7 @@ data Stripe = Stripe
 stStop :: Stripe -> Int
 stStop s = stStart s + stPoints s - 1
 
+-- | One thing the camera sent. See Note [Camera byte stream].
 data Packet
     = -- | frame counter, stripes
       Frame !Word8 [Stripe]
@@ -196,6 +199,7 @@ decodeShortStripe p =
     stop = b 2 .|. bit 0x40 0x100 .|. bit 0x08 0x200
     n = stop - (b 1 .|. bit 0x80 0x100 .|. bit 0x10 0x200) + 1
 
+-- | Stripes that touch, taken as one bright thing in the image.
 data Blob = Blob
     { blobX :: !Double
     , blobY :: !Double

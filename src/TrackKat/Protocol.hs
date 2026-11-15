@@ -40,6 +40,7 @@ data Command
 -- is, so this only needs to be cheap, not good.
 type Seed = Word64
 
+-- | A padding generator started from any number, such as the time.
 newSeed :: Word64 -> Seed
 newSeed = id
 
@@ -130,6 +131,7 @@ decode arity pkt
                 4 -> Just (Cmd4 op (at r1 `xor` at 16) (at (r1 - 1) `xor` at 19) (at (r1 + 1) `xor` at 18))
                 _ -> Nothing
 
+-- | The camera's reply to a status request.
 data Status = Status
     { statusReady :: Bool
     , statusRaw :: B.ByteString

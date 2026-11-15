@@ -96,6 +96,7 @@ consoleOutput =
 openShared :: IO (Either Int ())
 openShared = (\rc -> if rc == 0 then Right () else Left (fromIntegral rc)) <$> c_shared_open
 
+-- | Give games this pose, through the memory NPClient reads.
 publish :: GamePose -> IO ()
 publish (GamePose y p r x yy z) =
     c_publish (realToFrac y) (realToFrac p) (realToFrac r) (realToFrac x) (realToFrac yy) (realToFrac z)

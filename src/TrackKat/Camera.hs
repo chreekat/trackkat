@@ -37,8 +37,11 @@ import TrackKat.Frame (Packet, parseStream)
 import TrackKat.Protocol
 import qualified TrackKat.USB as USB
 
+-- | Where the camera's diagnostics go, a line at a time.
 type Log = String -> IO ()
 
+-- | NaturalPoint's USB vendor id, and the product id of the TrackIR 5
+-- revision 3.
 vendorId, productIdV3 :: Word16
 vendorId = 0x131D
 productIdV3 = 0x0159
@@ -47,6 +50,7 @@ outEp, inEp :: Word8
 outEp = 0x01
 inEp = 0x82
 
+-- | How the camera is set up when it is opened.
 data Settings = Settings
     { threshold :: Int
     -- ^ pixel brightness cut-off, 30..253
@@ -57,9 +61,12 @@ data Settings = Settings
     }
     deriving (Show)
 
+-- | What the camera is opened with unless told otherwise: the brightest
+-- illumination, and the green lights in use.
 defaultSettings :: Settings
 defaultSettings = Settings{threshold = 140, irBrightness = 7, statusLed = True}
 
+-- | An open, initialised camera.
 data Camera = Camera
     { camContext :: USB.Context
     , camHandle :: USB.Handle
@@ -68,6 +75,7 @@ data Camera = Camera
     , camSettings :: Settings
     }
 
+-- | Why the camera couldn't be opened.
 data OpenError
     = NoCamera
     | -- | present, but not bound to WinUSB (libusb's error)
@@ -193,6 +201,7 @@ setIrBrightness :: Camera -> Int -> IO ()
 setIrBrightness cam level =
     setIrBrightnessRaw cam ((case max 5 (min 7 level) of 5 -> 150; 6 -> 250; _ -> 350) `shiftL` 4)
 
+-- | One of the camera's green lights.
 data Light = Off | On
     deriving (Eq, Show)
 
@@ -316,6 +325,7 @@ shutdown cam = do
         send cam (Cmd2 0x1A 0x00)
     either (\e -> camLog cam ("shutdown failed: " ++ show e)) pure r
 
+-- | Bytes as two hex digits each, spaced, for diagnostics.
 hex :: B.ByteString -> String
 hex = unwords . map byte . B.unpack
   where

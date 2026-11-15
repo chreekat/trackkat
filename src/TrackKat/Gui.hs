@@ -155,6 +155,7 @@ showOffer o = withCWString text $ \t -> withCWString button $ \b -> withCWString
 windowOpen :: IO Bool
 windowOpen = (/= 0) <$> c_window_open
 
+-- | Something the user asked for in the window or the tray.
 data Action
     = RecenterAction
     | PauseAction
@@ -207,6 +208,7 @@ list TrimKey = 2
 guiLog :: String -> IO ()
 guiLog line = withCWString line c_log
 
+-- | Set the window's Camera light, and its words if the camera is down.
 showCamera :: CameraState -> IO ()
 showCamera Searching = withCWString "" (c_camera 0)
 showCamera Tracking = withCWString "" (c_camera 1)
@@ -259,6 +261,7 @@ showClip (Just (l, r, t)) = withArray (concatMap coords [l, r, t]) (c_clip 1)
   where
     coords (V3 x y z) = map realToFrac [x, y, z]
 
+-- | Light the Pause button, or not.
 showOutput :: Output -> IO ()
 showOutput Live = c_paused 0
 showOutput Paused = c_paused 1
