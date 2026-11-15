@@ -120,12 +120,40 @@ test-suite tests
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
+  other-modules:
+    Test.Branch
+    Test.Calibration
+    Test.Check
+    Test.Clips
+    Test.Config
+    Test.Following
+    Test.Frame
+    Test.Icons
+    Test.Level
+    Test.Lights
+    Test.Match
+    Test.Memory
+    Test.Mount
+    Test.Pose
+    Test.Recording
+    Test.Release
+    Test.Response
+    Test.ServedGame
+    Test.Shape
+    Test.Simulation
+    Test.Stats
+    Test.Term
+    Test.Tracker
+    Test.Visibility
   ghc-options:      "-with-rtsopts=-T"
   build-depends:
     , base
     , bytestring
     , directory
     , filepath
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
     , trackkat
     , trackkat:synth
     , zip-archive

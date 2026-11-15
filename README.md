@@ -123,6 +123,17 @@ Needs GHC 9.14, cabal and libusb-1.0 headers; dependencies are frozen in
 `cabal.project.freeze`. `cabal build all --enable-tests && cabal test`. On
 Windows, see `.github/workflows/build.yml` for pointing cabal at libusb.
 
+The tests are in two groups: `unit`, which takes a second or two, and
+`simulation`, of heads in front of the camera tracked for minutes, which
+takes the rest. To run one alone, or the tests whose names have a word:
+
+    TASTY_PATTERN='$2=="unit"' cabal test --test-show-details=direct
+    TASTY_PATTERN=fire cabal test --test-show-details=direct
+
+`TRACKKAT_SHOW=1 cabal test --test-show-details=direct` also shows the
+figures each simulation came to, and `TRACKKAT_ACCEPT=1 cabal test` rewrites
+`trackkat.conf.example` from the defaults.
+
 ## Credits
 
 The USB protocol is ported from [linuxtrack](https://github.com/uglyDwarf/linuxtrack)
