@@ -49,8 +49,6 @@ module TrackKat.Term (
 
     -- * Saying
     renderScore,
-    renderMeasure,
-    renderFinding,
     renderFindings,
 ) where
 

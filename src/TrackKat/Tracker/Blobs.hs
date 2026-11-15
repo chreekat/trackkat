@@ -3,9 +3,7 @@
 module TrackKat.Tracker.Blobs (
     -- * The blobs in a frame
     findBlobs,
-    minFaintPixels,
     minBlobPixels,
-    maxBlobPixels,
     at,
     whole,
 
@@ -14,7 +12,6 @@ module TrackKat.Tracker.Blobs (
     sortBlobs,
 
     -- * Those big enough to be reflectors
-    besideBiggest,
     bigAmong,
     bigBeside,
     picks,

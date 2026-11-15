@@ -43,7 +43,6 @@ module TrackKat.Pose (
     inHeadAxes,
     HeadPose (..),
     relativePose,
-    eulerYXZ,
 ) where
 
 import Data.List (sortOn)

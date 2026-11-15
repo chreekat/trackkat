@@ -7,11 +7,8 @@
 module TrackKat.Tracker.Layout (
     asClip,
     findAfresh,
-    threeBig,
     Layout (..),
     findHere,
-    clipSearch,
-    maskedSearch,
 ) where
 
 import Data.Either (isRight, lefts, rights)

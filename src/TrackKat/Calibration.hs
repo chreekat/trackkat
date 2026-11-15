@@ -20,7 +20,6 @@ module TrackKat.Calibration (
     -- * What has been learnt
     Calibration,
     defaultCalibration,
-    mountedCalibration,
     estimatedLevel,
     estimatedPivot,
     pivotSpreadAlong,
@@ -31,7 +30,6 @@ module TrackKat.Calibration (
     describeLevelBriefly,
     describePivotBriefly,
     learntClip,
-    plausiblePivot,
     neckCanBeAt,
     plausibleCalibration,
     screenCalibration,
