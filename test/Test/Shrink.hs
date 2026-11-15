@@ -60,7 +60,7 @@ tests =
     testGroup
         "Shrink"
         [ shrinksWell "a fraction" (Fraction 0) (\(Fraction x) -> x >= 0 && x <= 1)
-        , shrinksWell "a gap between frames" (FrameGap (1 / 120)) (\(FrameGap dt) -> dt >= 1 / 120 && dt <= 0.5)
+        , shrinksWell "a gap between frames" (FrameGap (seconds (1 / 120))) (\(FrameGap dt) -> dt >= seconds (1 / 120) && dt <= seconds 0.5)
         , shrinksWell "a turn" (Turn (V3 0 0 0)) (\(Turn w) -> turnOf 180 w)
         , shrinksWell "a rigid motion" (Placing (V3 0 0 0) (V3 0 0 0)) (\(Placing turn at) -> turnOf 180 turn && upTo 2000 at)
         , shrinksWell "a pose seen whole" (SeenWhole (squarelyAhead trackedRange)) (\(SeenWhole placing) -> seen 60 trackedRange placing)

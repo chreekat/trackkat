@@ -23,7 +23,7 @@ import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Sizes (Showing (..), showingSeconds)
 import TrackKat.Tracker.Trail (Recent (..))
-import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, (.+^))
+import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, times, (.+^))
 
 -- | The clip is followed only to a pose that follows the last, as the
 -- gates on following say; where it is just where the last pose has it,
@@ -58,10 +58,9 @@ tests =
                     Left (Why looking _) -> looking === Following
                     Right (_, s) -> counterexample (renderFindings (sightingJudged s)) False
         , testProperty "the clip is followed only to a pose that follows the last, and is otherwise lost as following" $
-            \(Apart30 placing) (Turned turn) (Shifted move) (FrameGap gap) ->
+            \(Apart30 placing) (Turned turn) (Shifted move) (FrameGap dt) ->
                 let Pose r t = turnedAbout pivot (rodrigues turn) (placed placing)
                     was = Pose r (t ^+^ move)
-                    dt = seconds gap
                  in case follow (knowing was) (lastTracked .+^ dt) (lastAt was) (sortBlobs noMask (clipBlobs headset placing)) of
                         Right (scored, Sighting pose fit _ _ _ judged) ->
                             let (turned, moved) = poseChange pivot was pose
@@ -87,8 +86,8 @@ tests =
             \(ReflectorSights seen) (Since since) (Fraction sooner) (Lit lit) ->
                 let all3 = Match ((\s -> Just s{sightKind = Whole}) <$> seen) 0 0 []
                     less = Match ((\s shown -> if shown then Just s else Nothing) <$> seen <*> lit) 0 0 []
-                    may gap c = accepts (partlySeen (pure noSize) (lastTracked .+^ seconds gap) (lastAt facing)) c
-                 in property (may since all3) .&&. property (not (may since less) || may (sooner * since) less)
+                    may gap c = accepts (partlySeen (pure noSize) (lastTracked .+^ gap) (lastAt facing)) c
+                 in property (may since all3) .&&. property (not (may since less) || may (times sooner since) less)
         , testProperty "the clip still where it was has as many reflectors out of sight as have no blob near them, each costing what one unseen costs a match" $
             \(Apart30 placing) ->
                 forSomeOf (clipBlobs headset placing) $ \blobs ->
@@ -104,7 +103,7 @@ tests =
                             , property (all (\b -> missing [b] >= 2) (others ++ blobs))
                             ]
         , testProperty "the clip can't be still where it was once it has shown less than all three for longer than it may" $
-            \(Apart30 placing) (SinceAll since) ->
+            \(Apart30 placing) (Since since) ->
                 let blobs = clipBlobs headset placing :: [Blob]
                  in isImpossible (snd (stillThere defaultIntrinsics headset (clockAt 0 .+^ since) (lastAt (placed placing)){recentAllSeen = clockAt 0} (take 2 blobs))) === (since > showingSeconds OneOut)
         ]
@@ -167,20 +166,12 @@ instance Arbitrary Shifted where
     shrink (Shifted v) = Shifted <$> shrinkV3 v
 
 -- | Seconds since all three reflectors showed, up to four.
-newtype Since = Since Double
+newtype Since = Since Seconds
     deriving (Show)
 
 instance Arbitrary Since where
-    arbitrary = Since <$> choose (0, 4)
-    shrink (Since x) = Since <$> shrinkWithin (0, 4) 0 x
-
--- | Seconds the clip has shown less than all three reflectors, up to three.
-newtype SinceAll = SinceAll Seconds
-    deriving (Show)
-
-instance Arbitrary SinceAll where
-    arbitrary = SinceAll . seconds <$> choose (0, 3)
-    shrink (SinceAll x) = SinceAll . seconds <$> shrinkWithin (0, 3) 0 (inSeconds x)
+    arbitrary = Since . seconds <$> choose (0, 4)
+    shrink (Since x) = Since . seconds <$> shrinkWithin (0, 4) 0 (inSeconds x)
 
 -- | Which reflectors are lit: all of them, or all but one. Simplest all.
 newtype Lit = Lit (Three Bool)

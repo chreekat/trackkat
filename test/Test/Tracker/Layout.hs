@@ -21,7 +21,7 @@ import TrackKat.Tracker.Layout
 import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Trail (Recent (..))
-import TrackKat.World (clockAt, seconds)
+import TrackKat.World (clockAt, (.+^))
 
 -- | Whatever blobs are tried, by layout the clip is made only of three of
 -- them that are like the clip, and what is told of a frame adds up to its
@@ -88,10 +88,9 @@ tests =
                     Nothing -> property True
                     Just tried -> counterexample (either show (show . layoutScore) tried) False
         , testProperty "by layout with a pose predicting, the clip is refound just when no impossible jump from it, and scored no better than nothing against it" $
-            \(Apart20 placing) (Turned turn) (FrameGap gap) ->
+            \(Apart20 placing) (Turned turn) (FrameGap dt) ->
                 let was = turnedAbout pivot (rodrigues turn) (placed placing)
-                    dt = seconds gap
-                 in case findHere (knowing (pure noSize) (Just was)) (clockAt 1) (lastAt was){recentTime = clockAt (1 - gap)} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
+                 in case findHere (knowing (pure noSize) (Just was)) (clockAt 1 .+^ dt) (lastAt was) Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
                         Just (Right found) ->
                             counterexample (show (layoutScore found, layoutWay found, renderFindings (layoutJump found), renderFindings (sightingJudged (layoutFound found)), afreshCost dt)) . conjoin $
                                 [ (layoutWay found == Refound) === all (not . isImpossible . findingScore) (layoutJump found)
