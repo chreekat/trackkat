@@ -11,6 +11,7 @@ module Test.Gen (
     shrinkFrom,
     earlier,
     Fraction (..),
+    FrameGap (..),
     forAnyOrder,
     forSomeOf,
     forOneOf,
@@ -47,12 +48,18 @@ module Test.Gen (
     clipBlobs,
     genClipApart,
     shrinkClipApart,
+    Apart20 (..),
+    Apart30 (..),
     genBlob,
     shrinkBlob,
+    Stray (..),
+    Strays (..),
+    ReflectorBlobs (..),
     genSizes,
     shrinkSizes,
     genSight,
     shrinkSight,
+    ReflectorSights (..),
     genThree,
     shrinkThree,
     Sizes (..),
@@ -125,6 +132,15 @@ newtype Fraction = Fraction Double
 instance Arbitrary Fraction where
     arbitrary = Fraction <$> choose (0, 1)
     shrink (Fraction share) = Fraction <$> shrinkWithin (0, 1) 0 share
+
+-- | Seconds from one frame to the next that follows it: from a frame of
+-- the camera's fastest to half a second.
+newtype FrameGap = FrameGap Double
+    deriving (Show)
+
+instance Arbitrary FrameGap where
+    arbitrary = FrameGap <$> choose (1 / 120, 0.5)
+    shrink (FrameGap dt) = FrameGap <$> shrinkWithin (1 / 120, 0.5) (1 / 120) dt
 
 -- | That something holds of a list in any order; simplest in the order it
 -- came.
@@ -308,6 +324,24 @@ genClipApart most range m = genSeen most range m `suchThat` apart m
 shrinkClipApart :: Model -> Placing -> [Placing]
 shrinkClipApart m = filter (apart m) . shrinkSeen m
 
+-- | A pose of the headset clip, from 400 mm to 1.5 m off and turned up to
+-- 20 degrees from squarely facing the camera, where the camera shows each
+-- reflector as a blob of its own, whole (see 'genClipApart').
+newtype Apart20 = Apart20 Placing
+    deriving (Show)
+
+instance Arbitrary Apart20 where
+    arbitrary = Apart20 <$> genClipApart 20 (400, 1500) headset
+    shrink (Apart20 placing) = Apart20 <$> shrinkClipApart headset placing
+
+-- | A pose as 'Apart20' has one, turned up to 30 degrees.
+newtype Apart30 = Apart30 Placing
+    deriving (Show)
+
+instance Arbitrary Apart30 where
+    arbitrary = Apart30 <$> genClipApart 30 (400, 1500) headset
+    shrink (Apart30 placing) = Apart30 <$> shrinkClipApart headset placing
+
 apart :: Model -> Placing -> Bool
 apart m placing = length blobs == 3 && all inside blobs
   where
@@ -336,6 +370,30 @@ shrinkBlob b =
         ++ [roundBlob (whole (blobX b), whole (blobY b)) (blobPoints b) | whole (blobX b) /= blobX b || whole (blobY b) /= blobY b]
   where
     whole x = fromIntegral (truncate x :: Int)
+
+-- | A blob that isn't the clip's, of up to 400 pixels.
+newtype Stray = Stray Blob
+    deriving (Show)
+
+instance Arbitrary Stray where
+    arbitrary = Stray <$> genBlob 400
+    shrink (Stray b) = Stray <$> shrinkBlob b
+
+-- | A few of 'Stray'.
+newtype Strays = Strays [Blob]
+    deriving (Show)
+
+instance Arbitrary Strays where
+    arbitrary = Strays <$> listOf (genBlob 400)
+    shrink (Strays blobs) = Strays <$> shrinkList shrinkBlob blobs
+
+-- | A blob for each reflector, of up to 500 pixels.
+newtype ReflectorBlobs = ReflectorBlobs (Three Blob)
+    deriving (Show)
+
+instance Arbitrary ReflectorBlobs where
+    arbitrary = ReflectorBlobs <$> genThree (genBlob 500)
+    shrink (ReflectorBlobs three) = ReflectorBlobs <$> shrinkThree shrinkBlob three
 
 -- | The sizes the reflectors have had, in pixels at 1 m: none seen yet, or
 -- each seen at up to the given size, its usual size no less than its
@@ -377,6 +435,14 @@ shrinkSight :: Sight -> [Sight]
 shrinkSight s =
     [s{sightKind = Whole} | sightKind s /= Whole]
         ++ [s{sightPixels = whole} | let whole = fromIntegral (truncate (sightPixels s) :: Int), whole /= sightPixels s, whole >= 6]
+
+-- | How each reflector showed, of up to 500 pixels.
+newtype ReflectorSights = ReflectorSights (Three Sight)
+    deriving (Show)
+
+instance Arbitrary ReflectorSights where
+    arbitrary = ReflectorSights <$> genThree (genSight 500)
+    shrink (ReflectorSights three) = ReflectorSights <$> shrinkThree shrinkSight three
 
 -- | One of something for each reflector.
 genThree :: Gen a -> Gen (Three a)

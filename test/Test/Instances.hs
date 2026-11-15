@@ -7,6 +7,7 @@ module Test.Instances () where
 import Test.Tasty.QuickCheck
 
 import TrackKat.Belief (Belief (..), unknown)
+import TrackKat.Branch (Clarity (..))
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Config (Binding, HeadView (..))
 import TrackKat.Controls (Hotkey)
@@ -17,6 +18,7 @@ import TrackKat.Match (Sight, Three)
 import TrackKat.Protocol (Command (..))
 import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
+import TrackKat.Tracker.Outcome (Way (..))
 import TrackKat.Updater (Looking (..))
 
 import Test.Gen
@@ -147,3 +149,11 @@ instance Arbitrary ServedGame where
 instance Arbitrary Looking where
     arbitrary = elements [Due, Asked]
     shrink = earlier [Due, Asked]
+
+instance Arbitrary Clarity where
+    arbitrary = elements [Clear, Doubtful]
+    shrink = earlier [Clear, Doubtful]
+
+instance Arbitrary Way where
+    arbitrary = elements [Followed, Refound, Resumed, FoundAfresh]
+    shrink = earlier [Followed, Refound, Resumed, FoundAfresh]
