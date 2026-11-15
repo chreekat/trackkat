@@ -70,26 +70,18 @@ import qualified TrackKat.Tracker as Tracker
 -- on the session and the event, the time included: so what trackkat does
 -- is settled by the events that reach it, in their order. On top of that:
 --
-
--- * Every frame sends games one pose. Paused, it is the pose held, whatever
-
---   the frame showed, until the user resumes; trimming doesn't move it.
+--  * Every frame sends games one pose. Paused, it is the pose held, whatever
+--    the frame showed, until the user resumes; trimming doesn't move it.
 --
-
--- * Recentering clears the trim.
-
+--  * Recentering clears the trim.
 --
-
--- * Whatever changes what the window says of the camera, the output, the
-
---   trim or the calibration is logged for the user in the same step. (The
---   window is shown the search for a camera, each frame and the settings
---   without a line.)
+--  * Whatever changes what the window says of the camera, the output, the
+--    trim or the calibration is logged for the user in the same step. (The
+--    window is shown the search for a camera, each frame and the settings
+--    without a line.)
 --
-
--- * A settings file saved with nothing changed leaves the session as it
-
---   was and logs nothing.
+--  * A settings file saved with nothing changed leaves the session as it
+--    was and logs nothing.
 --
 -- "Test.Session" states these as properties.
 

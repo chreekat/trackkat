@@ -493,23 +493,17 @@ data Shell = Shell
 -- they decide by is in the library, as values taken from one state to the
 -- next; what is left here is what two threads must both reach.
 --
-
--- * 'shSession': the camera's frames, the window's buttons and the settings
-
---   file all change the one session, each change whole, through
---   'transition'.
+--  * 'shSession': the camera's frames, the window's buttons and the settings
+--    file all change the one session, each change whole, through
+--    'transition'.
 --
-
--- * 'shOffered': 'maintain' finds what there is to offer, and the window's
-
---   thread takes the offer up. It also remembers what the window was last
---   told, so the window is told only of a change.
+--  * 'shOffered': 'maintain' finds what there is to offer, and the window's
+--    thread takes the offer up. It also remembers what the window was last
+--    told, so the window is told only of a change.
 --
-
--- * 'shSaving' and 'shCheckAsked' hand work to a thread that may be slow, a
-
---   disk or the network, without waiting for it: the latest calibration to
---   save, and a click to answer.
+--  * 'shSaving' and 'shCheckAsked' hand work to a thread that may be slow, a
+--    disk or the network, without waiting for it: the latest calibration to
+--    save, and a click to answer.
 --
 -- The rest of what a thread remembers from one round to the next is an
 -- argument of its loop.
