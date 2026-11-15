@@ -28,7 +28,7 @@ import TrackKat.Tracker.Judge
 tests :: TestTree
 tests = group "Judge" $ do
     checkShowing "finding afresh gives up, a frame, 0.1 s and 0.5 s after the last pose" (show (map afreshCost [1 / 120, 0.1, 0.5])) $
-        and (zipWith (\cost roughly -> abs (cost - roughly) < 0.05) (map afreshCost [1 / 120, 0.1, 0.5]) [22.4, 7.5, 1.8])
+        and (zipWith (\gave roughly -> abs (gave - roughly) < 0.05) (map afreshCost [1 / 120, 0.1, 0.5]) [22.4, 7.5, 1.8])
     tree gates
     tree scores
 

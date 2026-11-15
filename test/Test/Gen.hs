@@ -28,6 +28,9 @@ module Test.Gen (
     turnedAbout,
 
     -- * What the camera shows
+    clipBlobs,
+    genClipApart,
+    shrinkClipApart,
     genBlob,
     shrinkBlob,
     genSizes,
@@ -58,6 +61,8 @@ import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
 import TrackKat.Number
 import TrackKat.Pose
 import TrackKat.Response
+import TrackKat.Synth (allLit, pointDiscs, renderDiscs)
+import TrackKat.Tracker.Blobs (findBlobs)
 import TrackKat.World (World (..), inMillimetres, world)
 
 -- | That two numbers are within a tolerance of each other.
@@ -174,6 +179,28 @@ turnedAbout pivot turn pose@(Pose r _) = Pose turned (poseAt pose pivot ^-^ mulM
     turned = turn `mulMM` r
 
 -- * What the camera shows
+
+-- | The blobs the camera shows of a clip at a pose, every reflector lit,
+-- heaviest first.
+clipBlobs :: Model -> Placing -> [Blob]
+clipBlobs m placing = findBlobs (renderDiscs (pointDiscs defaultIntrinsics m allLit (placed placing)))
+
+-- | A pose of a clip as 'genSeen' gives one, where the camera shows each
+-- reflector as a blob of its own, whole: 40 pixels or more inside the
+-- picture's edges.
+genClipApart :: Double -> (Double, Double) -> Model -> Gen Placing
+genClipApart most range m = genSeen most range m `suchThat` apart m
+
+-- | Poses as 'shrinkSeen' gives them, each reflector still a blob of its
+-- own, whole.
+shrinkClipApart :: Model -> Placing -> [Placing]
+shrinkClipApart m = filter (apart m) . shrinkSeen m
+
+apart :: Model -> Placing -> Bool
+apart m placing = length blobs == 3 && all inside blobs
+  where
+    blobs = clipBlobs m placing
+    inside b = blobX b >= 40 && blobX b <= fromIntegral frameWidth - 40 && blobY b >= 40 && blobY b <= fromIntegral frameHeight - 40
 
 -- | A round blob of up to the given number of pixels, anywhere in the
 -- picture.
