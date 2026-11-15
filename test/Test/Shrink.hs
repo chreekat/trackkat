@@ -71,7 +71,7 @@ tests =
         , shrinksWell "a stray blob" (Stray (roundBlob (0, 0) 6)) (\(Stray b) -> blobOf 400 b)
         , shrinksWell "stray blobs" (Strays []) (\(Strays blobs) -> all (blobOf 400) blobs)
         , shrinksWell "the reflectors' blobs" (ReflectorBlobs (pure (roundBlob (0, 0) 6))) (\(ReflectorBlobs blobs) -> all (blobOf 500) blobs)
-        , shrinksWell "the reflectors' sizes" (Sizes (pure noSize)) (\(Sizes sizes) -> sizes == pure noSize || all (\s -> sizeLatest s >= 1 && sizeLatest s <= 3000 && sizeUsual s >= sizeLatest s && sizeUsual s <= 2 * sizeLatest s) sizes)
+        , shrinksWell "the reflectors' sizes" (Sizes (pure noSize)) (\(Sizes sizes) -> sizes == pure noSize || all (\s -> sizeLatest s >= 1 && sizeLatest s <= 3000 && sizeUsual s >= 0.05 * sizeLatest s && sizeUsual s <= 2 * sizeLatest s) sizes)
         , shrinksWell "the reflectors' sights" (ReflectorSights (pure (Sight (0, 0) 6 Whole))) (\(ReflectorSights sights) -> all (sightOf 500) sights)
         , shrinksWell "settings a file can say" (Sayable defaultConfig{recenterBindings = [], pauseBindings = []}) (\(Sayable c) -> parseConfig (renderConfig c) == Right c)
         , shrinksWell "a vector" (V3 0 0 0) (upTo 1000)

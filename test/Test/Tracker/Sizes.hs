@@ -76,8 +76,8 @@ tests =
         ]
 
 -- | A reflector's size: not seen yet, or seen at up to 3000 pixels at
--- 1 m, its usual size no less than its latest. Simplest not seen yet,
--- and simpler with its usual size its latest.
+-- 1 m, its usual size from twice its latest down to a twentieth of it.
+-- Simplest not seen yet, and simpler with its usual size its latest.
 newtype ASize = ASize Size
     deriving (Show)
 
