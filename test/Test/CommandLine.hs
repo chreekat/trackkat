@@ -5,7 +5,7 @@ import Data.Char (isDigit)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (earlier)
+import Test.Gen (earlier, shrinkFrom, shrinkParts)
 import Test.Instances ()
 import TrackKat.CommandLine
 
@@ -41,8 +41,9 @@ tests =
         rest -> rest
 
 -- | How trackkat is started to track: the ways the command line can ask,
--- so by hand always with its window. Simpler started by hand, after no
--- process, or one with a smaller number.
+-- so by hand always with its window. Simplest started by hand after no
+-- process, and simpler with its window, or after a process with a smaller
+-- number.
 data Asked = Asked Start WindowAtStart (Maybe Int)
     deriving (Show)
 
@@ -51,19 +52,21 @@ instance Arbitrary Asked where
         start <- arbitrary
         window <- if start == ByHand then pure WindowShown else elements [WindowShown, WindowHidden]
         Asked start window <$> oneof [pure Nothing, Just <$> chooseInt (0, maxBound)]
-    shrink (Asked start window after) =
-        [Asked ByHand WindowShown after | start /= ByHand]
-            ++ [Asked start window Nothing | after /= Nothing]
-            ++ [Asked start window (Just n) | Just pid <- [after], n <- shrink pid, n >= 0]
+    shrink =
+        shrinkParts
+            [ \(Asked start _ after) -> [Asked ByHand WindowShown after | start /= ByHand]
+            , \(Asked start window after) -> [Asked start WindowShown after | window /= WindowShown]
+            , \(Asked start window after) -> [Asked start window Nothing | after /= Nothing] ++ [Asked start window (Just n) | Just pid <- [after], n <- shrinkFrom 0 pid]
+            ]
 
 -- | What might be given as a process's name: digits, or digits among a
--- little else.
+-- little else. Simpler of fewer letters, and with a nought for one.
 newtype Named = Named String
     deriving (Show)
 
 instance Arbitrary Named where
     arbitrary = Named <$> oneof [listOf (elements "0123456789"), listOf (elements "0123456789 -+x.")]
-    shrink (Named pid) = Named <$> shrink pid
+    shrink (Named pid) = Named <$> shrinkList (\letter -> ['0' | letter /= '0']) pid
 
 -- | A word the command line has no place for.
 newtype Stray = Stray String

@@ -10,6 +10,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck hiding ((.&.))
 
 import Test.Check
+import Test.Gen (shrinkTo)
 import Test.Instances ()
 import TrackKat.Frame
 import TrackKat.Protocol
@@ -92,14 +93,15 @@ properties =
                 sum (map blobPoints (stripesToBlobs 1 maxBound stripes)) === sum (map stPoints stripes)
         ]
 
--- | Any eight bytes; simpler with smaller ones.
+-- | Any eight bytes; simplest all nothing, and simpler with a smaller one.
 newtype EightBytes = EightBytes B.ByteString
     deriving (Show)
 
 instance Arbitrary EightBytes where
     arbitrary = EightBytes . B.pack <$> vectorOf 8 arbitrary
-    shrink (EightBytes bytes) =
-        [EightBytes (B.pack (before ++ [byte'] ++ after)) | (before, byte : after) <- zip (inits (B.unpack bytes)) (tails (B.unpack bytes)), byte' <- shrink byte]
+    shrink (EightBytes bytes) = EightBytes <$> shrinkTo (B.replicate 8 0) smaller bytes
+      where
+        smaller bs = [B.pack (before ++ [byte'] ++ after) | (before, byte : after) <- zip (inits (B.unpack bs)) (tails (B.unpack bs)), byte' <- shrink byte]
 
 -- | A frame as the camera sends one, with the given counter: its stripes in
 -- order down and across the image, none overlapping, and none spelling the
@@ -134,11 +136,11 @@ instance Arbitrary Sent where
     shrink (Sent stripes) = Sent . snd <$> shrinkFrame (0, stripes)
 
 -- | A few frames, their counters going up from anywhere, and where to cut
--- their bytes into transfers. Simpler with fewer cuts; with fewer frames
--- from the end, so the counters still follow on; and with frames of fewer
--- stripes.
+-- their bytes into transfers. Simplest no frames at all; simpler with
+-- fewer frames from the end, so the counters still follow on; with fewer
+-- cuts; and with frames of fewer stripes.
 data CutStream = CutStream [(Word8, [Stripe])] [Int]
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary CutStream where
     arbitrary = do
@@ -146,13 +148,13 @@ instance Arbitrary CutStream where
         count <- chooseInt (0, 4)
         frames <- mapM (\i -> scale (`div` 4) (genFrame (first + fromIntegral i))) [0 .. count - 1]
         CutStream frames . sort <$> listOf (chooseInt (0, B.length (streamOf frames)))
-    shrink (CutStream frames cuts) =
-        [CutStream frames cuts' | cuts' <- shrinkList (const []) cuts]
-            ++ [CutStream frames' (filter (<= B.length (streamOf frames')) cuts) | frames' <- fewer]
+    shrink = shrinkTo (CutStream [] []) steps
       where
-        fewer =
-            [take k frames | k <- [0 .. length frames - 1]]
-                ++ [before ++ [frame'] ++ after | (before, frame : after) <- zip (inits frames) (tails frames), frame' <- shrinkFrame frame]
+        steps (CutStream frames cuts) =
+            [cutting cuts (take k frames) | k <- [0 .. length frames - 1]]
+                ++ [CutStream frames cuts' | cuts' <- shrinkList (const []) cuts]
+                ++ [cutting cuts (before ++ [frame'] ++ after) | (before, frame : after) <- zip (inits frames) (tails frames), frame' <- shrinkFrame frame]
+        cutting cuts frames = CutStream frames (filter (<= B.length (streamOf frames)) cuts)
 
 -- | The bytes of frames back to back.
 streamOf :: [(Word8, [Stripe])] -> B.ByteString

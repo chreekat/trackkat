@@ -75,13 +75,14 @@ tests =
         ]
 
 -- | A reflector's size: not seen yet, or seen at up to 3000 pixels at
--- 1 m, its usual size no less than its latest. Simplest not seen yet.
+-- 1 m, its usual size no less than its latest. Simplest not seen yet,
+-- and simpler with its usual size its latest.
 newtype ASize = ASize Size
     deriving (Show)
 
 instance Arbitrary ASize where
     arbitrary = (\(Three size _ _) -> ASize size) <$> genSizes 3000
-    shrink (ASize size) = [ASize noSize | sizeUsual size > 0 || sizeLatest size > 0]
+    shrink (ASize size) = ASize <$> shrinkTo noSize (\s -> [s{sizeUsual = sizeLatest s}]) size
 
 -- | A reflector seen as a blob of its own, or as two taken for one.
 newtype Own = Own Sight

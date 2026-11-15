@@ -49,13 +49,15 @@ newtype Button = Button Binding
 
 instance Arbitrary Button where
     arbitrary = Button <$> arbitrary `suchThat` isButton
-      where
-        isButton JoystickButton{} = True
-        isButton Key{} = False
-    shrink (Button button) = Button <$> shrink button
+    shrink (Button button) = Button <$> filter isButton (shrink button)
+
+isButton :: Binding -> Bool
+isButton JoystickButton{} = True
+isButton Key{} = False
 
 -- | When buttons began to be named, and a time from two minutes before
--- that to two after, in seconds. Simpler named from the first second.
+-- that to two after, in seconds. Simplest named at the first second, and
+-- simpler named from it.
 newtype Naming = Naming (Double, Double)
     deriving (Show)
 
@@ -64,4 +66,4 @@ instance Arbitrary Naming where
         asked <- choose (0, 1e6)
         since <- oneof [choose (-120, 120), elements [59.999, 60, 60.001]]
         pure (Naming (asked, asked + since))
-    shrink (Naming (asked, now)) = [Naming (0, now - asked) | asked /= 0]
+    shrink (Naming times) = Naming <$> shrinkTo (0, 0) (\(asked, now) -> [(0, now - asked)]) times

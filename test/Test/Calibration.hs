@@ -10,7 +10,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Check
-import Test.Gen (genTurn, genWritten, written)
+import Test.Gen (genTurn, genWritten, shrinkParts, written)
 import qualified Test.Gen as Gen
 import Test.Simulation
 import TrackKat.Calibration
@@ -145,8 +145,8 @@ savedText file =
 
 -- | A file as trackkat writes one, or with some of its lines gone: up
 -- within 40 degrees of the camera's, a pivot within 300 mm of the clip,
--- and information that tells the pivot in every direction. Simpler with a
--- line gone.
+-- and information that tells the pivot in every direction. Simplest with
+-- every line gone, and simpler with one gone.
 instance Arbitrary Saved where
     arbitrary =
         Saved
@@ -163,12 +163,14 @@ instance Arbitrary Saved where
         information = (\a b d f g j -> [a, b, d, f, g, j]) <$> diagonal <*> off <*> off <*> diagonal <*> off <*> diagonal
         diagonal = genWritten (10000, 5000000)
         off = genWritten (-3000, 3000)
-    shrink file =
-        [file{savedUp = Nothing} | Just _ <- [savedUp file]]
-            ++ [file{savedTurning = Nothing} | Just _ <- [savedTurning file]]
-            ++ [file{savedPivot = Nothing} | Just _ <- [savedPivot file]]
-            ++ [file{savedWindows = Nothing} | Just _ <- [savedWindows file]]
-            ++ [file{savedInformation = Nothing} | Just _ <- [savedInformation file]]
+    shrink =
+        shrinkParts
+            [ \file -> [file{savedUp = Nothing} | Just _ <- [savedUp file]]
+            , \file -> [file{savedTurning = Nothing} | Just _ <- [savedTurning file]]
+            , \file -> [file{savedPivot = Nothing} | Just _ <- [savedPivot file]]
+            , \file -> [file{savedWindows = Nothing} | Just _ <- [savedWindows file]]
+            , \file -> [file{savedInformation = Nothing} | Just _ <- [savedInformation file]]
+            ]
 
 -- | A camera tipped 13 degrees down and 4 to its right.
 tilt :: M33

@@ -9,7 +9,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Check
-import Test.Gen (InPicture (..), earlier, shrinkFrom)
+import Test.Gen (earlier, shrinkFrom, shrinkParts, shrinkPlace, shrinkTo)
 import Test.Simulation
 import TrackKat.Frame
 import TrackKat.Lights
@@ -300,8 +300,8 @@ tests =
         ]
 
 -- | Somewhere in the picture, and a blob's pixels there, from a
--- reflector's to a lamp's; simpler at a whole number of pixels, and
--- smaller.
+-- reflector's to a lamp's; simplest a reflector's at the picture's
+-- corner, and simpler at a whole number of pixels, and smaller.
 newtype Spot = Spot ((Double, Double), Int)
     deriving (Show)
 
@@ -321,7 +321,11 @@ genSpot :: Gen ((Double, Double), Int)
 genSpot = (,) <$> ((,) <$> choose (0, 640) <*> choose (0, 480)) <*> chooseInt (20, 2000)
 
 shrinkSpot :: ((Double, Double), Int) -> [((Double, Double), Int)]
-shrinkSpot (place, size) = [(place', size) | InPicture place' <- shrink (InPicture place)] ++ [(place, size') | size' <- shrinkFrom 20 size]
+shrinkSpot =
+    shrinkParts
+        [ \(place, size) -> [(place', size) | place' <- shrinkPlace place]
+        , \(place, size) -> [(place, size') | size' <- shrinkFrom 20 size]
+        ]
 
 -- | How many frames a second the camera sends.
 newtype Rate = Rate Double
@@ -332,13 +336,14 @@ instance Arbitrary Rate where
     shrink (Rate rate) = Rate <$> earlier [30, 60, 120] rate
 
 -- | How far a still blob's centre wanders, in pixels each way, from frame
--- to frame, over and over; simpler wandering less.
+-- to frame, over and over; simplest not at all, and simpler wandering
+-- less.
 newtype Wobble = Wobble [Double]
     deriving (Show)
 
 instance Arbitrary Wobble where
     arbitrary = Wobble <$> vectorOf 8 (choose (-1, 1))
-    shrink (Wobble wobble) = [Wobble (before ++ [0] ++ rest) | (before, off : rest) <- zip (inits wobble) (tails wobble), off /= 0]
+    shrink (Wobble wobble) = Wobble <$> shrinkTo (replicate 8 0) (\offs -> [before ++ [0] ++ rest | (before, _ : rest) <- zip (inits offs) (tails offs)]) wobble
 
 nudged :: (Double, Double) -> Double -> Double -> (Double, Double)
 nudged (x, y) dx dy = (x + dx, y + dy)
@@ -375,8 +380,9 @@ steps scene = snd (mapAccumL step' noLights (sceneFrames scene))
 
 -- | A few lamps, each lit in most frames, with a fragment beside it in
 -- some, and strays that come and go; perhaps the clip, tracked throughout;
--- a fifth of a second between frames, and now and then a minute. Simpler
--- ending sooner, and without the clip.
+-- a fifth of a second between frames, and now and then a minute.
+-- Simplest no frames and no clip; simpler ending sooner, and without the
+-- clip.
 instance Arbitrary Scene where
     arbitrary = do
         lamps <- scale (`div` 20) (listOf genSpot)
@@ -400,6 +406,8 @@ instance Arbitrary Scene where
                 , viewDiscs = [(place, 15) | (place, _) <- clip]
                 , viewUsual = Just (maximum [fromIntegral size | (_, size) <- clip])
                 }
-    shrink scene =
-        [scene{sceneFrames = take k (sceneFrames scene)} | k <- [0, length (sceneFrames scene) `div` 2, length (sceneFrames scene) - 1], k >= 0, k < length (sceneFrames scene)]
-            ++ [scene{sceneClip = Nothing} | Just _ <- [sceneClip scene]]
+    shrink =
+        shrinkParts
+            [ \scene -> [scene{sceneFrames = take k (sceneFrames scene)} | let n = length (sceneFrames scene), k <- [0 | n > 0] ++ [n `div` 2 | n > 1] ++ [n - 1 | n > 2]]
+            , \scene -> [scene{sceneClip = Nothing} | Just _ <- [sceneClip scene]]
+            ]

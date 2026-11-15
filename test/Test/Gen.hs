@@ -150,9 +150,12 @@ earlier every x = takeWhile (/= x) every
 -- keeps to this.
 
 -- | Simpler values of a domain: its simplest, and then the steps given
--- that are neither that nor the value itself. See Note [Simplest first].
+-- that are neither that nor the value itself; of the simplest, none. See
+-- Note [Simplest first].
 shrinkTo :: (Eq a) => a -> (a -> [a]) -> a -> [a]
-shrinkTo simplest steps x = [simplest | x /= simplest] ++ [step | step <- steps x, step /= simplest, step /= x]
+shrinkTo simplest steps x
+    | x == simplest = []
+    | otherwise = simplest : [step | step <- steps x, step /= simplest, step /= x]
 
 -- | Simpler values of something made of parts, given the ways to make it
 -- simpler in each part alone: every part at its simplest at once, and

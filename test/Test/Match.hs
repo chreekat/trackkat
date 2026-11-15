@@ -101,22 +101,34 @@ blobsOf scene =
 
 -- | A clip seen whole with its reflectors well apart in the picture, each
 -- blob within 3 pixels of where its reflector is, and up to four strays
--- well away from them. Simpler with fewer strays, and blobs just where
--- their reflectors are.
+-- well away from them. Simplest squarely facing the camera a metre
+-- straight ahead, alone, its blobs the smallest and just where their
+-- reflectors are; and simpler with fewer strays, one of those so, or a
+-- simpler pose.
 instance Arbitrary SeenClip where
     arbitrary = do
-        placing <- genSeen 40 trackedRange clipBent `suchThat` (wellApart 40 . predicted . scene [])
+        placing <- genSeen 40 trackedRange clipBent `suchThat` (\placing -> laidOut (SeenClip placing [] [] []))
         off <- vectorOf 3 ((,) <$> choose (-3, 3) <*> choose (-3, 3))
         sizes <- vectorOf 3 (chooseInt (30, 300))
         count <- chooseInt (0, 4)
-        strays <- vectorOf count (((,) <$> ((,) <$> choose (0, 640) <*> choose (0, 480)) <*> chooseInt (30, 300)) `suchThat` (\(at, _) -> all ((>= 60) . distance at) (predicted (scene [] placing))))
+        strays <- vectorOf count (((,) <$> ((,) <$> choose (0, 640) <*> choose (0, 480)) <*> chooseInt (30, 300)) `suchThat` (\stray -> laidOut (SeenClip placing [] [] [stray])))
         pure (SeenClip placing off sizes strays)
-      where
-        scene strays placing = SeenClip placing [] [] strays
-        wellApart pixels places = and [distance a b >= pixels | (i, a) <- zip [0 :: Int ..] places, (j, b) <- zip [0 ..] places, i < j]
-    shrink scene =
-        [scene{sceneStrays = strays} | strays <- shrinkList (const []) (sceneStrays scene)]
-            ++ [scene{sceneOff = []} | not (null (sceneOff scene))]
+    shrink =
+        shrinkParts
+            [ \scene -> [scene{sceneStrays = strays} | strays <- shrinkList (const []) (sceneStrays scene)]
+            , \scene -> [scene{sceneOff = []} | not (null (sceneOff scene))]
+            , \scene -> [scene{sceneSizes = [30, 30, 30]} | sceneSizes scene /= [30, 30, 30]]
+            , \scene -> [simpler | placing <- shrinkSeen trackedRange clipBent (scenePlacing scene), let simpler = scene{scenePlacing = placing}, laidOut simpler]
+            ]
+
+-- | Whether a scene's reflectors are 40 pixels or more apart in the
+-- picture, and its strays 60 or more from each.
+laidOut :: SeenClip -> Bool
+laidOut scene =
+    and [distance a b >= 40 | (i, a) <- zip [0 :: Int ..] places, (j, b) <- zip [0 ..] places, i < j]
+        && and [distance at place >= 60 | (at, _) <- sceneStrays scene, place <- places]
+  where
+    places = predicted scene
 
 -- | How many pixels a blob is expected to have, up to a thousand.
 newtype Expected = Expected Double

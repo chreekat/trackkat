@@ -17,7 +17,7 @@ import Test.Tasty (TestTree, testGroup, withResource)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (genConfig)
+import Test.Gen (earlier, genConfig, shrinkParts)
 import Test.Instances ()
 import Test.Simulation (clipBent, headSeen)
 import TrackKat.Calibration
@@ -196,7 +196,7 @@ properties =
                 let whole = written r
                     start = BL.length (toLazyByteString (renderStart (recStart r)))
                     first = BL.length (toLazyByteString (foldMap (renderEntry (recStart r)) (take 1 (recEntries r))))
-                 in forAllShrink (choose (start + first, BL.length whole)) (\cut -> filter (/= cut) [BL.length whole, start + first]) $ \cut ->
+                 in forAllShrink (choose (start + first, BL.length whole)) (earlier [BL.length whole, start + first]) $ \cut ->
                         let kept = BL.take cut whole
                             wholeLines = length (BL.elemIndices 10 (BL.drop start kept))
                             cutShort = cut > start && BL.last kept /= 10
@@ -230,8 +230,9 @@ written r = toLazyByteString (renderStart (recStart r) <> foldMap (renderEntry (
 
 -- | A recording of anything: notes, any camera, settings a settings file
 -- can say, and frames, presses, marks and corrupt packets at times around
--- the clock's. Simpler of fewer entries and notes, with the default
--- camera.
+-- the clock's. Simplest of no entries or notes, with the default camera
+-- and no calibration; and simpler with one of those so, or fewer. (Its
+-- settings and its clock are left as they are.)
 newtype Recorded = Recorded Recording
     deriving (Show)
 
@@ -259,12 +260,13 @@ genRecording = do
     text = unwords <$> scale (`div` 10) (listOf (elements ["tirprobe", "0.1.142+3f9c2e1", "--record", "Zoë's", "bad", "header", "checksum", "#", "="]))
 
 shrinkRecording :: Recording -> [Recording]
-shrinkRecording (Recording start entries) =
-    [Recording start entries' | entries' <- shrinkList (const []) entries]
-        ++ [Recording start{startNotes = notes} entries | notes <- shrinkList (const []) (startNotes start)]
-        ++ [Recording start{startIntrinsics = defaultIntrinsics} entries | camera /= (focal defaultIntrinsics, cx defaultIntrinsics, cy defaultIntrinsics)]
-  where
-    camera = let k = startIntrinsics start in (focal k, cx k, cy k)
+shrinkRecording =
+    shrinkParts
+        [ \(Recording start entries) -> [Recording start entries' | entries' <- shrinkList (const []) entries]
+        , \(Recording start entries) -> [Recording start{startNotes = notes} entries | notes <- shrinkList (const []) (startNotes start)]
+        , \(Recording start entries) -> [Recording start{startIntrinsics = defaultIntrinsics} entries | startIntrinsics start /= defaultIntrinsics]
+        , \(Recording start entries) -> [Recording start{startCalibration = FreshCalibration} entries | startCalibration start /= FreshCalibration]
+        ]
 
 -- | A few frames of a head glancing about, with what the user did before
 -- each: the presses and marks, when the frame was seen, its counter and
