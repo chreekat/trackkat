@@ -253,11 +253,13 @@ inView m placing = all shown [mLeft m, mRight m, mTop m]
             (u, v) = project defaultIntrinsics pose p
          in z > 0 && u >= 0 && u < fromIntegral frameWidth && v >= 0 && v < fromIntegral frameHeight
 
--- | Poses turned less, and nearer the middle of the picture, still seen
--- whole.
+-- | Poses turned less, and straight ahead of the camera as far from it,
+-- still seen whole.
 shrinkSeen :: Model -> Placing -> [Placing]
-shrinkSeen m (Placing turn at@(V3 _ _ z)) =
-    filter (inView m) ([Placing turn' at | turn' <- shrinkTurn turn] ++ [Placing turn (V3 0 0 z) | at /= V3 0 0 z])
+shrinkSeen m (Placing turn at) =
+    filter (inView m) ([Placing turn' at | turn' <- shrinkTurn turn] ++ [Placing turn ahead | at /= ahead])
+  where
+    ahead = V3 0 0 (norm at)
 
 -- | A pose of the headset clip that the camera sees whole, within the
 -- range the clip is tracked in, turned up to 60 degrees from squarely
