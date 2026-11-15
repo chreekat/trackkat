@@ -32,6 +32,7 @@ import TrackKat.Controls
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
 import TrackKat.Gui
+import TrackKat.Idle
 import TrackKat.Install
 import TrackKat.Log
 import TrackKat.Pose
@@ -48,12 +49,6 @@ import TrackKat.Windows
 -- | This build's version; none for a development build.
 version :: Maybe Version
 version = buildVersion >>= parseVersion
-
--- | When started by a game, how long trackkat waits, with no game tracking
--- and its window closed, before it quits. Long enough for a game to be
--- restarted.
-idleSeconds :: Int
-idleSeconds = 60
 
 main :: IO ()
 main = do
@@ -330,9 +325,9 @@ cameraLoop sh = forever $ do
 -- started trackkat, until neither a game nor the window has used it for
 -- 'idleSeconds'.
 controls :: Start -> FilePath -> Shell -> IO Bool -> IO ()
-controls start path sh takeUp = go 0 Nothing
+controls start path sh takeUp = go 0 Busy
   where
-    go checked idleSince = do
+    go checked unused = do
         threadDelay 20000
         actions <- takeActions
         mapM_ act actions
@@ -343,26 +338,17 @@ controls start path sh takeUp = go 0 Nothing
             | any quits actions || switched -> pure ()
             -- Checking game processes is a few system calls; twice a
             -- second is plenty.
-            | now - checked < 0.5 -> go checked idleSince
+            | now - checked < 0.5 -> go checked unused
             | otherwise -> do
                 games <- gamesTracking
                 name <- if games > 0 then trackingGameName else pure Nothing
                 showGames games name
                 open <- windowOpen
-                case (start, games > 0 || open, idleSince) of
-                    (ByHand, _, _) -> go now Nothing
-                    (AtLogin, _, _) -> go now Nothing
-                    (ByGame, True, Nothing) -> go now Nothing
-                    (ByGame, True, Just _) -> do
-                        say "A game or the window is using trackkat again; not quitting."
-                        go now Nothing
-                    (ByGame, False, Nothing) -> do
-                        say (printf "No game or window is using trackkat; quitting in %d s unless one starts." idleSeconds)
-                        go now (Just now)
-                    (ByGame, False, Just since)
-                        | now - since >= fromIntegral idleSeconds ->
-                            say (printf "Quitting: no game or window used trackkat for %d s." idleSeconds)
-                        | otherwise -> go now idleSince
+                let (unused', said) = idle start now (if games > 0 || open then Used else Unused) unused
+                mapM_ logLine said
+                case unused' of
+                    Quitting -> pure ()
+                    _ -> go now unused'
     quits QuitAction = True
     quits _ = False
 
