@@ -20,6 +20,13 @@ module TrackKat.Lights (
     activeMask,
     inMask,
     heaviestIn,
+
+    -- * How lights are told
+    stillPixels,
+    reachPixels,
+    marginPixels,
+    learnSeconds,
+    forgetSeconds,
 ) where
 
 import Data.Foldable (toList)
