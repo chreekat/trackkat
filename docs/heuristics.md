@@ -57,7 +57,8 @@ then one decision is made by score, and changed what tracking does:
 
 ## Headline
 
-About 140 numbers in ten modules, counting each named constant and each
+About 140 numbers in 22 modules, eleven of them the tracker's stages,
+counting each named constant and each
 literal inside a function once: 47 head facts, 30 of noise, 21 of
 appearance, 25 of memory and 20 thresholds. (Many of the first three kinds
 gate something, so they are thresholds too; each is counted by what it
@@ -306,11 +307,11 @@ How long things are kept. Six ways of forgetting are in use:
 | A cap on how much is kept, the old scaled down as new comes | `Calibration.upMemory` (degrees), `Shape.memory` (windows), `Calibration.countMemory` (windows) |
 | A cap on how sure, direction by direction | `Calibration.pivotMemorySpread` |
 | The last few | `Branch.placesRemembered` |
-| A floor under probabilities | `Branch.leastChance` |
+| A floor under probabilities | `Belief.leastChance` |
 
 | Name | Value | Keeps | From | Repeats or contradicts |
 | --- | --- | --- | --- | --- |
-| `Tracker.Trail.predictionSeconds` | 0.5 s | a pose predicts the reflectors, and one left for a pose found afresh may be resumed; after, the clip is found afresh only | tuned | (10); no longer how long a rejected follow waits |
+| `Tracker.Trail.predictionSeconds` | 0.5 s | a pose predicts the reflectors, and one left for a pose found afresh may be resumed; after, the clip is found afresh only | tuned | (10) |
 | `Tracker.Still.confirmSeconds` | 0.5 s | tracking this long before lights are learnt clear of the clip | tuned | (10) |
 | `Tracker.Sizes.showingSeconds` | 1 s one reflector out; 2.5 s one perhaps behind another | how long the clip is followed showing less (term `partly seen`) | tuned | |
 | `Tracker.Sizes.sizeMemory` | 10 s | a reflector's usual size, out of sight | tuned | (8) |
@@ -327,7 +328,7 @@ How long things are kept. Six ways of forgetting are in use:
 | `Calibration.longestStep` | 0.1 s | the longest gap what is applied moves over | tuned | |
 | `Shape.memory` | 600 windows | evidence for the shape | "about ten minutes of turning" | |
 | `Branch.placesRemembered`, `placeDegrees` | 4, 15° | where windows lately ended, so that fidgeting in one place counts once | tuned | |
-| `Branch.leastChance` | 0.001 | no belief falls below, so any can come back | tuned | |
+| `Belief.leastChance` | 0.001 | no belief falls below, so any can come back | tuned | |
 | `Response.jumpPersistence` | 3 frames | a jump lasting this long is real | tuned | (11) |
 | `Tracker.Absence.absenceSeconds`, `absenceQuiet` | 1 s, 10 s | how long out of sight before the user is told why, and how seldom | tuned | |
 
@@ -388,7 +389,7 @@ What continues:
 - **Followed** and **refound** carry on the belief about the mirror image
   and its window of turning, the time tracked that lets lights be learnt
   clear of the clip, and what learns from poses.
-- **Found afresh** starts them over, as it always has (`Branch.foundAfresh`:
+- **Found afresh** starts them over (`Branch.foundAfresh`:
   either pose as likely the mirror image). The pose it left is kept for
   `predictionSeconds`; a pose found by layout within the jump following
   allows from *that* pose is **resumed**: scored as continuing it, and
