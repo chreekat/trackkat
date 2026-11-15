@@ -23,7 +23,7 @@ module TrackKat.Response (
 ) where
 
 import TrackKat.Pose (HeadPose (..))
-import TrackKat.World (World (..), inDegrees, inMillimetres, world)
+import TrackKat.World (Instant, World (..), inDegrees, inMillimetres, inSeconds, world, (.-.))
 
 -- | A response curve, the same on both sides of centre: in degrees for
 -- rotations, mm for translations.
@@ -186,7 +186,7 @@ data Axis = Axis !Double !Double
 
 -- | What shaping keeps from one frame to the next.
 data Shaper = Shaper
-    { shLast :: !(Maybe (Double, HeadPose))
+    { shLast :: !(Maybe (Instant, HeadPose))
     -- ^ time and pose last accepted, before smoothing
     , shRejected :: !Int
     -- ^ frames in a row rejected as impossible jumps
@@ -211,12 +211,12 @@ maxStepMm = inMillimetres (headStepMove world)
 jumpPersistence :: Int
 jumpPersistence = 3
 
--- | Shape a pose seen at the given time in seconds. Impossible jumps are
+-- | Shape a pose seen at the given time. Impossible jumps are
 -- ignored unless they persist, then each axis is smoothed and put through
 -- its curve, the view is turned by the trim, leaning follows the view if
 -- the response says so, by the yaw the game will show, and the view is moved
 -- by the trim.
-shape :: Response -> Trim -> Double -> HeadPose -> Shaper -> (HeadPose, Shaper)
+shape :: Response -> Trim -> Instant -> HeadPose -> Shaper -> (HeadPose, Shaper)
 shape r forward now pose s = case shLast s of
     Just (_, previous)
         | jump previous pose && shRejected s + 1 < jumpPersistence ->
@@ -229,7 +229,7 @@ shape r forward now pose s = case shLast s of
     jump a b =
         or (zipWith3 (\limit u v -> abs (u - v) > limit) (replicate 3 maxStepDegrees ++ replicate 3 maxStepMm) (values a) (values b))
     smoothAll lastTime axes = case (smoothing r, lastTime, axes) of
-        (Smoothing mc b, Just t, Just old) | now > t -> zipWith (oneEuro mc b (now - t)) old (values pose)
+        (Smoothing mc b, Just t, Just old) | now > t -> zipWith (oneEuro mc b (inSeconds (now .-. t))) old (values pose)
         _ -> [Axis v 0 | v <- values pose]
     output axes fallback = case maybe (values fallback) (map (\(Axis v _) -> v)) axes of
         [y, p, ro, x, yy, z] ->
@@ -247,7 +247,7 @@ shape r forward now pose s = case shLast s of
         LeanWithView -> leanWithView
         LeanWithScreen -> id
 
--- | One step of the 1€ filter.
+-- | One step of the 1€ filter, of so many seconds.
 oneEuro :: Double -> Double -> Double -> Axis -> Double -> Axis
 oneEuro mc b dt (Axis previous rate) x =
     let rate' = lowPass (alpha derivativeCutoff) rate ((x - previous) / dt)

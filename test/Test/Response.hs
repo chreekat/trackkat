@@ -14,7 +14,7 @@ import Test.Simulation (deg)
 import TrackKat.GamePose
 import TrackKat.Pose (HeadPose (..))
 import TrackKat.Response
-import TrackKat.World (World (..), inDegrees, inMillimetres, world)
+import TrackKat.World (World (..), clockAt, inDegrees, inMillimetres, world)
 
 tests :: TestTree
 tests = group "Response" $ do
@@ -53,7 +53,7 @@ tests = group "Response" $ do
         plain = Response NoSmoothing linear linear linear linear linear linear LeanWithScreen
         smooth = plain{smoothing = Smoothing 1 0.05}
         at y = HeadPose{yaw = y, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0}
-        run r frames = go newShaper (zip [0, 1 / 120 ..] frames)
+        run r frames = go newShaper (zip (map clockAt [0, 1 / 120 ..]) frames)
           where
             go _ [] = []
             go sh ((t, p) : rest) = let (out, sh') = shape r NoTrim t p sh in yaw out : go sh' rest
@@ -83,13 +83,13 @@ tests = group "Response" $ do
     check "looking ahead, leaning is unchanged" $ abs (tx ahead - 4) < 1e-12 && abs (tz ahead + 7) < 1e-12
     -- The lean turns by the yaw the game shows, after the curves.
     let viewing = plain{yawCurve = Points [(1, 6)], lean = LeanWithView}
-        (shapedBack, _) = shape viewing NoTrim 0 HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+        (shapedBack, _) = shape viewing NoTrim (clockAt 0) HeadPose{yaw = 160 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     checkShowing "lean follows the curved yaw" (show shapedBack) $
         abs (yaw shapedBack - 160) < 1e-9 && abs (tx shapedBack - 10 * cos (deg 160)) < 1e-9 && abs (tz shapedBack + 10 * sin (deg 160)) < 1e-9
 
     -- Trimming: where the view looks, and where it is, becomes forward,
     -- until recentering.
-    let trimmed t y p = fst (shape plain t 0 HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
+    let trimmed t y p = fst (shape plain t (clockAt 0) HeadPose{yaw = y, pitch = p, roll = 3, tx = 4, ty = 5, tz = 6} newShaper)
         axes hp = [yaw hp, pitch hp, roll hp, tx hp, ty hp, tz hp]
         lookingAt = trimmed NoTrim (-40) 20
         once = trimTo lookingAt
@@ -105,11 +105,11 @@ tests = group "Response" $ do
     check "trimmed roll wraps" $ roll (trimmed (Trim (HeadPose 0 0 179 0 0 0)) 0 0) == -178
     check "trim of a view turned past behind" $
         trimTo HeadPose{yaw = 200, pitch = 100, roll = 190, tx = 0, ty = 0, tz = 0} == Trim (HeadPose (-160) 90 (-170) 0 0 0)
-    let (trimmedLean, _) = shape viewing (turnedBy 150 0) 0 HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
+    let (trimmedLean, _) = shape viewing (turnedBy 150 0) (clockAt 0) HeadPose{yaw = 10 / 6, pitch = 0, roll = 0, tx = 10, ty = 0, tz = 0} newShaper
     checkShowing "lean follows the trimmed yaw" (show trimmedLean) $
         abs (yaw trimmedLean - 160) < 1e-9 && abs (tx trimmedLean - 10 * cos (deg 160)) < 1e-9 && abs (tz trimmedLean + 10 * sin (deg 160)) < 1e-9
     let craned = Trim HeadPose{yaw = 0, pitch = 30, roll = 0, tx = 0, ty = -40, tz = -80}
-        (lookingAway, _) = shape viewing craned 0 HeadPose{yaw = 90 / 6, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0} newShaper
+        (lookingAway, _) = shape viewing craned (clockAt 0) HeadPose{yaw = 90 / 6, pitch = 0, roll = 0, tx = 0, ty = 0, tz = 0} newShaper
     checkShowing "trimmed movement stays put as the view turns" (show lookingAway) $
         abs (tx lookingAway) < 1e-9 && abs (ty lookingAway + 40) < 1e-9 && abs (tz lookingAway + 80) < 1e-9
     tree properties
@@ -191,7 +191,7 @@ rounding count size = count * 2 ** (-52) * size
 
 -- | The views of poses seen one after another at 120 frames a second.
 shaped :: Response -> Trim -> [HeadPose] -> [HeadPose]
-shaped r forward = go newShaper . zip [0, 1 / 120 ..]
+shaped r forward = go newShaper . zip (map clockAt [0, 1 / 120 ..])
   where
     go _ [] = []
     go sh ((t, p) : rest) = let (out, sh') = shape r forward t p sh in out : go sh' rest

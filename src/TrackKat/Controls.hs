@@ -15,6 +15,7 @@ import Text.Printf (printf)
 
 import TrackKat.Config
 import TrackKat.Log (Line (..))
+import TrackKat.World (Instant, seconds, (.+^))
 
 -- | An action bound to keys and joystick buttons.
 data Hotkey = RecenterKey | PauseKey | TrimKey
@@ -45,16 +46,15 @@ keysAndButtons bs = renderBindings bs
 data JoystickEvent = Connected Joystick | Disconnected Joystick | Pressed Joystick Int
     deriving (Eq, Show)
 
--- | Until when joystick buttons pressed are named in the log, in seconds
--- on the clock 'nameButtons' is given the time by.
-newtype ButtonNaming = NamedUntil Double
+-- | Until when joystick buttons pressed are named in the log.
+newtype ButtonNaming = NamedUntil Instant
     deriving (Eq, Show)
 
 -- | From the time given, name the joystick buttons pressed for a minute,
 -- so they can be copied into the settings file; and the line that says so.
-nameButtons :: Double -> (ButtonNaming, Line)
+nameButtons :: Instant -> (ButtonNaming, Line)
 nameButtons now =
-    ( NamedUntil (now + 60)
+    ( NamedUntil (now .+^ seconds 60)
     , ForUser "For the next minute, joystick buttons you press are named here, ready to bind in trackkat.conf."
     )
 
@@ -69,7 +69,7 @@ data JoystickEffect
 -- | What a joystick event at the time given asks for: joysticks coming and
 -- going are logged, and a button pressed is offered to the window, and
 -- named in the log while buttons are.
-joystickEffects :: ButtonNaming -> Double -> JoystickEvent -> [JoystickEffect]
+joystickEffects :: ButtonNaming -> Instant -> JoystickEvent -> [JoystickEffect]
 joystickEffects (NamedUntil shownUntil) now event = case event of
     Connected j -> [JoystickLog (ForUser ("Joystick connected: " ++ renderJoystick j))]
     Disconnected j -> [JoystickLog (ForUser ("Joystick disconnected: " ++ renderJoystick j))]

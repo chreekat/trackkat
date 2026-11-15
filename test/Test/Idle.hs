@@ -10,6 +10,7 @@ import Test.Instances ()
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Idle
 import TrackKat.Log
+import TrackKat.World (clockAt)
 
 tests :: TestTree
 tests =
@@ -39,7 +40,7 @@ tests =
                         .&&. property (and [isUser line | (_, (_, said)) <- run ByGame looks, line <- said])
         , testProperty "once to quit, trackkat stays so" $
             \(Looking looks) start use ->
-                idle start (sum (map fst looks)) use Quitting === (Quitting, [])
+                idle start (clockAt (sum (map fst looks))) use Quitting === (Quitting, [])
         ]
   where
     isUser (ForUser _) = True
@@ -55,7 +56,7 @@ run start = snd . mapAccumL look (0, Busy)
   where
     look (clock, was) (after, use) =
         let at = clock + after
-            (now, said) = idle start at use was
+            (now, said) = idle start (clockAt at) use was
          in ((at, now), ((at, use), (now, said)))
 
 -- | The looks up to and with the one that says to quit.

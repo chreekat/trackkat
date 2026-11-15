@@ -18,6 +18,7 @@ import TrackKat.Config (Updates (..))
 import TrackKat.Display (Notice (..), UpdateStatus (..))
 import TrackKat.Log (Line (..))
 import TrackKat.Release
+import TrackKat.World (Instant, Seconds, seconds, (.-.))
 
 -- Note [What looking for updates promises]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -38,9 +39,9 @@ import TrackKat.Release
 
 -- | What trackkat remembers of its looks for a newer version.
 data Updater = Updater
-    { uLooked :: Maybe Double
-    -- ^ when it last looked, in seconds, counting only looks that put off
-    -- the next: see 'answered'
+    { uLooked :: Maybe Instant
+    -- ^ when it last looked, counting only looks that put off the next:
+    -- see 'answered'
     , uFailure :: FailureLogged
     }
     deriving (Eq, Show)
@@ -62,16 +63,15 @@ data Looking
       Asked
     deriving (Eq, Show)
 
--- | How often an installed trackkat looks for a newer version, in seconds.
-updateEvery :: Double
-updateEvery = 4 * 3600
+-- | How often an installed trackkat looks for a newer version.
+updateEvery :: Seconds
+updateEvery = seconds (4 * 3600)
 
--- | The look to make unasked at the time given, in seconds on a clock that
--- never goes back, if one is due.
-dueLook :: Updates -> Double -> Updater -> Maybe Looking
+-- | The look to make unasked at the time given, if one is due.
+dueLook :: Updates -> Instant -> Updater -> Maybe Looking
 dueLook UpdatesOff _ _ = Nothing
 dueLook UpdatesOn now u = case uLooked u of
-    Just looked | now - looked < updateEvery -> Nothing
+    Just looked | now .-. looked < updateEvery -> Nothing
     _ -> Just Due
 
 -- | Something for trackkat to do about a look.
@@ -94,7 +94,7 @@ begun Due = []
 --
 -- A look puts off the next unless it was unasked and found no network, as
 -- just after waking from sleep.
-answered :: Version -> Looking -> Double -> Either LookFailure (Maybe Version) -> Offer -> Updater -> (Updater, [Effect])
+answered :: Version -> Looking -> Instant -> Either LookFailure (Maybe Version) -> Offer -> Updater -> (Updater, [Effect])
 answered self why now found waiting (Updater _ logged) = case (found, waiting) of
     -- Offline, or behind a proxy that won't let it through: the log
     -- says so when asked, and otherwise once until a look works, so
