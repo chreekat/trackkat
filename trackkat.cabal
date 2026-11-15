@@ -163,7 +163,11 @@ test-suite tests
     Test.Stats
     Test.Term
     Test.Tracker
+    Test.Tracker.Blobs
+    Test.Tracker.Choose
     Test.Tracker.Judge
+    Test.Tracker.Sizes
+    Test.Tracker.Trail
     Test.Visibility
     Test.World
   ghc-options:      "-with-rtsopts=-T"
