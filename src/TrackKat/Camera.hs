@@ -12,11 +12,9 @@ module TrackKat.Camera (
     OpenError (..),
     CameraSilent (..),
     vendorId,
-    productIdV3,
     withCamera,
     withPackets,
     Light (..),
-    setLights,
     withLights,
     Log,
     hex,
@@ -55,7 +53,7 @@ data Settings = Settings
     , irBrightness :: Int
     -- ^ IR illuminator level, 5..7
     , statusLed :: Bool
-    -- ^ use the two green lights (see 'setLeds')
+    -- ^ use the two green lights (see 'withLights')
     }
     deriving (Show)
 
@@ -68,7 +66,6 @@ data Camera = Camera
     , camSeed :: IORef Seed
     , camLog :: Log
     , camSettings :: Settings
-    , camLedsEnabled :: Bool
     }
 
 data OpenError
@@ -95,10 +92,10 @@ withCamera :: USB.Context -> Log -> Settings -> (Camera -> IO a) -> IO a
 withCamera ctx logger settings act = do
     (h, _) <- openOrExplain
     seed <- newIORef . newSeed =<< getMonotonicTimeNSec
-    let cam = Camera ctx h seed logger settings (statusLed settings)
+    let cam = Camera ctx h seed logger settings
     (`finally` USB.close h) $ do
         explainClaim (USB.claim h)
-        bracket_ (initialise cam settings) (shutdown cam) (act cam)
+        bracket_ (initialise cam) (shutdown cam) (act cam)
             `finally` USB.release h
   where
     openOrExplain = do
@@ -163,7 +160,7 @@ withPackets cam act = do
     withAsync reader $ \r -> do
         link r
         takeMVar reading
-        start cam (camSettings cam)
+        start cam
         act next
 
 -- | Seconds without data before the camera counts as silent. With video on
@@ -206,7 +203,7 @@ data Light = Off | On
 -- Each command pauses for 50 ms, so only call this when the state changes.
 setLights :: Camera -> Light -> Light -> IO ()
 setLights cam first second
-    | camLedsEnabled cam = send cam (Cmd4 0x19 0x04 0x00 (bit 0x20 first .|. bit 0x02 second))
+    | statusLed (camSettings cam) = send cam (Cmd4 0x19 0x04 0x00 (bit 0x20 first .|. bit 0x02 second))
     | otherwise = pure ()
   where
     bit b On = b
@@ -261,8 +258,8 @@ readStatus cam = do
     camLog cam $ maybe "status: no reply" (\s -> "status: " ++ hex (statusRaw s)) r
     pure r
 
-initialise :: Camera -> Settings -> IO ()
-initialise cam _ = do
+initialise :: Camera -> IO ()
+initialise cam = do
     camLog cam "initialising"
     send cam (Cmd2 0x1A 0x00)
     send cam (Cmd2 0x1A 0x00)
@@ -287,8 +284,9 @@ initialise cam _ = do
     send cam (Cmd4 0x19 0x03 0x00 0x05)
     send cam (Cmd4 0x19 0x04 0x00 0x00)
 
-start :: Camera -> Settings -> IO ()
-start cam s = do
+start :: Camera -> IO ()
+start cam = do
+    let s = camSettings cam
     camLog cam "starting video"
     setIrLed cam True
     setIrBrightness cam (irBrightness s)
