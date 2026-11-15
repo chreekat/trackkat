@@ -114,7 +114,7 @@ mirror =
         , testProperty "recentered on a pose, that pose is the centre" $
             forAllShrink (genSeen 60 trackedRange headset) (shrinkSeen headset) $ \placing ->
                 let Pose r t = placed placing
-                 in fmap (\(Pose r' t') -> (r', t')) (centrePose (recentreOn (placed placing) (Centre Nothing (newBranch headset)))) === Just (r, t)
+                 in fmap (\(Pose r' t') -> (r', t')) (centrePose (recenterOn (placed placing) (Centre Nothing (newBranch headset)))) === Just (r, t)
         , testProperty "with nothing yet believed, one frame switches neither the pose nor the centre for its mirror image" $
             forAllShrink (genSeen 60 trackedRange headset) (shrinkSeen headset) $ \placing -> forAllShrink (genSeen 60 trackedRange headset) (shrinkSeen headset) $ \centre ->
                 forAll (elements [Clear, Doubtful]) $ \clear ->

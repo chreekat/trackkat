@@ -5,7 +5,7 @@
 -- comes to once that is weighed.
 module TrackKat.Tracker.Mirror (
     Centre (..),
-    recentreOn,
+    recenterOn,
     clarity,
     Told (..),
     tellApart,
@@ -30,8 +30,8 @@ data Centre = Centre
     }
 
 -- | Recentered on a pose.
-recentreOn :: Pose -> Centre -> Centre
-recentreOn pose (Centre _ belief) = Centre (Just pose) (recentered belief)
+recenterOn :: Pose -> Centre -> Centre
+recenterOn pose (Centre _ belief) = Centre (Just pose) (recentered belief)
 
 -- | How clearly a frame shows the reflectors, given their sizes, the
 -- frame's blobs, masked or not, and the pose and sights made of them:

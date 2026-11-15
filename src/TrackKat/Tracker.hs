@@ -294,5 +294,5 @@ seenFrame (Look now blobs shown from known) chosen@(Chosen way _) (Sighting seen
 -- | Carry out a request at the given time, on a frame tracked at the
 -- given pose: what it changes, and the event that says so.
 carryOut :: Double -> Pose -> (Centre, Learners) -> Request -> ((Centre, Learners), Event)
-carryOut _ pose (centre, learners) Recenter = ((recentreOn pose centre, learners), Recentered)
+carryOut _ pose (centre, learners) Recenter = ((recenterOn pose centre, learners), Recentered)
 carryOut now _ (centre, learners) Calibrate = ((centre, startSweep now learners), CalibrationStarted)
