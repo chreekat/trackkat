@@ -34,7 +34,7 @@ import TrackKat.World (World (..), inPixels, world)
 
 -- | One of something for each reflector: left, right, top.
 data Three a = Three a a a
-    deriving (Show, Functor, Foldable, Traversable)
+    deriving (Eq, Show, Functor, Foldable, Traversable)
 
 instance Applicative Three where
     pure a = Three a a a
@@ -52,7 +52,7 @@ data Size = Size
     , sizeUsual :: !Double
     -- ^ the most it has been lately
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | Not seen yet.
 noSize :: Size
@@ -74,7 +74,7 @@ data Sight = Sight
     , sightPixels :: !Double
     , sightKind :: !Kind
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | A way to see the reflectors in the blobs: each reflector's sight, or
 -- Nothing for one not seen; how many blobs it leaves unused; how unlikely
@@ -87,7 +87,7 @@ data Match = Match
     , matchCost :: Double
     , matchJudged :: [Finding]
     }
-    deriving (Show)
+    deriving (Eq, Show)
 
 -- | How likely a match is, as its terms score it.
 matchScore :: Match -> Score
