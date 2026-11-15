@@ -108,6 +108,9 @@ that tests found false. None is fixed.
   can write "-0".
 - A recording cut inside its first entry line is refused whole.
 - A Points curve can turn back by one ulp at a knot.
+- `Belief.weighed` given a score that is impossible both ways, alike and
+  unalike, gives no belief but not-a-numbers; nothing gives it one today,
+  as how far a head is turned is never scored impossible.
 - `NoTrim` and a trim of zero disagree once the curved view passes half a
   turn.
 - `solvePose` promises reprojection, not pose: up to about 0.07° and
