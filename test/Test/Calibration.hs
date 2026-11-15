@@ -64,8 +64,8 @@ tests = group "Calibration" $ do
             checkShowing "clip on the head with the camera tipped" (show placed) $
                 let V3 _ y _ = middle placed in abs (y - dot (V3 0 (-100) (-100)) tipped) < 1e-3
 
-    -- How the clip sits on the head: the standard way, as before; mounted
-    -- otherwise and back, as it was; and the prior pivot following it.
+    -- How the clip sits on the head: the standard way, which turns
+    -- nothing; mounted otherwise and back; and the prior pivot following it.
     check "the standard mounting turns nothing" $
         let m = mounted standardMounting headset in all (uncurry closeTo) [(mLeft m, mLeft headset), (mRight m, mRight headset), (mTop m, mTop headset)]
     let sideways = Mounting (rotYXZ 0 0 90) (V3 (-60) 100 60)
