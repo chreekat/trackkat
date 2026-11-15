@@ -17,6 +17,7 @@ import qualified Test.Linear
 import qualified Test.Match
 import qualified Test.Memory
 import qualified Test.Mount
+import qualified Test.Number
 import qualified Test.Pose
 import qualified Test.Protocol
 import qualified Test.Recording
@@ -56,6 +57,7 @@ main = do
                 , Test.Calibration.tests
                 , Test.Visibility.tests
                 , Test.Response.tests
+                , Test.Number.tests
                 , Test.Config.tests
                 , Test.Stats.tests
                 , Test.Release.tests

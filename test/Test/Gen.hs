@@ -25,13 +25,26 @@ module Test.Gen (
     inView,
     movedCamera,
     turnedAbout,
+
+    -- * Settings
+    genWritten,
+    written,
+    genBinding,
+    shrinkBinding,
+    genConfig,
+    shrinkConfig,
 ) where
 
+import Data.Maybe (fromMaybe)
 import Test.Tasty.QuickCheck
 
+import TrackKat.Config
 import TrackKat.Frame (frameHeight, frameWidth)
+import TrackKat.Lights (Masking (..))
 import TrackKat.Linear
+import TrackKat.Number
 import TrackKat.Pose
+import TrackKat.Response
 import TrackKat.World (World (..), inMillimetres, world)
 
 -- | That two numbers are within a tolerance of each other.
@@ -142,3 +155,100 @@ turnedAbout :: V3 -> M33 -> Pose -> Pose
 turnedAbout pivot turn pose@(Pose r _) = Pose turned (poseAt pose pivot ^-^ mulMV turned pivot)
   where
     turned = turn `mulMM` r
+
+-- * Settings
+
+-- | A number as trackkat's text files give one: so many ten-thousandths,
+-- between the given numbers of them, as 'parseNumber' reads them written
+-- out, which isn't always the nearest number to them.
+genWritten :: (Int, Int) -> Gen Double
+genWritten range = written <$> chooseInt range
+
+written :: Int -> Double
+written tenThousandths = fromMaybe (error "written") (parseNumber (renderNumber (fromIntegral tenThousandths / 10000)))
+
+-- | A key or mouse button with modifiers, as trackkat's window gives one
+-- from Windows' codes, or a joystick's button.
+genBinding :: Gen Binding
+genBinding = oneof [key, JoystickButton <$> (Joystick <$> joystickName <*> chooseInt (1, 4)) <*> chooseInt (1, maxButton)]
+  where
+    key = elements [b | mask <- [0 .. 15], code <- [0 .. 255], Just b <- [bindingFromCodes mask code]]
+    joystickName = unwords <$> listOf1 (elements ["Throttle", "Joystick", "-", "HOTAS", "Warthog", "T.16000M", "VPC", "MT-50CM2", "(HID)", "button", "Zoë's", "3D", "2"])
+
+-- | Bindings with fewer modifiers, a shorter joystick's name, and the
+-- first joystick and button.
+shrinkBinding :: Binding -> [Binding]
+shrinkBinding (Key mods k) = [Key (filter (/= m) mods) k | m <- mods]
+shrinkBinding (JoystickButton (Joystick name index) button) =
+    [JoystickButton (Joystick (unwords shorter) index) button | shorter <- shrinkList (const []) (words name), not (null shorter)]
+        ++ [JoystickButton (Joystick name 1) button | index /= 1]
+        ++ [JoystickButton (Joystick name index) 1 | button /= 1]
+
+-- | Settings a settings file can say: numbers as it writes them, smoothing
+-- from its two knobs, each curve's points going up from above zero or a
+-- multiplier with a precision over the axis's own range, and a clip that
+-- is a triangle. (See the tests' report for the settings it can't say.)
+genConfig :: Gen Config
+genConfig = do
+    recenter <- bindings
+    pause <- bindings
+    trim <- bindings
+    smooth <- oneof [pure NoSmoothing, tuned <$> genWritten (0, 1000000) <*> genWritten (0, 1000000)]
+    curves <-
+        Response smooth
+            <$> curve yawRange
+            <*> curve pitchRange
+            <*> curve rollRange
+            <*> curve leanRange
+            <*> curve leanRange
+            <*> curve leanRange
+    leaning <- elements [LeanWithView, LeanWithScreen]
+    worn <- clip' `suchThatMap` id
+    Config recenter pause trim (curves leaning) worn
+        <$> elements [TrackKatNPClient, TrackIRNPClient]
+        <*> elements [UpdatesOn, UpdatesOff]
+        <*> elements [StartAtLogin, NoStartAtLogin]
+        <*> elements [MaskLights, NoMasking]
+        <*> elements [VirtualView, PhysicalView, CameraView]
+  where
+    bindings = scale (`div` 10) (listOf genBinding)
+    curve range =
+        oneof
+            [ do
+                steps <- scale (`div` 10) (listOf1 (chooseInt (1, 500000)))
+                Points <$> mapM (\input -> (,) (written input) <$> genWritten (-1000000, 1000000)) (drop 1 (scanl (+) 0 steps))
+            , (\m p -> Expo (Multiplier m p range)) <$> genWritten (1, 200000) <*> genWritten (0, 1000000)
+            ]
+    clip' = do
+        lr <- genWritten (100000, 3000000)
+        lt <- genWritten (100000, 3000000)
+        clipShape lr lt <$> genWritten (100000, 3000000)
+
+-- | Settings with one more of them as the default has it, and with fewer
+-- and simpler bindings.
+shrinkConfig :: Config -> [Config]
+shrinkConfig c =
+    filter
+        (/= c)
+        [ c{response = r{smoothing = smoothing dr}}
+        , c{response = r{yawCurve = yawCurve dr}}
+        , c{response = r{pitchCurve = pitchCurve dr}}
+        , c{response = r{rollCurve = rollCurve dr}}
+        , c{response = r{xCurve = xCurve dr}}
+        , c{response = r{yCurve = yCurve dr}}
+        , c{response = r{zCurve = zCurve dr}}
+        , c{response = r{lean = lean dr}}
+        , c{clip = clip d}
+        , c{npclient = npclient d}
+        , c{updates = updates d}
+        , c{startup = startup d}
+        , c{lightMasking = lightMasking d}
+        , c{headView = headView d}
+        ]
+        ++ [c{recenterBindings = bs} | bs <- shrinkList shrinkBinding (recenterBindings c)]
+        ++ [c{pauseBindings = bs} | bs <- shrinkList shrinkBinding (pauseBindings c)]
+        ++ [c{trimBindings = bs} | bs <- shrinkList shrinkBinding (trimBindings c)]
+  where
+    d = defaultConfig
+    r = response c
+    dr = response d
