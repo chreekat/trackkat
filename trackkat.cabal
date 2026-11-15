@@ -44,9 +44,12 @@ library
     TrackKat.Tracker.Follow
     TrackKat.Tracker.Judge
     TrackKat.Tracker.Layout
+    TrackKat.Tracker.Learners
+    TrackKat.Tracker.Mirror
     TrackKat.Tracker.Outcome
     TrackKat.Tracker.Sighting
     TrackKat.Tracker.Sizes
+    TrackKat.Tracker.Still
     TrackKat.Tracker.Trail
     TrackKat.Visibility
     TrackKat.USB
