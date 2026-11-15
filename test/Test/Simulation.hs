@@ -237,7 +237,7 @@ turnError rows = case [(truth, p) | (_, truth, Tracked{}, Just p) <- rows] of
   where
     -- The rigid movement from one pose to another.
     moved (Pose r0 t0) (Pose r t) = let r' = r `mulMM` transpose r0 in Pose r' (t ^-^ mulMV r' t0)
-    middle (Pose r t) = mulMV r (V3 0 0 900) ^+^ t
+    middle pose = poseAt pose (V3 0 0 900)
 
 -- * Clips of other shapes and looks
 

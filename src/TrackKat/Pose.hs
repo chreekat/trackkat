@@ -17,6 +17,7 @@ module TrackKat.Pose (
     trackClip,
     triangle,
     Pose (..),
+    poseAt,
     project,
     Reflector (..),
     seenAt,
@@ -201,9 +202,13 @@ triangle lean lr lt rt
 data Pose = Pose {poseR :: !M33, poseT :: !V3}
     deriving (Show)
 
+-- | Where a pose puts a point of the model, in the camera's axes.
+poseAt :: Pose -> V3 -> V3
+poseAt (Pose r t) p = mulMV r p ^+^ t
+
 project :: Intrinsics -> Pose -> V3 -> (Double, Double)
-project k (Pose r t) p =
-    let V3 x y z = mulMV r p ^+^ t
+project k pose p =
+    let V3 x y z = poseAt pose p
      in (cx k + focal k * x / z, cy k + focal k * y / z)
 
 -- Note [Curved reflectors]
@@ -261,23 +266,23 @@ reflectorPoint m TopReflector = mTop m
 -- | Where a reflector appears in the image at a pose: the centre of its
 -- light. See Note [Curved reflectors].
 seenAt :: Intrinsics -> Model -> Pose -> Reflector -> (Double, Double)
-seenAt k m pose@(Pose r t) which = project k pose (litCentre (mTabs m) (tab m which) toCamera p)
+seenAt k m pose@(Pose r _) which = project k pose (litCentre (mTabs m) (tab m which) toCamera p)
   where
     p = reflectorPoint m which
-    toCamera = mulMV (transpose r) ((-1) *^ (mulMV r p ^+^ t))
+    toCamera = mulMV (transpose r) ((-1) *^ poseAt pose p)
 
 -- | Whether none of a reflector's tape faces the camera at a pose: the
 -- camera, seen along the tab's axis, is round it from where the tape
 -- faces by more than the tape's half arc and a quarter turn. Points face
 -- every way. See Note [Curved reflectors].
 tapeFacesAway :: Model -> Pose -> Reflector -> Bool
-tapeFacesAway m (Pose r t) which
+tapeFacesAway m pose@(Pose r _) which
     | tabRadius tabs <= 0 = False
     | otherwise = toFacing < 0 && atan2 (abs toAcross) (negate toFacing) < pi / 2 - half
   where
     tabs = mTabs m
     (axis, facing) = tab m which
-    toCamera = mulMV (transpose r) ((-1) *^ (mulMV r (reflectorPoint m which) ^+^ t))
+    toCamera = mulMV (transpose r) ((-1) *^ poseAt pose (reflectorPoint m which))
     toFacing = dot toCamera facing
     toAcross = dot toCamera (cross axis facing)
     half = 0.5 * tapeArc tabs / tabRadius tabs
@@ -407,14 +412,14 @@ misfit k m (l, r, t) pose =
 -- each moved to fit where they appear, which on curved tabs is a little
 -- off their middles (see Note [Curved reflectors]).
 alternatives :: Intrinsics -> Model -> Pose -> [Pose]
-alternatives k m pose@(Pose r t) =
+alternatives k m pose =
     filter apart (map settle (filter apart (fitThree k m (0.5 * left, 1.5 * left) seen)))
   where
     seen = (seenAt k m pose LeftReflector, seenAt k m pose RightReflector, seenAt k m pose TopReflector)
     apart = (> 0.5) . turnBetweenPoses pose
     -- Starting a pixel or so off, a few steps are as good as many.
     settle q = fromMaybe q (levenbergMarquardt 3 (misfit k m seen) q)
-    left = norm (mulMV r (mLeft m) ^+^ t)
+    left = norm (poseAt pose (mLeft m))
 
 -- | Degrees of turning between two poses.
 turnBetweenPoses :: Pose -> Pose -> Double
@@ -448,13 +453,13 @@ mirrorPose k m pose = nearestPose (reflectedPose m pose) (alternatives k m pose)
 -- model's reflectors' centre, and in the plane of the reflectors, so that
 -- it is still a rotation.
 reflectedPose :: Model -> Pose -> Pose
-reflectedPose m (Pose r t) =
+reflectedPose m pose@(Pose r t) =
     Pose
         (across `mulMM` r `mulMM` reflection n)
         (mulMV across (t ^-^ centre) ^+^ centre ^+^ (2 * dot n modelCentre) *^ mulMV across (mulMV r n))
   where
     pts = [mLeft m, mRight m, mTop m]
-    centre = (1 / 3) *^ foldr ((^+^) . (\p -> mulMV r p ^+^ t)) (V3 0 0 0) pts
+    centre = (1 / 3) *^ foldr ((^+^) . poseAt pose) (V3 0 0 0) pts
     modelCentre = (1 / 3) *^ foldr (^+^) (V3 0 0 0) pts
     across = reflection (normalize centre)
     -- Each reflector p, in the plane through the model's centre with normal
@@ -573,9 +578,9 @@ solveNear k m pivot recent@(Pose r0 _) obs
     residuals pose = reprojection pose ++ hold pose
     hold pose@(Pose r _) =
         let V3 a b c = turnBetween r0 r
-            V3 x y z = pivotAt pose ^-^ pivotAt recent
+            V3 x y z = poseAt pose pivot ^-^ poseAt recent pivot
          in map (holdTurn *) [a, b, c] ++ map (holdMove *) [x, y, z]
-    pivotAt (Pose r t) = mulMV r pivot ^+^ t
+
     fit pose = sqrt (sum (map (^ (2 :: Int)) (reprojection pose)) / totalWeight)
 
 -- | How strongly 'solveNear' holds a pose where it was: pixels of
@@ -596,9 +601,9 @@ turnBetween from to =
 -- | How far apart two poses are: degrees of turning, and mm the given pivot
 -- (a point in the model's axes) moved.
 poseChange :: V3 -> Pose -> Pose -> (Double, Double)
-poseChange pivot (Pose r0 t0) (Pose r t) =
+poseChange pivot from@(Pose r0 _) to@(Pose r _) =
     ( norm (rotationVector (r `mulMM` transpose r0)) * 180 / pi
-    , norm ((mulMV r pivot ^+^ t) ^-^ (mulMV r0 pivot ^+^ t0))
+    , norm (poseAt to pivot ^-^ poseAt from pivot)
     )
 
 -- | A head squarely facing the camera, at the distance that makes the two
@@ -731,13 +736,12 @@ data HeadPose = HeadPose
 -- depends only on the clip triangle's shape, not on how the clip sits on the
 -- head, provided the user faces the camera when the reference is taken.
 relativePose :: Level -> V3 -> Pose -> Pose -> HeadPose
-relativePose (Level toLevel) pivotPoint (Pose r0 t0) (Pose r t) =
+relativePose (Level toLevel) pivot reference@(Pose r0 _) pose@(Pose r _) =
     HeadPose (deg a) (deg b) (deg c) x y z
   where
     toCamera = transpose toLevel
     (a, b, c) = eulerYXZ (toLevel `mulMM` mulMM r (transpose r0) `mulMM` toCamera)
-    pivot rot trans = mulMV rot pivotPoint ^+^ trans
-    V3 x y z = mulMV toLevel (pivot r t ^-^ pivot r0 t0)
+    V3 x y z = mulMV toLevel (poseAt pose pivot ^-^ poseAt reference pivot)
     deg = (* (180 / pi))
 
 -- | Decompose @R = Ry(yaw) Rx(pitch) Rz(roll)@, in radians.

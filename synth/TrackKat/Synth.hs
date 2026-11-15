@@ -175,7 +175,7 @@ pointDiscs :: Intrinsics -> Model -> Lit -> Pose -> [Disc]
 pointDiscs k m (litL, litR, litT) pose =
     [ (project k pose p, lit * radiusAt1m * 1000 / z)
     | (p, radiusAt1m, lit) <- [(mLeft m, lowerRadius, litL), (mRight m, lowerRadius, litR), (mTop m, topRadius, litT)]
-    , let V3 _ _ z = mulMV (poseR pose) p ^+^ poseT pose
+    , let V3 _ _ z = poseAt pose p
     , lit > 0
     ]
 
@@ -184,8 +184,8 @@ pointDiscs k m (litL, litR, litT) pose =
 -- radius scaled by how lit it is (0 for unseen); one whose tape faces
 -- wholly away isn't seen.
 tapeDiscs :: Intrinsics -> Model -> Lit -> Pose -> [Disc]
-tapeDiscs k m (litL, litR, litT) (Pose r t) =
-    [ (project k (Pose r t) centre, lit * radiusAt1m * 1000 / z)
+tapeDiscs k m (litL, litR, litT) pose@(Pose r _) =
+    [ (project k pose centre, lit * radiusAt1m * 1000 / z)
     | (middle, axis, radiusAt1m, lit) <- [(mLeft m, upright, lowerRadius, litL), (mRight m, upright, lowerRadius, litR), (mTop m, leaning, topRadius, litT)]
     , lit > 0
     , let facing = normalize (((-1) *^ back) ^+^ (dot back axis *^ axis))
@@ -196,14 +196,14 @@ tapeDiscs k m (litL, litR, litT) (Pose r t) =
             , let phi = (fromIntegral i + 0.5 - 50) / 100 * (arc / radius)
                   normal = (cos phi *^ facing) ^+^ (sin phi *^ across)
                   at = middle ^-^ (radius *^ facing) ^+^ (radius *^ normal)
-                  inCamera = mulMV r at ^+^ t
+                  inCamera = poseAt pose at
                   slant = dot (mulMV r normal) (normalize ((-1) *^ inCamera))
                   angle = acos (min 1 slant)
                   w = slant * exp (negate ((angle / (pi / 4)) ^ (2 :: Int)))
             , slant > 0
             ]
           centre = (1 / sum (map fst strips)) *^ foldr ((^+^) . uncurry (*^)) (V3 0 0 0) strips
-          V3 _ _ z = mulMV r centre ^+^ t
+          V3 _ _ z = poseAt pose centre
     , not (null strips)
     ]
   where
