@@ -22,7 +22,6 @@ module TrackKat.Synth (
     Disc,
     Lit,
     allLit,
-    unlit,
     clipDiscs,
     clipDiscsOnHead,
     pointDiscs,
@@ -36,7 +35,6 @@ module TrackKat.Synth (
     occluded,
 
     -- * Noise
-    unitNoise,
     noise,
     gaussian,
 ) where
@@ -140,9 +138,8 @@ type Disc = ((Double, Double), Double)
 -- | How lit each reflector is (left, right, top), from 0 (unseen) to 1.
 type Lit = (Double, Double, Double)
 
-allLit, unlit :: Lit
+allLit :: Lit
 allLit = (1, 1, 1)
-unlit = (0, 0, 0)
 
 -- | The radii, in pixels at 1 m, of the lower reflectors' discs and the top
 -- one's: at 830 mm the lower ones light about 350 pixels and the top one

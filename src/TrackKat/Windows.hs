@@ -9,7 +9,6 @@ module TrackKat.Windows (
     openShared,
     publish,
     recenterCount,
-    gameReads,
     gamesTracking,
     trackingGameName,
     singleInstance,
@@ -49,7 +48,6 @@ foreign import ccall unsafe "hts_console_output" c_console_output :: IO CInt
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
 foreign import ccall unsafe "hts_publish" c_publish :: CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_recenter_count" c_recenter_count :: IO CLong
-foreign import ccall unsafe "hts_game_reads" c_game_reads :: IO CLong
 foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
 foreign import ccall unsafe "hts_tracking_game_name" c_tracking_game_name :: CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
@@ -105,10 +103,6 @@ publish (GamePose y p r x yy z) =
 -- | Recenter requests games have made so far.
 recenterCount :: IO Int
 recenterCount = fromIntegral <$> c_recenter_count
-
--- | Poses games have read so far.
-gameReads :: IO Int
-gameReads = fromIntegral <$> c_game_reads
 
 -- | Games that have started head tracking and are still running.
 gamesTracking :: IO Int

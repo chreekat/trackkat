@@ -21,7 +21,6 @@ module TrackKat.USB (
     errNotSupported,
     errAccess,
     errBusy,
-    errNoDevice,
 ) where
 
 import Control.Exception (Exception, bracket, throwIO)
@@ -52,9 +51,8 @@ data USBError = USBError
 
 instance Exception USBError
 
-errNotFound, errNotSupported, errAccess, errBusy, errNoDevice, errTimeout :: Int
+errNotFound, errNotSupported, errAccess, errBusy, errTimeout :: Int
 errAccess = -3
-errNoDevice = -4
 errNotFound = -5
 errBusy = -6
 errTimeout = -7
