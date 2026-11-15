@@ -124,7 +124,7 @@ parseArgs ("--clip" : spec : r) o
         parseArgs r o{optClip = Just cl}
     | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
 parseArgs ("--no-mask" : r) o = parseArgs r o{optMasking = Just NoMasking}
-parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLed = False}}
+parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLights = False}}
 parseArgs ("--threshold" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
 parseArgs ("--ir" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){irBrightness = v}}
 parseArgs (a : _) _ = Left ("unrecognised argument: " ++ a)

@@ -56,7 +56,7 @@ data Settings = Settings
     -- ^ pixel brightness cut-off, 30..253
     , irBrightness :: Int
     -- ^ IR illuminator level, 5..7
-    , statusLed :: Bool
+    , statusLights :: Bool
     -- ^ use the two green lights (see 'withLights')
     }
     deriving (Show)
@@ -64,7 +64,7 @@ data Settings = Settings
 -- | What the camera is opened with unless told otherwise: the brightest
 -- illumination, and the green lights in use.
 defaultSettings :: Settings
-defaultSettings = Settings{threshold = 140, irBrightness = 7, statusLed = True}
+defaultSettings = Settings{threshold = 140, irBrightness = 7, statusLights = True}
 
 -- | An open, initialised camera.
 data Camera = Camera
@@ -186,8 +186,9 @@ send cam cmd = do
 setThreshold :: Camera -> Int -> IO ()
 setThreshold cam t = send cam (Cmd4 0x19 0x05 (fromIntegral (t `shiftR` 7)) (fromIntegral ((t `shiftL` 1) .&. 0xFF)))
 
-setIrLed :: Camera -> Bool -> IO ()
-setIrLed cam on = send cam (Cmd4 0x19 0x09 0 (if on then 1 else 0))
+-- | Turn the infrared illuminator on or off.
+setIrLed :: Camera -> Light -> IO ()
+setIrLed cam light = send cam (Cmd4 0x19 0x09 0 (case light of On -> 1; Off -> 0))
 
 setIrBrightnessRaw :: Camera -> Int -> IO ()
 setIrBrightnessRaw cam b = do
@@ -201,7 +202,7 @@ setIrBrightness :: Camera -> Int -> IO ()
 setIrBrightness cam level =
     setIrBrightnessRaw cam ((case max 5 (min 7 level) of 5 -> 150; 6 -> 250; _ -> 350) `shiftL` 4)
 
--- | One of the camera's green lights.
+-- | Whether one of the camera's lights is lit.
 data Light = Off | On
     deriving (Eq, Show)
 
@@ -212,7 +213,7 @@ data Light = Off | On
 -- Each command pauses for 50 ms, so only call this when the state changes.
 setLights :: Camera -> Light -> Light -> IO ()
 setLights cam first second
-    | statusLed (camSettings cam) = send cam (Cmd4 0x19 0x04 0x00 (bit 0x20 first .|. bit 0x02 second))
+    | statusLights (camSettings cam) = send cam (Cmd4 0x19 0x04 0x00 (bit 0x20 first .|. bit 0x02 second))
     | otherwise = pure ()
   where
     bit b On = b
@@ -289,7 +290,7 @@ initialise cam = do
     camLog cam $ maybe "device info: no reply" (("device info: " ++) . hex) info
     setThreshold cam 0x96
     setIrBrightnessRaw cam 0x780
-    setIrLed cam True
+    setIrLed cam On
     send cam (Cmd4 0x19 0x03 0x00 0x05)
     send cam (Cmd4 0x19 0x04 0x00 0x00)
 
@@ -297,13 +298,13 @@ start :: Camera -> IO ()
 start cam = do
     let s = camSettings cam
     camLog cam "starting video"
-    setIrLed cam True
+    setIrLed cam On
     setIrBrightness cam (irBrightness s)
     replicateM_ 2 (setThreshold cam (max 30 (min 253 (threshold s))))
     send cam (Cmd4 0x19 0x04 0x00 0x00)
     send cam (Cmd4 0x19 0x03 0x00 0x05)
     send cam (Cmd2 0x1A 0x04)
-    setIrLed cam True
+    setIrLed cam On
     send cam (Cmd4 0x19 0x04 0x00 0x00)
 
 -- | Stop video and leave the camera as linuxtrack does on close.
@@ -312,14 +313,14 @@ shutdown cam = do
     camLog cam "stopping"
     r <- try @USB.USBError $ do
         send cam (Cmd2 0x1A 0x05)
-        setIrLed cam False
+        setIrLed cam Off
         send cam (Cmd2 0x1A 0x06)
         send cam (Cmd1 0x13)
         setThreshold cam 0x96
         setIrBrightnessRaw cam 0x780
-        setIrLed cam True
+        setIrLed cam On
         send cam (Cmd4 0x19 0x03 0x00 0x05)
-        setIrLed cam False
+        setIrLed cam Off
         send cam (Cmd2 0x1A 0x06)
         send cam (Cmd1 0x13)
         send cam (Cmd2 0x1A 0x00)
