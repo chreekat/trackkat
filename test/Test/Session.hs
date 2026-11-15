@@ -153,6 +153,17 @@ tests =
                     (found, _) = step (CameraConnected recenters) before
                     (after, effects) = step (ControlsPolled [] recenters) found
                  in map brief effects === [] .&&. unchanged found after
+        , testProperty "a calibration file that is missing or can't be read starts the session from none, and one that can from what it says" $
+            forAll (elements [Nothing, Just (Left "line 3: no pivot"), Just (Right defaultCalibration)]) $ \found ->
+                let (c, effects) = startingCalibration "trackkat.calibration" found
+                    none = [noCalibration]
+                 in renderCalibration c === renderCalibration defaultCalibration
+                        .&&. case found of
+                            Nothing -> userLines effects === none .&&. [shown | ShowCalibration shown <- effects] === none
+                            Just (Left err) ->
+                                userLines effects === ["trackkat.calibration: " ++ err ++ "; starting afresh."] ++ none
+                                    .&&. [shown | ShowCalibration shown <- effects] === none
+                            Just (Right _) -> length (userLines effects) === 2 .&&. length [() | ShowCalibration _ <- effects] === 1
         , testProperty "clearing the calibration tracks afresh from none, and saves none" $
             forAllShrink genMoves shrinkMoves $ \moves ->
                 let (_, _, after, effects) = last (trace (moves ++ [Ask ToClear]))

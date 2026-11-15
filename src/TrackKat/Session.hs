@@ -9,6 +9,7 @@ module TrackKat.Session (
     Session (..),
     Sending (..),
     newSession,
+    startingCalibration,
     centred,
 
     -- * What happens to it
@@ -19,7 +20,6 @@ module TrackKat.Session (
 
     -- * In words
     status,
-    describeCalibration,
     noCalibration,
     describeTrim,
 ) where
@@ -137,6 +137,17 @@ newSession config c =
         , sAbsence = noAbsence
         , sRecenters = 0
         }
+
+-- | The calibration to start a session from, and what to say of it, given
+-- the calibration file's path and what reading it gave, if it was there.
+startingCalibration :: FilePath -> Maybe (Either String Calibration) -> (Calibration, [Effect])
+startingCalibration path found = case found of
+    Just (Right c) ->
+        (c, [say (describeLevel c), say (describePivot Nothing c), ShowCalibration (describeCalibration Nothing c Nothing)])
+    Just (Left err) -> (defaultCalibration, say (path ++ ": " ++ err ++ "; starting afresh.") : none)
+    Nothing -> (defaultCalibration, none)
+  where
+    none = [say noCalibration, ShowCalibration noCalibration]
 
 -- | A tracker of the clip the settings give, masking still lights or not
 -- as they say, starting from a calibration.

@@ -9,7 +9,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, withAsync)
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
-import Control.Monad (foldM, forM_, forever, unless, void, when, (<=<))
+import Control.Monad (foldM, forM_, forever, unless, void, (<=<))
 import Data.Functor (($>))
 import Data.IORef
 import Data.Time.Clock (UTCTime)
@@ -127,11 +127,9 @@ run start window after = do
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say (describeBindings config)
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
-        shell <-
-            Shell paths
-                <$> (newIORef . newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile)
-                <*> newEmptyMVar
-                <*> newEmptyMVar
+        (calibration, told) <- loadCalibration (clipModel (clip config)) calibrationFile
+        shell <- Shell paths <$> newIORef (newSession config calibration) <*> newEmptyMVar <*> newEmptyMVar
+        mapM_ (perform shell) told
         (naming, named) <- nameButtons <$> getMonotonicTime
         logLine named
         withAsync (watchSettings settingsFile shell stamp) $ \_ ->
@@ -382,25 +380,15 @@ loadConfig path = do
                     exitFailure
 
 -- | Read what was learnt in earlier sessions about a head wearing the given
--- clip, or start afresh.
-loadCalibration :: Model -> FilePath -> IO Calibration
+-- clip, or start afresh: the calibration, and what to say of it.
+loadCalibration :: Model -> FilePath -> IO (Calibration, [Effect])
 loadCalibration m path = do
     exists <- doesFileExist path
     found <-
         if exists
-            then ((screenCalibration m <=< parseCalibration) <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException)))
-            else pure (Left "not found")
-    case found of
-        Right c -> do
-            say (describeLevel c)
-            say (describePivot Nothing c)
-            showCalibration (describeCalibration Nothing c Nothing)
-            pure c
-        Left err -> do
-            when exists $ say (path ++ ": " ++ err ++ "; starting afresh.")
-            say noCalibration
-            showCalibration noCalibration
-            pure defaultCalibration
+            then Just <$> (((screenCalibration m <=< parseCalibration) <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException))))
+            else pure Nothing
+    pure (startingCalibration path found)
 
 -- | Save each calibration handed over, only the latest when several wait,
 -- so that saving never holds up tracking. The file is replaced whole.
