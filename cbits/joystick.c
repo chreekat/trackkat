@@ -1,5 +1,5 @@
-/* Joystick buttons for trackkat.exe's hotkeys, and the joysticks coming and
- * going, for trackkat to report.
+/* Joystick buttons going down and coming up, for trackkat.exe's hotkeys, and
+ * the joysticks coming and going, for trackkat to report.
  *
  * Joysticks are read through Raw Input, as HID reports. winmm sees only 32
  * buttons, fewer than many HOTAS throttles have; DirectInput must be polled,
@@ -129,8 +129,33 @@ static Joystick *find_joystick(HANDLE device)
     return NULL;
 }
 
+static int is_held(const uint8_t *held, unsigned b)
+{
+    return held[(b - 1) / 8] >> ((b - 1) % 8) & 1;
+}
+
+/* Tell of the buttons that differ between what was held and what is: those
+ * newly down, to report and to the hotkeys, and those let go, to the
+ * hotkeys. */
+static void tell_buttons(const Joystick *j, const uint8_t *was, const uint8_t *is)
+{
+    int index = joystick_index(j);
+    for (unsigned b = 1; b <= MAX_BUTTONS; b++) {
+        int down = is_held(is, b);
+        if (down == is_held(was, b))
+            continue;
+        watched_button(j->name, index, (int)b, down);
+        if (down)
+            report_event(JOY_PRESSED, j, (int)b);
+    }
+}
+
+/* Stop following a joystick; the buttons held on it come up. */
 static void forget_joystick(Joystick *j)
 {
+    static const uint8_t none[MAX_BUTTONS / 8];
+    if (j->device)
+        tell_buttons(j, j->held, none);
     free(j->preparsed);
     free(j->ranges);
     memset(j, 0, sizeof *j);
@@ -192,8 +217,9 @@ static Joystick *add_joystick(HANDLE device)
     return j;
 }
 
-/* Act on the buttons newly down in one input report. A report carries only
- * the buttons its report ID covers; the others keep their state. */
+/* Tell of the buttons that go down or come up in one input report. A report
+ * carries only the buttons its report ID covers; the others keep their
+ * state. */
 static void read_report(Joystick *j, BYTE *report, ULONG length)
 {
     USAGE down[MAX_BUTTONS];
@@ -214,21 +240,13 @@ static void read_report(Joystick *j, BYTE *report, ULONG length)
             held[(b - 1) / 8] &= (uint8_t)~(1u << ((b - 1) % 8));
     }
 
-    LONG hit = 0;
     for (ULONG i = 0; i < n; i++) {
         unsigned b = down[i];
-        if (b < 1 || b > MAX_BUTTONS)
-            continue;
-        uint8_t bit = (uint8_t)(1u << ((b - 1) % 8));
-        held[(b - 1) / 8] |= bit;
-        if (!(j->held[(b - 1) / 8] & bit)) {
-            hit |= hotkeys_for_button(j->name, joystick_index(j), (int)b);
-            report_event(JOY_PRESSED, j, (int)b);
-        }
+        if (b >= 1 && b <= MAX_BUTTONS)
+            held[(b - 1) / 8] |= (uint8_t)(1u << ((b - 1) % 8));
     }
+    tell_buttons(j, j->held, held);
     memcpy(j->held, held, sizeof held);
-    if (hit)
-        hotkeys_press(hit);
 }
 
 static void read_input(HRAWINPUT input)

@@ -121,7 +121,7 @@ run start window after = do
         setStartup say paths (startup config)
         offered <- newIORef NoOffer
         refreshOffer paths place offered
-        unwatched <- startHotkeys (hotkeyBindings config)
+        unwatched <- startHotkeys (watchedKeys config)
         forM_ unwatched $ \case
             (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
             (Mouse, e) -> say ("Can't watch the mouse for buttons (error " ++ show e ++ ").")
@@ -368,6 +368,7 @@ controls start path sh = go 0 Busy
     act RecenterAction = advance sh RecenterAsked
     act PauseAction = advance sh PauseAsked
     act TrimAction = advance sh TrimAsked
+    act AimAction = advance sh AimAsked
     act CalibrateAction = advance sh CalibrateAsked
     act ClearCalibrationAction = advance sh ClearCalibrationAsked
     act QuitAction = say "Quitting."
@@ -528,6 +529,7 @@ perform sh = \case
     ShowCamera state -> showCamera state
     ShowOutput output -> showOutput output
     ShowTrim t -> showTrim t
+    ShowAim a -> showAim a
     ShowCalibration c -> showCalibration c
     ShowClip reflectors -> showClip reflectors
     ShowFrame sighting view -> showFrame sighting view
@@ -535,7 +537,7 @@ perform sh = \case
     ShowSettings text -> showSettings text
     Publish pose -> publish pose
     SaveCalibration c -> tryTakeMVar (shSaving sh) >> putMVar (shSaving sh) c
-    BindHotkeys config -> rebindHotkeys (hotkeyBindings config)
+    BindHotkeys config -> rebindHotkeys (watchedKeys config)
     PointGames choice -> pointGames (exeDir (shPaths sh)) choice
     SetStartup choice -> setStartup say (shPaths sh) choice
 
@@ -581,8 +583,8 @@ track sh cam = do
     packet lights arrived c = \case
         Frame _ stripes -> do
             now <- getMonotonicTime
-            keys <- takeHotkeys
-            advance sh . ControlsPolled keys =<< recenterCount
+            edges <- takeKeyEdges (clockAt now)
+            advance sh . ControlsPolled (clockAt now) edges =<< recenterCount
             (s, effects) <- transition sh (FrameArrived (clockAt now) stripes)
             -- When games were sent the frame's pose.
             published <- foldM (\at e -> perform sh e >> case e of Publish _ -> Just <$> getMonotonicTime; _ -> pure at) Nothing effects

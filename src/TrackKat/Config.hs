@@ -1,6 +1,6 @@
 -- | trackkat's settings file, as @name = value@ lines: hotkey and joystick
--- button bindings, smoothing, response curves, the clip's shape and which
--- NPClient games load.
+-- button bindings, smoothing, response curves, aiming, the clip's shape and
+-- which NPClient games load.
 module TrackKat.Config (
     Config (..),
     NPClient (..),
@@ -22,6 +22,8 @@ module TrackKat.Config (
     clipModel,
     wornDistances,
     Binding (..),
+    Gesture (..),
+    KeyOrButton (..),
     Modifier (..),
     Joystick (..),
     maxButton,
@@ -29,10 +31,11 @@ module TrackKat.Config (
     parseBindings,
     renderBinding,
     renderBindings,
+    renderKeyOrButton,
     renderJoystick,
     modifierMask,
     virtualKey,
-    bindingFromCodes,
+    keyFromCodes,
 ) where
 
 import Control.Exception (IOException, displayException, try)
@@ -43,6 +46,7 @@ import Data.List (dropWhileEnd, findIndices, intercalate, unsnoc)
 import Data.Maybe (fromMaybe)
 import System.IO (readFile')
 
+import TrackKat.Gesture (Gesture (..))
 import TrackKat.Lights (Masking (..))
 import TrackKat.Linear (norm, (^-^))
 import TrackKat.Number
@@ -54,6 +58,7 @@ data Config = Config
     { recenterBindings :: [Binding]
     , pauseBindings :: [Binding]
     , trimBindings :: [Binding]
+    , aimBindings :: [Binding]
     , response :: Response
     , clip :: ClipShape
     , npclient :: NPClient
@@ -121,17 +126,18 @@ wornDistances m = (norm (mRight m ^-^ mLeft m), norm (mTop m ^-^ mRight m), norm
 clipModel :: ClipShape -> Model
 clipModel (ClipShape _ m) = m
 
--- | TrackIR's own keys, and none to trim; linear curves with gains tuned in
--- DCS; strong smoothing; aiming that turns the view half as far again as
--- the head, smoothed more strongly still; the headset clip trackkat was
--- developed with, its post as it is now bent; trackkat's own NPClient;
--- still lights ignored; the head view as games see it.
+-- | TrackIR's own keys, and none to trim or aim; linear curves with gains
+-- tuned in DCS; strong smoothing; aiming that turns the view half as far
+-- again as the head, smoothed more strongly still; the headset clip
+-- trackkat was developed with, its post as it is now bent; trackkat's own
+-- NPClient; still lights ignored; the head view as games see it.
 defaultConfig :: Config
 defaultConfig =
     Config
-        { recenterBindings = [Key [] "F12"]
-        , pauseBindings = [Key [] "F9"]
+        { recenterBindings = [Binding (Key [] "F12") Tap]
+        , pauseBindings = [Binding (Key [] "F9") Tap]
         , trimBindings = []
+        , aimBindings = []
         , response =
             Response
                 { smoothing = knobSmoothing defaultKnobs
@@ -142,7 +148,13 @@ defaultConfig =
                 , yCurve = gain 4
                 , zCurve = gain 2.5
                 , lean = LeanWithView
-                , aim = Aim{aimSmoothing = tuned 95 45, aimYaw = gain 1.5, aimPitch = gain 1.5, aimRoll = gain 1.5}
+                , aim =
+                    Aim
+                        { aimSmoothing = knobSmoothing defaultAimKnobs
+                        , aimYaw = gain 1.5
+                        , aimPitch = gain 1.5
+                        , aimRoll = gain 1.5
+                        }
                 }
         , clip = defaultClip
         , npclient = TrackKatNPClient
@@ -157,9 +169,17 @@ defaultConfig =
         Just c -> c
         Nothing -> error "defaultClip"
 
+-- | A key or button, and the way of pressing it that does what it is
+-- bound to.
+data Binding = Binding
+    { boundKey :: KeyOrButton
+    , boundGesture :: Gesture
+    }
+    deriving (Eq, Show)
+
 -- | A key, or a mouse button named as one, with modifiers held, each once
 -- and in the order of 'Modifier'; or a joystick button numbered from 1.
-data Binding = Key [Modifier] String | JoystickButton Joystick Int
+data KeyOrButton = Key [Modifier] String | JoystickButton Joystick Int
     deriving (Eq, Show)
 
 -- | In the order bindings are written with them.
@@ -195,61 +215,88 @@ data Knobs = Knobs Bool Double Double
 defaultKnobs :: Knobs
 defaultKnobs = Knobs True 90 45
 
+-- | Steadier than 'defaultKnobs', for laying the view on something small.
+defaultAimKnobs :: Knobs
+defaultAimKnobs = Knobs True 95 45
+
+-- | The smoothing settings as written, for the view and for aiming.
+data Dials = Dials Knobs Knobs
+
+defaultDials :: Dials
+defaultDials = Dials defaultKnobs defaultAimKnobs
+
 knobSmoothing :: Knobs -> Smoothing
 knobSmoothing (Knobs on s r) = if on then tuned s r else NoSmoothing
 
 -- | The knobs that give a smoothing, inverting 'tuned'; off keeps the
--- default knobs.
-smoothingKnobs :: Smoothing -> Knobs
-smoothingKnobs NoSmoothing = let Knobs _ s r = defaultKnobs in Knobs False s r
-smoothingKnobs (Smoothing mc b) = Knobs True (100 * logBase 0.01 (mc / 20)) (100 * logBase 1000 (b / 0.001))
+-- knobs given.
+smoothingKnobs :: Knobs -> Smoothing -> Knobs
+smoothingKnobs (Knobs _ s r) NoSmoothing = Knobs False s r
+smoothingKnobs _ (Smoothing mc b) = Knobs True (100 * logBase 0.01 (mc / 20)) (100 * logBase 1000 (b / 0.001))
 
 -- | Read a settings file. Unmentioned settings keep their defaults; the
 -- error names the offending line. The smoothing settings combine, so their
 -- order doesn't matter.
 parseConfig :: String -> Either String Config
 parseConfig str = do
-    (c, k) <- foldl line (Right (defaultConfig, defaultKnobs)) (zip [1 :: Int ..] (lines str))
-    pure c{response = (response c){smoothing = knobSmoothing k}}
+    (c, Dials k a) <- foldl line (Right (defaultConfig, defaultDials)) (zip [1 :: Int ..] (lines str))
+    let r = response c
+    pure c{response = r{smoothing = knobSmoothing k, aim = (aim r){aimSmoothing = knobSmoothing a}}}
   where
     line acc (n, l) =
-        acc >>= \ck -> case break (== '=') (takeWhile (/= '#') l) of
-            (name, '=' : _) | trim name `elem` retired -> Right ck
-            (name, '=' : value) -> either (Left . (where_ n ++)) Right (setting ck (trim name) (trim value))
+        acc >>= \cd -> case break (== '=') (takeWhile (/= '#') l) of
+            (name, '=' : _) | trim name `elem` retired -> Right cd
+            (name, '=' : value) -> either (Left . (where_ n ++)) Right (setting cd (trim name) (trim value))
             (blank, _)
-                | all isSpace blank -> Right ck
+                | all isSpace blank -> Right cd
                 | otherwise -> Left (where_ n ++ "expected name = value")
     where_ n = "line " ++ show n ++ ": "
 
 -- | Apply one setting, by name and value as written.
-setting :: (Config, Knobs) -> String -> String -> Either String (Config, Knobs)
-setting (c, k@(Knobs on s r)) name value =
+setting :: (Config, Dials) -> String -> String -> Either String (Config, Dials)
+setting (c, d@(Dials k a)) name value =
     let resp = response c
-        curve range f = (\cv -> (c{response = f cv resp}, k)) <$> parseCurve range value
+        curve range f = (\cv -> (c{response = f cv resp}, d)) <$> parseCurve range value
+        aimCurve range f = curve range (\cv x -> x{aim = f cv (aim x)})
+        bindings f = (\b -> (f b, d)) <$> parseBindings value
      in case name of
-            "recenter" -> (\b -> (c{recenterBindings = b}, k)) <$> parseBindings value
-            "pause" -> (\b -> (c{pauseBindings = b}, k)) <$> parseBindings value
-            "trim" -> (\b -> (c{trimBindings = b}, k)) <$> parseBindings value
-            "smoothing" -> case value of
-                "on" -> Right (c, Knobs True s r)
-                "off" -> Right (c, Knobs False s r)
-                _ -> Left "smoothing is on or off"
-            "steadiness" -> (\v -> (c, Knobs on v r)) <$> parseKnob name value
-            "responsiveness" -> (\v -> (c, Knobs on s v)) <$> parseKnob name value
+            "recenter" -> bindings (\b -> c{recenterBindings = b})
+            "pause" -> bindings (\b -> c{pauseBindings = b})
+            "trim" -> bindings (\b -> c{trimBindings = b})
+            "aim" -> bindings (\b -> c{aimBindings = b})
+            "smoothing" -> (\k' -> (c, Dials k' a)) <$> knob k
+            "steadiness" -> (\k' -> (c, Dials k' a)) <$> knob k
+            "responsiveness" -> (\k' -> (c, Dials k' a)) <$> knob k
             "yaw" -> curve yawRange (\cv x -> x{yawCurve = cv})
             "pitch" -> curve pitchRange (\cv x -> x{pitchCurve = cv})
             "roll" -> curve rollRange (\cv x -> x{rollCurve = cv})
             "x" -> curve leanRange (\cv x -> x{xCurve = cv})
             "y" -> curve leanRange (\cv x -> x{yCurve = cv})
             "z" -> curve leanRange (\cv x -> x{zCurve = cv})
-            "lean" -> (\l -> (c{response = resp{lean = l}}, k)) <$> parseLean value
-            "clip" -> (\cl -> (c{clip = cl}, k)) <$> parseClip value
-            "npclient" -> (\n -> (c{npclient = n}, k)) <$> parseNPClient value
-            "updates" -> (\u -> (c{updates = u}, k)) <$> parseUpdates value
-            "startup" -> (\st -> (c{startup = st}, k)) <$> parseStartup value
-            "ignore lights" -> (\l -> (c{lightMasking = l}, k)) <$> parseMasking value
-            "head view" -> (\v -> (c{headView = v}, k)) <$> parseHeadView value
+            "lean" -> (\l -> (c{response = resp{lean = l}}, d)) <$> parseLean value
+            "aim yaw" -> aimCurve yawRange (\cv x -> x{aimYaw = cv})
+            "aim pitch" -> aimCurve pitchRange (\cv x -> x{aimPitch = cv})
+            "aim roll" -> aimCurve rollRange (\cv x -> x{aimRoll = cv})
+            "aim smoothing" -> (\a' -> (c, Dials k a')) <$> knob a
+            "aim steadiness" -> (\a' -> (c, Dials k a')) <$> knob a
+            "aim responsiveness" -> (\a' -> (c, Dials k a')) <$> knob a
+            "clip" -> (\cl -> (c{clip = cl}, d)) <$> parseClip value
+            "npclient" -> (\n -> (c{npclient = n}, d)) <$> parseNPClient value
+            "updates" -> (\u -> (c{updates = u}, d)) <$> parseUpdates value
+            "startup" -> (\st -> (c{startup = st}, d)) <$> parseStartup value
+            "ignore lights" -> (\l -> (c{lightMasking = l}, d)) <$> parseMasking value
+            "head view" -> (\v -> (c{headView = v}, d)) <$> parseHeadView value
             _ -> Left ("unknown setting " ++ show name)
+  where
+    -- One of a smoothing's three settings, the view's or aiming's, by the
+    -- last word of its name.
+    knob (Knobs on s r) = case last (words name) of
+        "smoothing" -> case value of
+            "on" -> Right (Knobs True s r)
+            "off" -> Right (Knobs False s r)
+            _ -> Left (name ++ " is on or off")
+        "steadiness" -> (\v -> Knobs on v r) <$> parseKnob name value
+        _ -> (\v -> Knobs on s v) <$> parseKnob name value
 
 -- | Read and parse a settings file, whole so editors can replace it, giving
 -- its text too.
@@ -277,9 +324,24 @@ renderConfig c =
         , "# The easiest way to figure out joystick button names is by using"
         , "# trackkat's window. For a gaming mouse's extra buttons, give them F13"
         , "# to F24 in the mouse's own software and bind those."
+        , "#"
+        , "# One key or button can do several things. After it, write hold for"
+        , "# what it does when held down for a moment, or double for what it"
+        , "# does when pressed twice quickly. For example:"
+        , "#   recenter = F12, Throttle - HOTAS Warthog button 4 double"
+        , "#   trim = Throttle - HOTAS Warthog button 4"
+        , "#   aim = Throttle - HOTAS Warthog button 4 hold"
+        , "# A key with a hold or a double acts on a plain press only once it"
+        , "# is clear that is all it was; other keys act as they go down."
+        , "#"
+        , "# aim: while aiming, the view turns gently from where it is, to lay"
+        , "# a gunsight on something by head. A key or button with hold aims"
+        , "# while it is held down; one without turns aiming on, then off."
+        , "# Recentering ends it."
         , settingText "recenter" (renderBindings (recenterBindings c))
         , settingText "pause" (renderBindings (pauseBindings c))
         , settingText "trim" (renderBindings (trimBindings c))
+        , settingText "aim" (renderBindings (aimBindings c))
         , ""
         , "# Smoothing calms the view while your head is still, at the cost of"
         , "# some lag when you move. Both settings run from 0 to 100."
@@ -326,6 +388,18 @@ renderConfig c =
         , "# whichever way you look."
         , "lean = " ++ renderLean (lean r)
         , ""
+        , "# Aiming's own response. Its curves take how far your head has"
+        , "# turned since you began aiming to how far the view turns from"
+        , "# where it was, in degrees: at 1:1.5, half as far again as your"
+        , "# head. Leaning is not changed by aiming. Its smoothing, of your"
+        , "# head's turning, has the same three settings as above."
+        , "aim yaw = " ++ renderCurve (aimYaw (aim r))
+        , "aim pitch = " ++ renderCurve (aimPitch (aim r))
+        , "aim roll = " ++ renderCurve (aimRoll (aim r))
+        , "aim smoothing = " ++ (if aimOn then "on" else "off")
+        , "aim steadiness = " ++ renderNumber aimS
+        , "aim responsiveness = " ++ renderNumber aimRs
+        , ""
         , "# clip: the headset clip's triangle of reflectors, in mm, measured"
         , "# centre to centre, with left and right as you wear it: your left to"
         , "# your right along the headband, your left to the top, then your"
@@ -357,7 +431,8 @@ renderConfig c =
         ]
   where
     r = response c
-    Knobs on s rs = smoothingKnobs (smoothing r)
+    Knobs on s rs = smoothingKnobs defaultKnobs (smoothing r)
+    Knobs aimOn aimS aimRs = smoothingKnobs defaultAimKnobs (aimSmoothing (aim r))
 
 -- | A line for the console saying which settings differ in the new config,
 -- leaving out the head view, which the window saves as it is clicked through.
@@ -371,21 +446,28 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
          in [ ("recenter", renderBindings (recenterBindings c))
             , ("pause", renderBindings (pauseBindings c))
             , ("trim", renderBindings (trimBindings c))
+            , ("aim", renderBindings (aimBindings c))
             ]
-                ++ ( case smoothingKnobs (smoothing r) of
-                        Knobs False _ _ -> [("smoothing", "off")]
-                        Knobs True s rs -> [("smoothing", "on"), ("steadiness", renderNumber s), ("responsiveness", renderNumber rs)]
-                   )
+                ++ knobs "" (smoothingKnobs defaultKnobs (smoothing r))
                 ++ [ (name, renderCurve (f r))
                    | (name, f) <- [("yaw", yawCurve), ("pitch", pitchCurve), ("roll", rollCurve), ("x", xCurve), ("y", yCurve), ("z", zCurve)]
                    ]
-                ++ [ ("lean", renderLean (lean r))
-                   , ("clip", renderClip (clip c))
+                ++ [("lean", renderLean (lean r))]
+                ++ [ (name, renderCurve (f (aim r)))
+                   | (name, f) <- [("aim yaw", aimYaw), ("aim pitch", aimPitch), ("aim roll", aimRoll)]
+                   ]
+                ++ knobs "aim " (smoothingKnobs defaultAimKnobs (aimSmoothing (aim r)))
+                ++ [ ("clip", renderClip (clip c))
                    , ("npclient", renderNPClient (npclient c))
                    , ("updates", renderUpdates (updates c))
                    , ("startup", renderStartup (startup c))
                    , ("ignore lights", renderMasking (lightMasking c))
                    ]
+    -- A smoothing's settings, by what its names begin with; turned off, its
+    -- knobs do nothing, so they are no change.
+    knobs which (Knobs False _ _) = [(which ++ "smoothing", "off")]
+    knobs which (Knobs True s rs) =
+        [(which ++ "smoothing", "on"), (which ++ "steadiness", renderNumber s), (which ++ "responsiveness", renderNumber rs)]
 
 parseLean :: String -> Either String Lean
 parseLean "view" = Right LeanWithView
@@ -500,7 +582,7 @@ editSettings :: [(String, String)] -> String -> Either String String
 editSettings new str
     | null changed = Right str
     | otherwise = do
-        traverse_ (\(n, v) -> either (Left . ((n ++ ": ") ++)) Right (setting (defaultConfig, defaultKnobs) n v)) changed
+        traverse_ (\(n, v) -> either (Left . ((n ++ ": ") ++)) Right (setting (defaultConfig, defaultDials) n v)) changed
         let edited = unlines (foldl replace (lines str) changed)
         edited <$ parseConfig edited
   where
@@ -558,7 +640,8 @@ parseKnob name value = case parseNumber value of
     _ -> Left (name ++ " is a number from 0 to 100")
 
 -- | Read bindings separated by commas, such as
--- @F12, Throttle - HOTAS Warthog button 23@, or none from an empty value.
+-- @F12, Throttle - HOTAS Warthog button 23 hold@, or none from an empty
+-- value.
 parseBindings :: String -> Either String [Binding]
 parseBindings value
     | all isSpace value = Right []
@@ -568,10 +651,32 @@ parseBindings value
 renderBindings :: [Binding] -> String
 renderBindings = intercalate ", " . map renderBinding
 
--- | Read a binding: a key or mouse button such as @Ctrl+Shift+F12@ or
--- @Mouse4@, modifiers then one key, or a joystick button such as @Throttle - HOTAS Warthog (2) button 23@.
+-- | Read a binding: a key or button as 'parseKeyOrButton' reads one, and perhaps
+-- after it the way of pressing it, @tap@, @hold@ or @double@; a tap if
+-- none is written.
 parseBinding :: String -> Either String Binding
-parseBinding s = case joystickButton (trim s) of
+parseBinding s = case lookup (map toLower (reverse final)) gestures of
+    Just g | not (all isSpace before) -> (`Binding` g) <$> parseKeyOrButton (reverse before)
+    _ -> (`Binding` Tap) <$> parseKeyOrButton s
+  where
+    (final, before) = break isSpace (dropWhile isSpace (reverse s))
+    gestures = [(renderGesture g, g) | g <- [minBound ..]]
+
+-- | A binding as 'parseBinding' reads it, such as @Ctrl+F12@ or
+-- @T.16000M button 3 hold@: a tap is left unsaid.
+renderBinding :: Binding -> String
+renderBinding (Binding i Tap) = renderKeyOrButton i
+renderBinding (Binding i g) = renderKeyOrButton i ++ " " ++ renderGesture g
+
+renderGesture :: Gesture -> String
+renderGesture Tap = "tap"
+renderGesture Hold = "hold"
+renderGesture Double = "double"
+
+-- | Read a key or mouse button such as @Ctrl+Shift+F12@ or @Mouse4@,
+-- modifiers then one key, or a joystick button such as @Throttle - HOTAS Warthog (2) button 23@.
+parseKeyOrButton :: String -> Either String KeyOrButton
+parseKeyOrButton s = case joystickButton (trim s) of
     Just (name, number) -> do
         j <- parseJoystick name
         n <- case number of
@@ -600,11 +705,11 @@ parseBinding s = case joystickButton (trim s) of
         "win" -> Right Win
         _ -> Left ("unknown modifier " ++ show m)
 
--- | A binding as 'parseBinding' reads it, such as @Ctrl+F12@ or
+-- | A key or button as 'parseKeyOrButton' reads it, such as @Ctrl+F12@ or
 -- @T.16000M button 3@.
-renderBinding :: Binding -> String
-renderBinding (Key mods k) = intercalate "+" (map renderModifier (heldInOrder mods) ++ [k])
-renderBinding (JoystickButton j n) = renderJoystick j ++ " button " ++ renderNatural (toInteger n)
+renderKeyOrButton :: KeyOrButton -> String
+renderKeyOrButton (Key mods k) = intercalate "+" (map renderModifier (heldInOrder mods) ++ [k])
+renderKeyOrButton (JoystickButton j n) = renderJoystick j ++ " button " ++ renderNatural (toInteger n)
 
 -- | Split a binding ending in @button N@ into the joystick's name and the
 -- button number, if it has one.
@@ -645,10 +750,10 @@ modifierBit Ctrl = 0x2
 modifierBit Shift = 0x4
 modifierBit Win = 0x8
 
--- | The binding for RegisterHotKey's modifier flags and a virtual-key code;
+-- | The key for RegisterHotKey's modifier flags and a virtual-key code;
 -- Nothing if the key has no name here.
-bindingFromCodes :: Int -> Int -> Maybe Binding
-bindingFromCodes mask vk = case [name | (name, code) <- keys, code == vk] of
+keyFromCodes :: Int -> Int -> Maybe KeyOrButton
+keyFromCodes mask vk = case [name | (name, code) <- keys, code == vk] of
     name : _ -> Just (Key [m | m <- [minBound ..], mask .&. modifierBit m /= 0] name)
     [] -> Nothing
 

@@ -80,6 +80,8 @@ module Test.Gen (
     written,
     genPoints,
     shrinkPoints,
+    genKeyOrButton,
+    shrinkKeyOrButton,
     genBinding,
     shrinkBinding,
     genConfig,
@@ -581,18 +583,18 @@ shrinkPoints = shrinkTo [(1, 1)] (filter (not . null) . shrinkList (const []))
 
 -- | A key or mouse button with modifiers, as trackkat's window gives one
 -- from Windows' codes, or a joystick's button.
-genBinding :: Gen Binding
-genBinding = oneof [key, JoystickButton <$> (Joystick <$> joystickName <*> chooseInt (1, 4)) <*> chooseInt (1, maxButton)]
+genKeyOrButton :: Gen KeyOrButton
+genKeyOrButton = oneof [key, JoystickButton <$> (Joystick <$> joystickName <*> chooseInt (1, 4)) <*> chooseInt (1, maxButton)]
   where
-    key = elements [b | mask <- [0 .. 15], code <- [0 .. 255], Just b <- [bindingFromCodes mask code]]
-    joystickName = unwords <$> listOf1 (elements ["Throttle", "Joystick", "-", "HOTAS", "Warthog", "T.16000M", "VPC", "MT-50CM2", "(HID)", "button", "Zoë's", "3D", "2"])
+    key = elements [b | mask <- [0 .. 15], code <- [0 .. 255], Just b <- [keyFromCodes mask code]]
+    joystickName = unwords <$> listOf1 (elements ["Throttle", "Joystick", "-", "HOTAS", "Warthog", "T.16000M", "VPC", "MT-50CM2", "(HID)", "button", "Zoë's", "3D", "2", "hold"])
 
 -- | The first key, alone; then, of a key, it with no modifiers or fewer,
 -- and the first key with its modifiers; and, of a joystick's button, the
 -- first button of the first joystick of the simplest name, a shorter
 -- name, and the first joystick and button.
-shrinkBinding :: Binding -> [Binding]
-shrinkBinding = shrinkTo (Key [] "F1") steps
+shrinkKeyOrButton :: KeyOrButton -> [KeyOrButton]
+shrinkKeyOrButton = shrinkTo (Key [] "F1") steps
   where
     steps (Key mods k) = [Key [] k, Key mods "F1"] ++ [Key (filter (/= m) mods) k | m <- mods]
     steps (JoystickButton (Joystick name index) button) =
@@ -601,16 +603,32 @@ shrinkBinding = shrinkTo (Key [] "F1") steps
             ++ [JoystickButton (Joystick name 1) button | index /= 1]
             ++ [JoystickButton (Joystick name index) 1 | button /= 1]
 
--- | Settings a settings file can say: numbers as it writes them, smoothing
--- from its two knobs, each curve's points going up from above zero or a
--- multiplier with a precision over the axis's own range, and a clip that
--- is a triangle. (See the tests' report for the settings it can't say.)
+-- | A key or button as 'genKeyOrButton' has them, pressed any of the ways.
+genBinding :: Gen Binding
+genBinding = Binding <$> genKeyOrButton <*> elements [Tap, Hold, Double]
+
+-- | A tap of the first key; and a tap of the same key or button, and a
+-- simpler one pressed the same way.
+shrinkBinding :: Binding -> [Binding]
+shrinkBinding =
+    shrinkParts
+        [ \b -> [b{boundGesture = g} | g <- earlier [Tap, Hold, Double] (boundGesture b)]
+        , \b -> [b{boundKey = i} | i <- shrinkKeyOrButton (boundKey b)]
+        ]
+
+-- | Settings a settings file can say: numbers as it writes them, each
+-- smoothing from its two knobs, each curve's points going up from above
+-- zero or a multiplier with a precision over the axis's own range, and a
+-- clip that is a triangle. (See the tests' report for the settings it
+-- can't say.)
 genConfig :: Gen Config
 genConfig = do
     recenter <- bindings
     pause <- bindings
     trim <- bindings
-    smooth <- oneof [pure NoSmoothing, tuned <$> genWritten (0, 1000000) <*> genWritten (0, 1000000)]
+    aiming <- bindings
+    smooth <- smoothed
+    aimed <- Aim <$> smoothed <*> curve yawRange <*> curve pitchRange <*> curve rollRange
     curves <-
         Response smooth
             <$> curve yawRange
@@ -621,7 +639,7 @@ genConfig = do
             <*> curve leanRange
     leaning <- elements [LeanWithView, LeanWithScreen]
     worn <- clip' `suchThatMap` id
-    Config recenter pause trim (curves leaning (aim (response defaultConfig))) worn
+    Config recenter pause trim aiming (curves leaning aimed) worn
         <$> elements [TrackKatNPClient, TrackIRNPClient]
         <*> elements [UpdatesOn, UpdatesOff]
         <*> elements [StartAtLogin, NoStartAtLogin]
@@ -629,6 +647,7 @@ genConfig = do
         <*> elements [VirtualView, PhysicalView, CameraView]
   where
     bindings = scale (`div` 10) (listOf genBinding)
+    smoothed = oneof [pure NoSmoothing, tuned <$> genWritten (0, 1000000) <*> genWritten (0, 1000000)]
     curve range =
         oneof
             [ do
@@ -649,6 +668,7 @@ shrinkConfig =
         [ \c -> [c{recenterBindings = bs} | bs <- shrinkList shrinkBinding (recenterBindings c)]
         , \c -> [c{pauseBindings = bs} | bs <- shrinkList shrinkBinding (pauseBindings c)]
         , \c -> [c{trimBindings = bs} | bs <- shrinkList shrinkBinding (trimBindings c)]
+        , \c -> [c{aimBindings = bs} | bs <- shrinkList shrinkBinding (aimBindings c)]
         , asDefault (smoothing . response) (\c x -> c{response = (response c){smoothing = x}})
         , asDefault (yawCurve . response) (\c x -> c{response = (response c){yawCurve = x}})
         , asDefault (pitchCurve . response) (\c x -> c{response = (response c){pitchCurve = x}})
@@ -657,6 +677,7 @@ shrinkConfig =
         , asDefault (yCurve . response) (\c x -> c{response = (response c){yCurve = x}})
         , asDefault (zCurve . response) (\c x -> c{response = (response c){zCurve = x}})
         , asDefault (lean . response) (\c x -> c{response = (response c){lean = x}})
+        , asDefault (aim . response) (\c x -> c{response = (response c){aim = x}})
         , asDefault clip (\c x -> c{clip = x})
         , asDefault npclient (\c x -> c{npclient = x})
         , asDefault updates (\c x -> c{updates = x})

@@ -80,7 +80,8 @@ tests =
         , shrinksWell "three of something" (pure (V3 0 0 0)) (all (upTo 1000) . toList :: Three V3 -> Bool)
         , shrinksWell "a blob" (roundBlob (0, 0) 6) (blobOf 5000)
         , shrinksWell "a sight" (Sight (0, 0) 6 Whole) (sightOf 5000)
-        , shrinksWell "a binding" (Key [] "F1") binding
+        , shrinksWell "a key or button" (Key [] "F1") key
+        , shrinksWell "a binding" (Binding (Key [] "F1") Tap) (key . boundKey)
         , shrinksWell "a command" (Cmd1 0) (const True)
         , shrinksWell "a stripe" (Stripe 0 0 1 0 0) $ \(Stripe line start points sumX brightness) ->
             and [line >= 0, line < frameHeight, start >= 0, points >= 1, start + points <= frameWidth, sumX >= 0, sumX <= 0xFFFFF, brightness >= 0, brightness <= 0x7FFF]
@@ -116,8 +117,8 @@ tests =
     inPicture (u, v) = u >= 0 && u <= fromIntegral frameWidth && v >= 0 && v <= fromIntegral frameHeight
     blobOf most b = b == roundBlob (blobX b, blobY b) (blobPoints b) && blobPoints b >= 6 && blobPoints b <= most && inPicture (blobX b, blobY b)
     sightOf most s = sightPixels s >= 6 && sightPixels s <= most && inPicture (sightAt s)
-    binding b = case b of
-        Key _ _ -> Just b `elem` [bindingFromCodes mask code | mask <- [0 .. 15], code <- [0 .. 255]]
+    key b = case b of
+        Key _ _ -> Just b `elem` [keyFromCodes mask code | mask <- [0 .. 15], code <- [0 .. 255]]
         JoystickButton (Joystick name index) button -> not (null (words name)) && index >= 1 && index <= 4 && button >= 1 && button <= maxButton
     multiplier e = factor e >= 0.1 && factor e <= 20 && precision e >= 0 && precision e <= 100 && viewRange e `elem` [yawRange, pitchRange, rollRange, leanRange]
     curve (Expo e) = multiplier e

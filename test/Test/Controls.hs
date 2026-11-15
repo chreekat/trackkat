@@ -18,7 +18,7 @@ tests =
         "Controls"
         [ testProperty "each hotkey has the bindings the settings give it, and the log's line names every one" $
             \(Sayable c) ->
-                concatMap (hotkeyBindings c) [minBound .. maxBound] === recenterBindings c ++ pauseBindings c ++ trimBindings c
+                concatMap (hotkeyBindings c) [minBound .. maxBound] === recenterBindings c ++ pauseBindings c ++ trimBindings c ++ aimBindings c
                     .&&. conjoin
                         [ counterexample (describeBindings c) (renderBinding b `isInfixOf` describeBindings c)
                         | k <- [minBound .. maxBound]
@@ -41,18 +41,18 @@ tests =
                     effects = concat [joystickEffects naming (clockAt now) (Pressed j n) | JoystickButton j n <- [button]]
                  in [b | OfferButton b <- effects] === [button]
                         .&&. length effects === length named + 1
-                        .&&. (if now < asked + 60 then map (renderBinding button `isInfixOf`) named === [True] else named === [])
+                        .&&. (if now < asked + 60 then map (renderKeyOrButton button `isInfixOf`) named === [True] else named === [])
         ]
 
 -- | A joystick's button.
-newtype Button = Button Binding
+newtype Button = Button KeyOrButton
     deriving (Show)
 
 instance Arbitrary Button where
     arbitrary = Button <$> arbitrary `suchThat` isButton
     shrink (Button button) = Button <$> filter isButton (shrink button)
 
-isButton :: Binding -> Bool
+isButton :: KeyOrButton -> Bool
 isButton JoystickButton{} = True
 isButton Key{} = False
 

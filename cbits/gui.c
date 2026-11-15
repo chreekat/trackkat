@@ -30,6 +30,8 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_CLEAR_CALIBRATION 0x200
 #define ACT_OFFER 0x400 /* take up what the strip offers: install, or restart to update */
 #define ACT_CHECK_UPDATES 0x800
+#define ACT_AIM 0x1000
+#define ACT_KEY_AIM 0x2000
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
@@ -39,11 +41,11 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
-enum { F_RECENTER, F_PAUSE, F_TRIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_HEAD_VIEW, F_COUNT };
-static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness",
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_AIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_HEAD_VIEW, F_COUNT };
+static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"aim", L"smoothing", L"steadiness",
                                                     L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
                                                     L"npclient", L"updates", L"startup", L"ignore lights", L"head view"};
-#define LISTS 3 /* binding lists: recenter, pause, trim */
+#define LISTS 4 /* binding lists: recenter, pause, trim, aim */
 
 /* A blob as the camera saw it, and what it was taken for. */
 #define BLOBS_MAX 16
@@ -78,6 +80,7 @@ typedef struct State {
     int trimmed;
     float trim[2]; /* yaw and pitch added to the view, in degrees */
     int trim_moves; /* whether the trim moves the view, or tilts it, too */
+    int aiming;
     wchar_t stats[TEXT_MAX];
     wchar_t calibration[TEXT_MAX];
     wchar_t settings_message[TEXT_MAX];
@@ -227,6 +230,13 @@ void hts_gui_trim(int trimmed, float yaw, float pitch, int moves)
     ReleaseSRWLockExclusive(&lock);
 }
 
+void hts_gui_aiming(int aiming)
+{
+    AcquireSRWLockExclusive(&lock);
+    shared.aiming = aiming;
+    ReleaseSRWLockExclusive(&lock);
+}
+
 /* How many games are tracking, and the name of one of them, or an empty
  * name if it isn't known. */
 void hts_gui_games(int games, const wchar_t *name)
@@ -341,21 +351,21 @@ int hts_gui_take_actions(void)
 static int list_index(int which) { return which < 0 || which >= LISTS ? 0 : which; }
 
 /* The last key pressed to add to a binding list (0 recenter, 1 pause, 2
- * trim), as modifiers << 16 | virtual key. */
+ * trim, 3 aim), as modifiers << 16 | virtual key. */
 int hts_gui_chosen_key(int which)
 {
     return (int)InterlockedCompareExchange(&chosen_keys[list_index(which)], 0, 0);
 }
 
 /* Which binding list waits for a key or joystick button to add: 0 recenter,
- * 1 pause, 2 trim, or -1 none. */
+ * 1 pause, 2 trim, 3 aim, or -1 none. */
 int hts_gui_capturing(void)
 {
     return (int)InterlockedCompareExchange(&capturing, 0, 0);
 }
 
-/* Add a binding to a list in the window (0 recenter, 1 pause, 2 trim), as
- * written in trackkat.conf, and stop waiting for one. */
+/* Add a binding to a list in the window (0 recenter, 1 pause, 2 trim, 3
+ * aim), as written in trackkat.conf, and stop waiting for one. */
 void hts_gui_add_binding(int which, const wchar_t *binding)
 {
     which = list_index(which);
@@ -393,6 +403,8 @@ enum {
     ID_OPEN_LOG,
     ID_CLOSE_LOG,
     ID_HEAD_VIEW,
+    ID_AIM,
+    ID_ADD_AIM,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
@@ -1084,7 +1096,7 @@ static void status_light(HDC dc, int x, int y, int width, COLORREF dot, const wc
 #define LIGHTS_Y 192
 #define SWITCH_Y 216
 #define SWITCH_H 52
-#define SWITCH_W ((PANEL_W - 16 - 20) / 3)
+#define SWITCH_W ((PANEL_W - 16 - 30) / LISTS)
 #define STATS_Y 274
 #define TABLE_X (8 + HEAD_SIZE + 16)
 #define LIGHT_W ((PANEL_W - 16) / 3)
@@ -1198,7 +1210,7 @@ static void switch_words(int which, const wchar_t **name, wchar_t *line, size_t 
         copy_text(line, size, seen.paused ? L"games see the view held" : L"output live");
         if (seen.paused)
             *lamp = &lamp_amber;
-    } else {
+    } else if (which == 2) {
         *name = L"TRIM";
         if (seen.trimmed) {
             wchar_t y[16], p[16];
@@ -1209,18 +1221,24 @@ static void switch_words(int which, const wchar_t **name, wchar_t *line, size_t 
             *lamp = &lamp_blue;
         } else
             copy_text(line, size, L"off");
+    } else {
+        *name = seen.aiming ? L"AIMING" : L"AIM";
+        copy_text(line, size, seen.aiming ? L"view turns gently" : L"off");
+        if (seen.aiming)
+            *lamp = &lamp_blue;
     }
 }
 
 /* Name a switch as it stands, for screen readers, and redraw it. */
 static void name_switch(int which)
 {
-    static const wchar_t *const action[LISTS] = {L"Recenter", L"Pause", L"Trim"};
+    static const wchar_t *const action[LISTS] = {L"Recenter", L"Pause", L"Trim", L"Aim"};
     const wchar_t *name;
     const Lamp *lamp;
     wchar_t line[64], text[96];
     switch_words(which, &name, line, 64, &lamp);
-    _snwprintf(text, 96, L"%ls: %ls", which == 1 && seen.paused ? L"Paused" : action[which], line);
+    _snwprintf(text, 96, L"%ls: %ls",
+               which == 1 && seen.paused ? L"Paused" : which == 3 && seen.aiming ? L"Aiming" : action[which], line);
     text[95] = 0;
     SetWindowTextW(switch_ctl[which], text);
     InvalidateRect(switch_ctl[which], NULL, FALSE);
@@ -1228,7 +1246,10 @@ static void name_switch(int which)
 
 static void draw_switch(const DRAWITEMSTRUCT *d)
 {
-    int which = d->hwndItem == switch_ctl[1] ? 1 : d->hwndItem == switch_ctl[2] ? 2 : 0;
+    int which = 0;
+    for (int i = 0; i < LISTS; i++)
+        if (d->hwndItem == switch_ctl[i])
+            which = i;
     const wchar_t *name;
     const Lamp *lamp;
     wchar_t line[64];
@@ -1785,7 +1806,7 @@ static void start_capture(int which)
 /* Take a key or mouse button, as a virtual-key code, for the list waiting. */
 static void choose_key(int which, unsigned vk)
 {
-    static const LONG chosen_action[LISTS] = {ACT_KEY_RECENTER, ACT_KEY_PAUSE, ACT_KEY_TRIM};
+    static const LONG chosen_action[LISTS] = {ACT_KEY_RECENTER, ACT_KEY_PAUSE, ACT_KEY_TRIM, ACT_KEY_AIM};
     InterlockedExchange(&chosen_keys[which], (LONG)(hts_modifiers_held() << 16 | vk));
     InterlockedOr(&actions, chosen_action[which]);
     end_capture();
@@ -1797,7 +1818,7 @@ static void choose_key(int which, unsigned vk)
 static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     int id = GetDlgCtrlID(w);
-    int which = id == ID_ADD_PAUSE ? 1 : id == ID_ADD_TRIM ? 2 : 0;
+    int which = id == ID_ADD_PAUSE ? 1 : id == ID_ADD_TRIM ? 2 : id == ID_ADD_AIM ? 3 : 0;
     int waiting = InterlockedCompareExchange(&capturing, 0, 0) == which;
     switch (msg) {
     case WM_GETDLGCODE:
@@ -2114,7 +2135,7 @@ static void copy_log(void)
 #define CLIENT_W 720
 #define PANEL_Y (STRIP_H + 10)
 #define BIND_Y (PANEL_Y + PANEL_H + 8)
-#define BIND_H 130
+#define BIND_H 146
 #define RESP_Y (BIND_Y + BIND_H + 8)
 #define CURVES_Y (RESP_Y + 22)
 #define AIDS_Y (RESP_Y + 172)
@@ -2415,16 +2436,24 @@ static void tip_strip(void)
 }
 
 /* What a binding list's heading, box and button say. */
+#define GESTURE_TIP                                                                                                    \
+    L" To have one key or button do several things, type hold after it for what it does when held down for a moment, " \
+    L"or double for what it does when pressed twice quickly, as in Throttle - HOTAS Warthog button 4 hold; it then "   \
+    L"acts on a plain press only once that is all it can be."
 static const wchar_t *const list_tips[LISTS] = {
     L"Keys and buttons that recenter, one to a line, such as F12, Ctrl+Mouse4 or Throttle - HOTAS Warthog button "
-    L"23. They work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one.",
+    L"23. They work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one."
+    GESTURE_TIP,
     L"Keys and buttons that pause, one to a line, such as F9, Mouse5 or Joystick - HOTAS Warthog button 5. They "
-    L"work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one.",
+    L"work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one." GESTURE_TIP,
     L"Keys and buttons that trim, one to a line, such as Ctrl+F12 or Throttle - HOTAS Warthog button 24. Empty, as "
-    L"it starts, trim has no key. Click the list to edit it; delete a line to remove one."};
+    L"it starts, trim has no key. Click the list to edit it; delete a line to remove one." GESTURE_TIP,
+    L"Keys and buttons that aim, one to a line. With hold typed after it, as in Throttle - HOTAS Warthog button 4 "
+    L"hold, one aims while it is held down; without, it turns aiming on, then off. Empty, as it starts, aim has no "
+    L"key. Click the list to edit it; delete a line to remove one." GESTURE_TIP};
 static const wchar_t *const add_button_tip =
     L"Click, then press the key, joystick button, or middle or side mouse button (over this window) to add. Click "
-    L"again to stop waiting.";
+    L"again to stop waiting. To make it a hold or a double, type hold or double after it in the list.";
 
 /* ---- The window's parts --------------------------------------------------- */
 
@@ -2523,11 +2552,14 @@ static void refresh(void)
     int paused_changed = st.paused != seen.paused;
     int trim_changed = st.trimmed != seen.trimmed || st.trim[0] != seen.trim[0] || st.trim[1] != seen.trim[1] ||
                        st.trim_moves != seen.trim_moves;
+    int aiming_changed = st.aiming != seen.aiming;
     seen = st;
     if (paused_changed)
         name_switch(1);
     if (trim_changed)
         name_switch(2);
+    if (aiming_changed)
+        name_switch(3);
     if (offer_changed)
         show_offer();
     if (strip_changed)
@@ -2614,7 +2646,7 @@ static void build_window(void)
                               ID_HEAD_VIEW),
                    head_view_tips[head_view]);
     show_head_view(head_view);
-    static const int switch_ids[LISTS] = {ID_RECENTER, ID_PAUSE, ID_TRIM};
+    static const int switch_ids[LISTS] = {ID_RECENTER, ID_PAUSE, ID_TRIM, ID_AIM};
     static const wchar_t *const switch_tips[LISTS] = {
         L"Make the way you face now straight ahead, and clear any trim. Its keys and buttons, below, or a game's "
         L"own recenter binding, do the same from anywhere.",
@@ -2623,7 +2655,11 @@ static void build_window(void)
         L"Make the view now the new forward, where it looks and where it has moved to, handy for craning toward a "
         L"console; you can still glance around from there. Lit blue while trimmed, with where Trim made the new "
         L"forward, in degrees as games see it (pitch positive down), and \"moved\" if it also moves or tilts the "
-        L"view; the log has the whole of it. Recenter clears it."};
+        L"view; the log has the whole of it. Recenter clears it.",
+        L"Turn the view gently from where it is, to lay a gunsight on something by head: while aiming, the view "
+        L"turns only a little further than your head does from where it was when you began, and steadier. Press "
+        L"it again, or recenter, and the view glides back. Lit blue while aiming. A key or button bound below with "
+        L"hold aims just while it is held down. Its curves and smoothing are the aim settings in trackkat.conf."};
     for (int i = 0; i < LISTS; i++) {
         switch_ctl[i] = tip(control_in(live_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 8 + i * (SWITCH_W + 10),
                                        SWITCH_Y, SWITCH_W, SWITCH_H, switch_ids[i]),
@@ -2632,8 +2668,8 @@ static void build_window(void)
     }
 
     /* Each binding list in a column under its switch. */
-    static const wchar_t *const headings[LISTS] = {L"RECENTER", L"PAUSE", L"TRIM"};
-    static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM};
+    static const wchar_t *const headings[LISTS] = {L"RECENTER", L"PAUSE", L"TRIM", L"AIM"};
+    static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM, ID_ADD_AIM};
     int column_w = SWITCH_W - 8;
     for (int i = 0; i < LISTS; i++) {
         int x = column_x(i);
@@ -2642,12 +2678,12 @@ static void build_window(void)
         HWND box = CreateWindowExW(0, L"EDIT", L"",
                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_MULTILINE |
                                        ES_AUTOVSCROLL | ES_WANTRETURN,
-                                   S(x), S(BIND_Y + 44), S(column_w), S(48), main_hwnd,
+                                   S(x), S(BIND_Y + 44), S(column_w), S(64), main_hwnd,
                                    (HMENU)(INT_PTR)(ID_FIELD + F_RECENTER + i), inst, NULL);
         SendMessageW(box, WM_SETFONT, (WPARAM)ui_font, FALSE);
         edit_proc = (WNDPROC)SetWindowLongPtrW(box, GWLP_WNDPROC, (LONG_PTR)list_box_proc);
         field_ctl[F_RECENTER + i] = tip(box, list_tips[i]);
-        add_button[i] = tip(control(L"BUTTON", L"Add…", WS_TABSTOP | BS_PUSHBUTTON, x, BIND_Y + 96, 100, 24, add_ids[i]),
+        add_button[i] = tip(control(L"BUTTON", L"Add…", WS_TABSTOP | BS_PUSHBUTTON, x, BIND_Y + 112, 100, 24, add_ids[i]),
                             add_button_tip);
         button_proc = (WNDPROC)SetWindowLongPtrW(add_button[i], GWLP_WNDPROC, (LONG_PTR)add_button_proc);
     }
@@ -2899,7 +2935,13 @@ static LRESULT CALLBACK log_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 
 /* ---- The main window's messages ------------------------------------------- */
 
-static int is_switch(HWND c) { return c && (c == switch_ctl[0] || c == switch_ctl[1] || c == switch_ctl[2]); }
+static int is_switch(HWND c)
+{
+    for (int i = 0; i < LISTS; i++)
+        if (c && c == switch_ctl[i])
+            return 1;
+    return 0;
+}
 
 static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -2948,6 +2990,9 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_TRIM:
             InterlockedOr(&actions, ACT_TRIM);
             return 0;
+        case ID_AIM:
+            InterlockedOr(&actions, ACT_AIM);
+            return 0;
         case ID_HEAD_VIEW:
             show_head_view((head_view + 1) % VIEWS);
             save_soon(500);
@@ -2980,6 +3025,9 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_ADD_TRIM:
             start_capture(2);
+            return 0;
+        case ID_ADD_AIM:
+            start_capture(3);
             return 0;
         case ID_COPY_LOG:
             copy_log();

@@ -21,29 +21,30 @@ module TrackKat.Windows (
     trackIRServed,
     gameProcess,
     windowProcess,
-    Hotkey (..),
     Watched (..),
     startHotkeys,
     rebindHotkeys,
-    takeHotkeys,
+    takeKeyEdges,
     JoystickEvent (..),
     takeJoystickEvents,
 ) where
 
-import Data.Bits ((.&.))
+import Data.Bits (shiftR, (.&.))
 import Data.List (isSuffixOf)
 import Data.Word (Word64)
 import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
-import Foreign.C.Types (CFloat (..), CInt (..), CLong (..), CUInt (..), CULLong (..), CULong (..))
+import Foreign.C.Types (CDouble (..), CFloat (..), CInt (..), CLong (..), CUInt (..), CULLong (..), CULong (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
 
-import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
-import TrackKat.Controls (Hotkey (..), JoystickEvent (..))
+import TrackKat.Config (Joystick (..), KeyOrButton (..), keyFromCodes, modifierMask, virtualKey)
+import TrackKat.Controls (JoystickEvent (..), KeyEdge (..))
 import TrackKat.GamePose
+import TrackKat.Gesture (Edge (..))
 import TrackKat.ServedGame
+import TrackKat.World (Instant, seconds, (.+^))
 
 foreign import ccall unsafe "hts_console_output" c_console_output :: IO CInt
 foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
@@ -62,11 +63,12 @@ foreign import ccall unsafe "hts_window_process" c_window_process :: CULLong -> 
 foreign import ccall unsafe "hts_trackir_take_game" c_trackir_take_game :: IO CInt
 foreign import ccall unsafe "hts_scrambled_game" c_scrambled_game :: CInt -> IO CString
 foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
-foreign import ccall unsafe "hts_bind_key" c_bind_key :: CInt -> CUInt -> CUInt -> IO ()
-foreign import ccall unsafe "hts_bind_button" c_bind_button :: CInt -> CWString -> CInt -> CInt -> IO ()
+foreign import ccall unsafe "hts_bind_key" c_bind_key :: CUInt -> CUInt -> IO ()
+foreign import ccall unsafe "hts_bind_button" c_bind_button :: CWString -> CInt -> CInt -> IO ()
 foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
 foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
-foreign import ccall unsafe "hts_hotkeys_take" c_hotkeys_take :: IO CInt
+foreign import ccall unsafe "hts_key_edge"
+    c_key_edge :: Ptr CInt -> CWString -> CInt -> Ptr CInt -> Ptr CInt -> Ptr CDouble -> IO CInt
 foreign import ccall unsafe "hts_joystick_event" c_joystick_event :: CWString -> CInt -> Ptr CInt -> Ptr CInt -> IO CInt
 
 -- | Where what trackkat.exe prints goes. A GUI program, it has no console
@@ -222,41 +224,54 @@ scrambledGameName game = do
 data Watched = Keyboard | Mouse | Joysticks
     deriving (Eq, Show)
 
--- | Bind the hotkeys, each to its keys and buttons, and watch for them
--- anywhere in Windows without hiding them from other programs. Returns what
--- can't be watched, with Windows error codes.
-startHotkeys :: (Hotkey -> [Binding]) -> IO [(Watched, Int)]
-startHotkeys bindings = do
-    rebindHotkeys bindings
+-- | Watch the given keys and buttons going down and coming up, anywhere in
+-- Windows, without hiding them from other programs. Returns what can't be
+-- watched, with Windows error codes.
+startHotkeys :: [KeyOrButton] -> IO [(Watched, Int)]
+startHotkeys keys = do
+    rebindHotkeys keys
     alloca $ \mouseError -> alloca $ \joystickError -> do
         keyboardError <- c_hotkeys_start mouseError joystickError
         merr <- peek mouseError
         jerr <- peek joystickError
         pure [(w, fromIntegral e) | (w, e) <- [(Keyboard, keyboardError), (Mouse, merr), (Joysticks, jerr)], e /= 0]
 
--- | Change the hotkeys' keys and buttons.
-rebindHotkeys :: (Hotkey -> [Binding]) -> IO ()
-rebindHotkeys bindings = do
+-- | Change the keys and buttons watched.
+rebindHotkeys :: [KeyOrButton] -> IO ()
+rebindHotkeys keys = do
     c_bindings_clear
-    mapM_ (\k -> mapM_ (bind k) (bindings k)) [minBound .. maxBound]
+    mapM_ bind keys
     c_bindings_apply
   where
-    bind k (Key mods key) = c_bind_key (hotkeyBit k) (fromIntegral (modifierMask mods)) (fromIntegral (virtualKey key))
-    bind k (JoystickButton (Joystick name index) n) =
-        withCWString name $ \p -> c_bind_button (hotkeyBit k) p (fromIntegral index) (fromIntegral n)
+    bind (Key mods key) = c_bind_key (fromIntegral (modifierMask mods)) (fromIntegral (virtualKey key))
+    bind (JoystickButton (Joystick name index) n) =
+        withCWString name $ \p -> c_bind_button p (fromIntegral index) (fromIntegral n)
 
--- | Hotkeys pressed since the last call.
-takeHotkeys :: IO [Hotkey]
-takeHotkeys = do
-    pressed <- c_hotkeys_take
-    pure [k | k <- [minBound .. maxBound], pressed .&. hotkeyBit k /= 0]
-
--- | How cbits/joystick.h numbers a hotkey: HOTKEY_RECENTER, HOTKEY_PAUSE,
--- HOTKEY_TRIM.
-hotkeyBit :: Hotkey -> CInt
-hotkeyBit RecenterKey = 1
-hotkeyBit PauseKey = 2
-hotkeyBit TrimKey = 4
+-- | The watched keys' and buttons' presses and releases since the last
+-- call, oldest first, given the moment now, which each is timed back from.
+-- A joystick's button is told by its joystick's name as it was given to
+-- watch.
+takeKeyEdges :: Instant -> IO [KeyEdge]
+takeKeyEdges now = alloca $ \code -> allocaArray nameLength $ \name -> alloca $ \index -> alloca $ \button -> alloca $ \age -> do
+    let next = do
+            kind <- c_key_edge code name (fromIntegral nameLength) index button age
+            case kind of
+                -- As EDGE_DOWN and EDGE_UP in cbits/windows.c.
+                1 -> told WentDown
+                2 -> told CameUp
+                _ -> pure []
+        told way = do
+            ago <- realToFrac <$> peek age
+            c <- fromIntegral <$> peek code
+            key <-
+                if c /= (0 :: Int)
+                    then pure (keyFromCodes (c `shiftR` 16) (c .&. 0xFFFF))
+                    else fmap Just (JoystickButton <$> (Joystick <$> peekCWString name <*> (fromIntegral <$> peek index)) <*> (fromIntegral <$> peek button))
+            maybe id ((:) . KeyEdge (now .+^ seconds (negate ago)) way) key <$> next
+    next
+  where
+    -- As JOYSTICK_NAME_LEN in cbits/joystick.h.
+    nameLength = 128
 
 -- | Joystick events since the last call, oldest first.
 takeJoystickEvents :: IO [JoystickEvent]

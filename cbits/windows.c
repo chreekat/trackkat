@@ -249,7 +249,11 @@ int hts_find_trackir_dir(wchar_t *out, int len)
  * from games bound to the same key. The middle and side mouse buttons are
  * watched with a low-level mouse hook, as keys with their virtual-key codes,
  * and likewise never swallowed. Joysticks (joystick.c) are watched on the
- * same thread. */
+ * same thread.
+ *
+ * All that is told of the watched keys and buttons is each going down and
+ * coming up, and when: what a press does is decided by whoever takes the
+ * edges. */
 
 /* Modifier flags, as RegisterHotKey numbers them. */
 #define HK_ALT 0x1
@@ -257,68 +261,80 @@ int hts_find_trackir_dir(wchar_t *out, int len)
 #define HK_SHIFT 0x4
 #define HK_WIN 0x8
 
-#define MAX_BINDINGS 32
+#define MAX_WATCHED 64
+#define MAX_EDGES 64
 
-/* A key or joystick button, and what pressing it does. */
+#define EDGE_DOWN 1
+#define EDGE_UP 2
+
+/* A key or joystick button watched. */
 typedef struct {
-    LONG action; /* HOTKEY_RECENTER, HOTKEY_PAUSE or HOTKEY_TRIM */
-    LONG key;    /* mods << 16 | vk, or 0 for a joystick button */
+    LONG key; /* mods << 16 | vk, or 0 for a joystick button */
     wchar_t joystick[JOYSTICK_NAME_LEN];
-    int index;   /* which of the joysticks with that name, from 1 */
+    int index; /* which of the joysticks with that name, from 1 */
     int button;
-} Binding;
+} Watched;
 
-static SRWLOCK bindings_lock = SRWLOCK_INIT;
-static Binding bindings[MAX_BINDINGS];
-static int binding_count;
-/* Bindings being gathered by hts_bind_*, until hts_bindings_apply. */
-static Binding staged[MAX_BINDINGS];
+static SRWLOCK watched_lock = SRWLOCK_INIT;
+static Watched watched[MAX_WATCHED];
+static int watched_count;
+/* Keys and buttons being gathered by hts_bind_*, until hts_bindings_apply. */
+static Watched staged[MAX_WATCHED];
 static int staged_count;
 
-static volatile LONG hotkey_presses;
+/* A watched key or button going down or coming up. */
+typedef struct {
+    Watched what;
+    int edge;    /* EDGE_DOWN or EDGE_UP */
+    LONGLONG at; /* QueryPerformanceCounter's count then */
+} Edge;
+
+/* Edges not yet taken, oldest first; new ones are dropped while it is
+ * full. */
+static SRWLOCK edges_lock = SRWLOCK_INIT;
+static Edge edges[MAX_EDGES];
+static int edges_first, edges_count;
+
 static volatile LONG hotkey_status; /* 0 starting, 1 started */
 static DWORD keyboard_error, mouse_error, joystick_error;
-static DWORD held_vk; /* a bound key now held down, so repeats are ignored */
 
-/* Start gathering a new set of bindings; the old ones stay in force until
- * hts_bindings_apply. Bindings past MAX_BINDINGS are ignored. */
+/* Start gathering a new set of keys and buttons to watch; the old ones stay
+ * watched until hts_bindings_apply. Those past MAX_WATCHED are ignored. */
 void hts_bindings_clear(void)
 {
     staged_count = 0;
 }
 
-void hts_bind_key(int action, unsigned mods, unsigned vk)
+void hts_bind_key(unsigned mods, unsigned vk)
 {
-    if (staged_count == MAX_BINDINGS)
+    if (staged_count == MAX_WATCHED)
         return;
-    Binding *b = &staged[staged_count++];
-    b->action = action;
-    b->key = (LONG)(mods << 16 | vk);
-    b->joystick[0] = 0;
-    b->index = 0;
-    b->button = 0;
+    Watched *w = &staged[staged_count++];
+    w->key = (LONG)(mods << 16 | vk);
+    w->joystick[0] = 0;
+    w->index = 0;
+    w->button = 0;
 }
 
-void hts_bind_button(int action, const wchar_t *joystick, int index, int button)
+void hts_bind_button(const wchar_t *joystick, int index, int button)
 {
-    if (staged_count == MAX_BINDINGS)
+    if (staged_count == MAX_WATCHED)
         return;
-    Binding *b = &staged[staged_count++];
-    b->action = action;
-    b->key = 0;
-    lstrcpynW(b->joystick, joystick, JOYSTICK_NAME_LEN);
-    b->index = index;
-    b->button = button;
+    Watched *w = &staged[staged_count++];
+    w->key = 0;
+    lstrcpynW(w->joystick, joystick, JOYSTICK_NAME_LEN);
+    w->index = index;
+    w->button = button;
 }
 
-/* Put the gathered bindings in force, whether or not keys and joysticks
- * are being watched yet. */
+/* Watch the gathered keys and buttons, whether or not the keyboard and
+ * joysticks are being watched yet. */
 void hts_bindings_apply(void)
 {
-    AcquireSRWLockExclusive(&bindings_lock);
-    memcpy(bindings, staged, sizeof staged);
-    binding_count = staged_count;
-    ReleaseSRWLockExclusive(&bindings_lock);
+    AcquireSRWLockExclusive(&watched_lock);
+    memcpy(watched, staged, sizeof staged);
+    watched_count = staged_count;
+    ReleaseSRWLockExclusive(&watched_lock);
 }
 
 /* The modifiers held now, as RegisterHotKey's flags. Also used by the
@@ -337,66 +353,141 @@ unsigned hts_modifiers_held(void)
     return m;
 }
 
-/* Note the actions bound to a key, or mouse button, pressed with the
- * modifiers held now; returns them. */
-static LONG press_key(DWORD vk)
+static void note_edge(const Watched *what, int edge)
 {
-    LONG pressed = (LONG)(hts_modifiers_held() << 16 | vk);
-    LONG hit = 0;
-    AcquireSRWLockShared(&bindings_lock);
-    for (int i = 0; i < binding_count; i++)
-        if (bindings[i].key == pressed)
-            hit |= bindings[i].action;
-    ReleaseSRWLockShared(&bindings_lock);
-    if (hit)
-        InterlockedOr(&hotkey_presses, hit);
-    return hit;
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    AcquireSRWLockExclusive(&edges_lock);
+    if (edges_count < MAX_EDGES) {
+        Edge *e = &edges[(edges_first + edges_count++) % MAX_EDGES];
+        e->what = *what;
+        e->edge = edge;
+        e->at = now.QuadPart;
+    }
+    ReleaseSRWLockExclusive(&edges_lock);
+}
+
+/* The oldest edge of a watched key or button not yet taken: EDGE_DOWN or
+ * EDGE_UP, or 0 if there is none. A key is told as *key, mods << 16 | vk;
+ * a joystick button, with *key 0, as the joystick's name as it was bound,
+ * which of the joysticks with that name it is, and the button. *age is how
+ * many seconds ago it happened. */
+int hts_key_edge(int *key, wchar_t *joystick, int joystick_len, int *index, int *button, double *age)
+{
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    int edge = 0;
+    AcquireSRWLockExclusive(&edges_lock);
+    if (edges_count > 0) {
+        const Edge *e = &edges[edges_first];
+        edge = e->edge;
+        *key = (int)e->what.key;
+        lstrcpynW(joystick, e->what.joystick, joystick_len);
+        *index = e->what.index;
+        *button = e->what.button;
+        *age = (double)(now.QuadPart - e->at) / (double)frequency.QuadPart;
+        edges_first = (edges_first + 1) % MAX_EDGES;
+        edges_count--;
+    }
+    ReleaseSRWLockExclusive(&edges_lock);
+    return edge;
+}
+
+/* Windows doesn't say which key-downs are a held key repeating. A key
+ * repeats at least every second or so, so a key-down longer than this after
+ * the last one, with no key-up between, is a new press whose key-up before
+ * went unseen, as when the screen was locked meanwhile. */
+#define REPEAT_WITHIN_MS 2000
+
+/* The watched keys and mouse buttons now down, by virtual-key code. Only the
+ * hotkey thread touches it. */
+static struct {
+    LONG key;   /* what it went down as, mods << 16 | vk; 0 while it is up */
+    DWORD last; /* GetTickCount at its latest key-down */
+} held_keys[256];
+
+/* A key, or mouse button, comes up: told if it went down as a watched
+ * key, whatever modifiers are held now. */
+static void key_up(DWORD vk)
+{
+    if (vk >= ARRAYSIZE(held_keys) || !held_keys[vk].key)
+        return;
+    Watched w = {.key = held_keys[vk].key};
+    held_keys[vk].key = 0;
+    note_edge(&w, EDGE_UP);
+}
+
+/* A key, or mouse button, goes down: told if it is watched with just the
+ * modifiers held now, and isn't a held key repeating. */
+static void key_down(DWORD vk)
+{
+    if (vk >= ARRAYSIZE(held_keys))
+        return;
+    DWORD now = GetTickCount();
+    if (held_keys[vk].key) {
+        if (now - held_keys[vk].last < REPEAT_WITHIN_MS) {
+            held_keys[vk].last = now;
+            return;
+        }
+        key_up(vk);
+    }
+    Watched w = {.key = (LONG)(hts_modifiers_held() << 16 | vk)};
+    int found = 0;
+    AcquireSRWLockShared(&watched_lock);
+    for (int i = 0; i < watched_count && !found; i++)
+        found = watched[i].key == w.key;
+    ReleaseSRWLockShared(&watched_lock);
+    if (!found)
+        return;
+    held_keys[vk].key = w.key;
+    held_keys[vk].last = now;
+    note_edge(&w, EDGE_DOWN);
 }
 
 static LRESULT CALLBACK keyboard_hook(int code, WPARAM wparam, LPARAM lparam)
 {
     if (code == HC_ACTION) {
         const KBDLLHOOKSTRUCT *k = (const KBDLLHOOKSTRUCT *)lparam;
-        if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
-            if (k->vkCode != held_vk && press_key(k->vkCode))
-                held_vk = k->vkCode;
-        } else if ((wparam == WM_KEYUP || wparam == WM_SYSKEYUP) && k->vkCode == held_vk) {
-            held_vk = 0;
-        }
+        if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN)
+            key_down(k->vkCode);
+        else if (wparam == WM_KEYUP || wparam == WM_SYSKEYUP)
+            key_up(k->vkCode);
     }
     return CallNextHookEx(NULL, code, wparam, lparam);
 }
 
-/* Mouse buttons don't repeat, so each press counts. */
 static LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam)
 {
     if (code == HC_ACTION) {
         const MSLLHOOKSTRUCT *m = (const MSLLHOOKSTRUCT *)lparam;
+        DWORD side = HIWORD(m->mouseData) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2;
         if (wparam == WM_MBUTTONDOWN)
-            press_key(VK_MBUTTON);
+            key_down(VK_MBUTTON);
+        else if (wparam == WM_MBUTTONUP)
+            key_up(VK_MBUTTON);
         else if (wparam == WM_XBUTTONDOWN)
-            press_key(HIWORD(m->mouseData) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2);
+            key_down(side);
+        else if (wparam == WM_XBUTTONUP)
+            key_up(side);
     }
     return CallNextHookEx(NULL, code, wparam, lparam);
 }
 
-LONG hotkeys_for_button(const wchar_t *joystick, int index, int button)
+void watched_button(const wchar_t *joystick, int index, int button, int down)
 {
-    LONG hit = 0;
-    AcquireSRWLockShared(&bindings_lock);
-    for (int i = 0; i < binding_count; i++) {
-        const Binding *b = &bindings[i];
-        if (b->key == 0 && b->button == button && b->index == index
-            && CompareStringOrdinal(b->joystick, -1, joystick, -1, TRUE) == CSTR_EQUAL)
-            hit |= b->action;
+    Watched matched[MAX_WATCHED];
+    int n = 0;
+    AcquireSRWLockShared(&watched_lock);
+    for (int i = 0; i < watched_count; i++) {
+        const Watched *w = &watched[i];
+        if (w->key == 0 && w->button == button && w->index == index
+            && CompareStringOrdinal(w->joystick, -1, joystick, -1, TRUE) == CSTR_EQUAL)
+            matched[n++] = *w;
     }
-    ReleaseSRWLockShared(&bindings_lock);
-    return hit;
-}
-
-void hotkeys_press(LONG actions)
-{
-    InterlockedOr(&hotkey_presses, actions);
+    ReleaseSRWLockShared(&watched_lock);
+    for (int i = 0; i < n; i++)
+        note_edge(&matched[i], down ? EDGE_DOWN : EDGE_UP);
 }
 
 static DWORD WINAPI hotkey_thread(LPVOID unused)
@@ -423,7 +514,7 @@ static DWORD WINAPI hotkey_thread(LPVOID unused)
     return 0;
 }
 
-/* Start watching the keyboard, mouse and joysticks for bound keys and
+/* Start watching the keyboard, mouse and joysticks for the watched keys and
  * buttons on a thread of their own. Returns 0, or a Windows error code if
  * the keyboard can't be watched; sets *mouse_err and *joysticks_err
  * likewise. */
@@ -440,12 +531,6 @@ int hts_hotkeys_start(int *mouse_err, int *joysticks_err)
     *mouse_err = (int)mouse_error;
     *joysticks_err = (int)joystick_error;
     return (int)keyboard_error;
-}
-
-/* Actions pressed for since the last call, as HOTKEY_* bits. */
-int hts_hotkeys_take(void)
-{
-    return (int)InterlockedExchange(&hotkey_presses, 0);
 }
 
 /* ---- Console ------------------------------------------------------------- */

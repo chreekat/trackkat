@@ -34,6 +34,7 @@ module TrackKat.Gui (
     Output (..),
     showOutput,
     showTrim,
+    showAim,
     showGames,
     showStats,
     showCalibration,
@@ -50,14 +51,14 @@ import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
 import Foreign.Ptr (Ptr, nullPtr)
 
 import TrackKat.CommandLine (WindowAtStart (..))
-import TrackKat.Config (Binding, bindingFromCodes, renderBinding)
+import TrackKat.Config (KeyOrButton, keyFromCodes, renderKeyOrButton)
+import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
-import TrackKat.Response (Trim (..))
+import TrackKat.Response (Aiming (..), Trim (..))
 import TrackKat.Tracker (BlobRole (..))
-import TrackKat.Windows (Hotkey (..))
 
 foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()
@@ -82,6 +83,7 @@ foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> CIn
 foreign import ccall unsafe "hts_gui_clip" c_clip :: CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> CInt -> IO ()
+foreign import ccall unsafe "hts_gui_aiming" c_aiming :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_stats" c_stats :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> IO ()
@@ -160,6 +162,7 @@ data Action
     = RecenterAction
     | PauseAction
     | TrimAction
+    | AimAction
     | CalibrateAction
     | -- | forget the learnt calibration and track afresh
       ClearCalibrationAction
@@ -171,19 +174,19 @@ data Action
     | -- | the Save button: read the settings with 'savedSettings'
       SaveAction
     | -- | a key pressed to add to a binding list, if it has a name
-      KeyChosen Hotkey (Maybe Binding)
+      KeyChosen Hotkey (Maybe KeyOrButton)
     deriving (Eq, Show)
 
 -- | What the user asked for since the last call.
 takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
-    keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11)], testBit bits b] ++ keys)
+    keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8), (AimKey, 13)], testBit bits b]
+    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11), (AimAction, 12)], testBit bits b] ++ keys)
   where
     chosen k = do
         code <- fromIntegral <$> c_chosen_key (list k)
-        pure (KeyChosen k (bindingFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
+        pure (KeyChosen k (keyFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
 
 -- | The binding list waiting for a key or joystick button to add, if any.
 capturing :: IO (Maybe Hotkey)
@@ -192,17 +195,20 @@ capturing =
         0 -> pure (Just RecenterKey)
         1 -> pure (Just PauseKey)
         2 -> pure (Just TrimKey)
+        3 -> pure (Just AimKey)
         _ -> pure Nothing
 
--- | Add a binding to a list in the window, and stop waiting for one.
-addBinding :: Hotkey -> Binding -> IO ()
-addBinding k b = withCWString (renderBinding b) (c_add_binding (list k))
+-- | Add a key or button to a list in the window, bound as the settings
+-- file binds one with no gesture written, and stop waiting for one.
+addBinding :: Hotkey -> KeyOrButton -> IO ()
+addBinding k b = withCWString (renderKeyOrButton b) (c_add_binding (list k))
 
 -- | How cbits/gui.c numbers the binding lists.
 list :: Hotkey -> CInt
 list RecenterKey = 0
 list PauseKey = 1
 list TrimKey = 2
+list AimKey = 3
 
 -- | Add a line to the log the window shows.
 guiLog :: String -> IO ()
@@ -273,6 +279,11 @@ showTrim (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (if mov
   where
     -- Beyond turning, enough to notice.
     movesToo = abs (roll t) >= 1 || any ((>= 5) . abs) [tx t, ty t, tz t]
+
+-- | Light the Aim button, or not.
+showAim :: Aiming -> IO ()
+showAim NotAiming = c_aiming 0
+showAim Aiming = c_aiming 1
 
 -- | How many games are tracking, and the name of one of them, if known.
 showGames :: Int -> Maybe String -> IO ()

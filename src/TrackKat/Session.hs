@@ -17,6 +17,7 @@ module TrackKat.Session (
     Effect (..),
     step,
     steps,
+    controlsLooked,
 
     -- * In words
     status,
@@ -27,10 +28,11 @@ import Text.Printf (printf)
 
 import TrackKat.Calibration
 import TrackKat.Config
-import TrackKat.Controls (Hotkey (..))
+import TrackKat.Controls (Hotkey (..), KeyEdge (..), boundTo)
 import TrackKat.Display
 import TrackKat.Frame (Blob, Stripe)
 import TrackKat.GamePose
+import TrackKat.Gesture (Recognizer, Signal (..), edge, forget, newRecognizer, tick)
 import TrackKat.Linear (V3)
 import TrackKat.Log (Line (..))
 import TrackKat.Pose
@@ -74,15 +76,22 @@ import TrackKat.World (Instant)
 --  * Every frame sends games one pose. Paused, it is the pose held, whatever
 --    the frame showed, until the user resumes; trimming doesn't move it.
 --
---  * Recentering clears the trim.
+--  * Recentering clears the trim, and ends aiming.
 --
 --  * Whatever changes what the window says of the camera, the output, the
---    trim or the calibration is logged for the user in the same step. (The
---    window is shown the search for a camera, each frame and the settings
---    without a line.)
+--    trim, aiming or the calibration is logged for the user in the same
+--    step. (The window is shown the search for a camera, each frame and
+--    the settings without a line.)
 --
 --  * A settings file saved with nothing changed leaves the session as it
 --    was and logs nothing.
+--
+--  * Aiming is on from when it is asked for until it is ended or the view
+--    is recentered, whatever else happens: the view is aimed from the next
+--    frame that shows the clip (see Note [Aiming] in "TrackKat.Response"),
+--    and where shaping starts afresh, as on a calibration, from the first
+--    frame after. Aiming that a key or button held down began ends when
+--    the key comes up, or when the settings bind it otherwise.
 --
 -- "Test.Session" states these as properties.
 
@@ -98,6 +107,10 @@ data Session = Session
     , sSending :: !Sending
     , sTrim :: !Trim
     -- ^ where forward is for the view, until the next recenter
+    , sAim :: !Aiming
+    -- ^ whether aiming is asked for
+    , sGestures :: !(Recognizer KeyOrButton Hotkey)
+    -- ^ the bound keys' and buttons' presses not yet settled
     , sLatest :: !HeadPose
     -- ^ the view as last shaped: what games are sent unless paused
     , sAbsence :: !Absence
@@ -125,6 +138,8 @@ newSession config c =
         , sOutcome = Nothing
         , sSending = Following
         , sTrim = NoTrim
+        , sAim = NotAiming
+        , sGestures = newRecognizer
         , sLatest = centred
         , sAbsence = noAbsence
         , sRecenters = 0
@@ -159,9 +174,10 @@ data Event
       CameraConnected Int
     | -- | the camera went away, or wasn't found, and why
       CameraStopped String
-    | -- | the hotkeys pressed since they were last looked at, and how many
-      -- times games have asked to recenter so far
-      ControlsPolled [Hotkey] Int
+    | -- | the controls were looked at at this time: the bound keys' and
+      -- buttons' presses and releases since the last look, oldest first,
+      -- and how many times games have asked to recenter so far
+      ControlsPolled Instant [KeyEdge] Int
     | -- | a frame arrived at this time, in seconds
       FrameArrived Instant [Stripe]
     | -- | a packet from the camera was dropped as corrupt, and why
@@ -169,6 +185,12 @@ data Event
     | RecenterAsked
     | PauseAsked
     | TrimAsked
+    | -- | begin aiming, or end it
+      AimAsked
+    | -- | a key or button that aims while held went down for long enough
+      AimHeld
+    | -- | and came up
+      AimLetGo
     | CalibrateAsked
     | ClearCalibrationAsked
     | -- | the settings file was saved: its text, and the settings it gives
@@ -181,6 +203,7 @@ data Effect
     | ShowCamera CameraState
     | ShowOutput Output
     | ShowTrim Trim
+    | ShowAim Aiming
     | -- | what the window says of the calibration
       ShowCalibration String
     | -- | the clip's reflectors on the head, as 'learntClip' gives them
@@ -217,13 +240,7 @@ step event s = case event of
         (s{sRecenters = recenters, sAbsence = noAbsence}, [say "Tracking.", ShowCamera Tracking])
     CameraStopped problem ->
         (s, [say problem, ShowCamera (CameraDown problem), say "Trying the camera again in 3 seconds."])
-    ControlsPolled keys recenters ->
-        steps
-            ( [RecenterAsked | RecenterKey `elem` keys || recenters /= sRecenters s]
-                ++ [PauseAsked | PauseKey `elem` keys]
-                ++ [TrimAsked | TrimKey `elem` keys]
-            )
-            s{sRecenters = recenters}
+    ControlsPolled now edges recenters -> uncurry (flip steps) (controlsLooked now edges recenters s)
     FrameArrived now stripes -> frame now stripes s
     PacketCorrupt why -> (s, [say ("# dropped a corrupt packet: " ++ why)])
     RecenterAsked -> recenter s
@@ -233,6 +250,9 @@ step event s = case event of
     TrimAsked ->
         let t = trimTo (sent s)
          in (s{sTrim = t}, [ShowTrim t, say ("Trimmed: forward is now " ++ describeTrim t ++ ".")])
+    AimAsked -> aimTo (case sAim s of Aiming -> NotAiming; NotAiming -> Aiming) s
+    AimHeld -> aimTo Aiming s
+    AimLetGo -> aimTo NotAiming s
     CalibrateAsked -> (s{sTracker = request Calibrate (sTracker s)}, [])
     ClearCalibrationAsked ->
         ( s{sTracker = trackerFor (sSettings s) defaultCalibration, sShaper = newShaper}
@@ -254,10 +274,53 @@ sent s = case sSending s of
     Holding held -> held
     Following -> sLatest s
 
--- | Recenter on the next frame that shows the clip, undoing any trim. If
--- the clip is out of sight, games see the view centred straight away.
+-- | A session that has looked at the controls, and what they ask for, in
+-- order: a recenter if games have asked since the last look, then what the
+-- keys' and buttons' presses and releases come to by the settings'
+-- bindings, and then what the time passing to the look makes of the
+-- presses still unsettled (see "TrackKat.Gesture").
+controlsLooked :: Instant -> [KeyEdge] -> Int -> Session -> (Session, [Event])
+controlsLooked now edges recenters s =
+    ( s{sRecenters = recenters, sGestures = settled}
+    , [RecenterAsked | recenters /= sRecenters s] ++ concatMap asked (made ++ due)
+    )
+  where
+    bindings = boundTo (sSettings s)
+    (pressed, made) =
+        foldl' (\(r, done) e -> (done ++) <$> edge bindings (edgeAt e) (edgeWay e) (edgeKey e) r) (sGestures s, []) edges
+    (settled, due) = tick bindings now pressed
+
+-- | What a bound key or button asks for by how it was pressed. A hold
+-- aims for as long as it lasts, where a tap or a double begins aiming or
+-- ends it; for the rest, a hold asks once, as it begins.
+asked :: Signal Hotkey -> [Event]
+asked signal = case signal of
+    Made k -> [once k]
+    HoldBegan AimKey -> [AimHeld]
+    HoldBegan k -> [once k]
+    HoldEnded AimKey -> [AimLetGo]
+    HoldEnded _ -> []
+  where
+    once RecenterKey = RecenterAsked
+    once PauseKey = PauseAsked
+    once TrimKey = TrimAsked
+    once AimKey = AimAsked
+
+-- | Begin aiming, or end it, if that is a change.
+aimTo :: Aiming -> Session -> (Session, [Effect])
+aimTo wanted s
+    | wanted == sAim s = (s, [])
+    | otherwise = (s{sAim = wanted}, [ShowAim wanted, say line])
+  where
+    line = case wanted of
+        Aiming -> "Aiming: the view turns gently from where it is."
+        NotAiming -> "Aiming ended."
+
+-- | Recenter on the next frame that shows the clip, undoing any trim and
+-- ending aiming. If the clip is out of sight, games see the view centred
+-- straight away.
 recenter :: Session -> (Session, [Effect])
-recenter s = (lost s{sTracker = request Recenter (sTracker s), sTrim = NoTrim}, cleared)
+recenter s = (cleared ++) <$> aimTo NotAiming (lost s{sTracker = request Recenter (sTracker s), sTrim = NoTrim})
   where
     cleared = case sTrim s of
         NoTrim -> []
@@ -297,7 +360,7 @@ frame now stripes s =
         | any resetsShaping events = newShaper
         | otherwise = sShaper s
     (latest, shaper') = case outcome of
-        Tracked{outPose = hp} -> shape (response (sSettings s)) (sTrim s) NotAiming now hp shaper
+        Tracked{outPose = hp} -> shape (response (sSettings s)) (sTrim s) (sAim s) now hp shaper
         Lost{} -> (sLatest s, shaper)
     (absent, outOfSight) = absence now outcome (sAbsence s)
     s' = s{sTracker = tracker, sShaper = shaper', sOutcome = Just outcome, sLatest = latest, sAbsence = absent}
@@ -305,20 +368,22 @@ frame now stripes s =
         Tracked{outPose = hp, outSeen = seen} -> InSight hp (seenMissing seen)
         Lost{outBlobs = n} -> OutOfSight n
 
--- | Apply the settings file as saved.
+-- | Apply the settings file as saved. A key or button bound otherwise than
+-- it was starts afresh: what its being held down began ends, and nothing
+-- more comes of a press of it under way.
 settingsSaved :: String -> Config -> Session -> (Session, [Effect])
-settingsSaved text new s =
-    ( s{sSettings = new, sTracker = reshaped (masked (sTracker s))}
-    , [BindHotkeys new]
-        ++ [PointGames (npclient new) | npclient new /= npclient old]
-        ++ [SetStartup (startup new) | startup new /= startup old]
-        -- Clicking through the head view saves it; that is no news.
-        ++ [say (describeChanges old new) | new /= old{headView = headView new}]
-        ++ [say "Tracking the clip's new shape; recentering." | clip new /= clip old]
-        ++ [ShowSettings text]
-    )
+settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSettings = new, sTracker = reshaped (masked (sTracker s)), sGestures = watched}
   where
+    applied =
+        [BindHotkeys new]
+            ++ [PointGames (npclient new) | npclient new /= npclient old]
+            ++ [SetStartup (startup new) | startup new /= startup old]
+            -- Clicking through the head view saves it; that is no news.
+            ++ [say (describeChanges old new) | new /= old{headView = headView new}]
+            ++ [say "Tracking the clip's new shape; recentering." | clip new /= clip old]
+            ++ [ShowSettings text]
     old = sSettings s
+    (watched, ended) = forget (\k -> boundTo new k /= boundTo old k) (sGestures s)
     masked
         | lightMasking new /= lightMasking old = setMasking (lightMasking new)
         | otherwise = id

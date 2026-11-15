@@ -25,6 +25,7 @@ void hts_gui_clip(int shown, const float *points);
 void hts_gui_blobs(int n, const float *blobs, int m, const float *areas);
 void hts_gui_paused(int paused);
 void hts_gui_trim(int trimmed, float yaw, float pitch, int moves);
+void hts_gui_aiming(int aiming);
 void hts_gui_games(int games, const wchar_t *name);
 void hts_gui_stats(const wchar_t *text);
 void hts_gui_calibration(const wchar_t *text);
@@ -41,10 +42,13 @@ int hts_gui_window_open(void);
 int hts_gui_capturing(void);
 void hts_gui_add_binding(int which, const wchar_t *binding);
 
-static const wchar_t *const names[] = {L"recenter", L"pause", L"trim", L"smoothing", L"steadiness", L"responsiveness",
-                                       L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean", L"npclient", L"head view"};
-static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 23", L"Ctrl+F9", L"", L"on", L"90", L"45", L"1:6, precision 40",
-                                        L"1:7", L"1:4", L"1:3", L"1:4", L"1:2.5", L"view", L"trackkat", L"virtual"};
+static const wchar_t *const names[] = {L"recenter", L"pause", L"trim", L"aim", L"smoothing", L"steadiness",
+                                       L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
+                                       L"npclient", L"head view"};
+static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 4 double", L"Ctrl+F9",
+                                        L"Throttle - HOTAS Warthog button 4", L"Throttle - HOTAS Warthog button 4 hold",
+                                        L"on", L"90", L"45", L"1:6, precision 40", L"1:7", L"1:4", L"1:3", L"1:4",
+                                        L"1:2.5", L"view", L"trackkat", L"virtual"};
 
 /* A blob, as hts_gui_blobs takes them, put at spots[n]; how many there are
  * then. */
@@ -66,7 +70,8 @@ int main(int argc, char **argv)
     for (int i = 0; i < (int)(sizeof names / sizeof *names); i++)
         hts_gui_set_setting(names[i], values[i]);
     hts_gui_log(L"Games will load NPClient from C:\\Games\\trackkat");
-    hts_gui_log(L"Recenter: F12   Pause: Ctrl+F9   Trim: none   (Enter also recenters, c Enter calibrates level)");
+    hts_gui_log(L"Recenter: F12, Throttle - HOTAS Warthog button 4 double   Pause: Ctrl+F9   Trim: Throttle - HOTAS "
+                L"Warthog button 4   Aim: Throttle - HOTAS Warthog button 4 hold");
     hts_gui_update_status(1, L"Up to date (0.1.151).");
     hts_gui_log(L"Tracking.");
     hts_gui_calibration(L"Camera tipped 12.4\u00b0 down and 0.8\u00b0 to its right, from 1460\u00b0 of head turning.\n"
@@ -76,7 +81,7 @@ int main(int argc, char **argv)
     static const float clip[] = {38, 92, 71, -32, 92, 71, 3, 148.2f, -16.9f};
     hts_gui_clip(1, clip);
     hts_gui_camera(1, L"");
-    int paused = 0, checking = 0, checks = 0;
+    int paused = 0, aiming = 0, checking = 0, checks = 0;
     for (int i = 0; i < seconds * 60; i++) {
         double t = i / 60.0;
         float yaw = (float)(14 * sin(t * 0.9)), pitch = (float)(-6 + 5 * sin(t * 1.3));
@@ -120,6 +125,11 @@ int main(int argc, char **argv)
             hts_gui_trim(1, -42, 18, 1);
             hts_gui_log(L"Trimmed: forward is now yaw -42 pitch +18 roll +2, x +35 y -20 z -60 mm.");
         }
+        if (acts & 0x1000) {
+            aiming = !aiming;
+            hts_gui_aiming(aiming);
+            hts_gui_log(aiming ? L"Aiming: the view turns gently from where it is." : L"Aiming ended.");
+        }
         if (acts & 0x10) {
             for (int f = 0; f < (int)(sizeof names / sizeof *names); f++) {
                 wchar_t v[256];
@@ -129,8 +139,9 @@ int main(int argc, char **argv)
             hts_gui_settings_message(L"Saved.");
         }
         /* Any key chosen stands for Ctrl+F7, as Haskell would name it. */
-        for (int list = 0; list < 3; list++)
-            if (acts & (list == 2 ? 0x100 : 0x20 << list)) {
+        static const int key_chosen[] = {0x20, 0x40, 0x100, 0x2000};
+        for (int list = 0; list < 4; list++)
+            if (acts & key_chosen[list]) {
                 printf("  key %x\n", hts_gui_chosen_key(list));
                 hts_gui_add_binding(list, L"Ctrl+F7");
             }

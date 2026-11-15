@@ -11,9 +11,24 @@
 # The easiest way to figure out joystick button names is by using
 # trackkat's window. For a gaming mouse's extra buttons, give them F13
 # to F24 in the mouse's own software and bind those.
+#
+# One key or button can do several things. After it, write hold for
+# what it does when held down for a moment, or double for what it
+# does when pressed twice quickly. For example:
+#   recenter = F12, Throttle - HOTAS Warthog button 4 double
+#   trim = Throttle - HOTAS Warthog button 4
+#   aim = Throttle - HOTAS Warthog button 4 hold
+# A key with a hold or a double acts on a plain press only once it
+# is clear that is all it was; other keys act as they go down.
+#
+# aim: while aiming, the view turns gently from where it is, to lay
+# a gunsight on something by head. A key or button with hold aims
+# while it is held down; one without turns aiming on, then off.
+# Recentering ends it.
 recenter = F12
 pause = F9
 trim =
+aim =
 
 # Smoothing calms the view while your head is still, at the cost of
 # some lag when you move. Both settings run from 0 to 100.
@@ -59,6 +74,18 @@ z = 1:2.5
 # looking up or down. lean = screen: leaning moves you the same way
 # whichever way you look.
 lean = view
+
+# Aiming's own response. Its curves take how far your head has
+# turned since you began aiming to how far the view turns from
+# where it was, in degrees: at 1:1.5, half as far again as your
+# head. Leaning is not changed by aiming. Its smoothing, of your
+# head's turning, has the same three settings as above.
+aim yaw = 1:1.5
+aim pitch = 1:1.5
+aim roll = 1:1.5
+aim smoothing = on
+aim steadiness = 95
+aim responsiveness = 45
 
 # clip: the headset clip's triangle of reflectors, in mm, measured
 # centre to centre, with left and right as you wear it: your left to

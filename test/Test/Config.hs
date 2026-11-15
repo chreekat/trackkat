@@ -6,7 +6,7 @@ module Test.Config (tests) where
 import Control.Exception (IOException, try)
 import Control.Monad (forM_)
 import Data.Either (isLeft)
-import Data.List (intercalate)
+import Data.List (intercalate, isPrefixOf)
 import System.Environment (lookupEnv)
 import System.IO (readFile')
 import Test.Tasty (TestTree, testGroup)
@@ -28,17 +28,17 @@ tests = group "Config" $ do
     check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
     check "bindings" $
         parseConfig "# comment\nrecenter = ctrl + shift+f12\n\npause=Pause # TrackIR style\n"
-            == Right defaultConfig{recenterBindings = [Key [Ctrl, Shift] "F12"], pauseBindings = [Key [] "Pause"]}
+            == Right defaultConfig{recenterBindings = [tap (Key [Ctrl, Shift] "F12")], pauseBindings = [tap (Key [] "Pause")]}
     check "binding codes" $ case parseBinding "Alt+Ctrl+NumPad5" of
-        Right b@(Key mods k) -> (modifierMask mods, virtualKey k, renderBinding b) == (3, 0x65, "Ctrl+Alt+NumPad5")
+        Right b@(Binding (Key mods k) Tap) -> (modifierMask mods, virtualKey k, renderBinding b) == (3, 0x65, "Ctrl+Alt+NumPad5")
         _ -> False
     let warthog = Joystick "Throttle - HOTAS Warthog"
     check "joystick button" $
         parseConfig "recenter = Throttle - HOTAS Warthog  button 23\npause = F9, Joystick - HOTAS Warthog (2) Button 4, Ctrl+P\n"
             == Right
                 defaultConfig
-                    { recenterBindings = [JoystickButton (warthog 1) 23]
-                    , pauseBindings = [Key [] "F9", JoystickButton (Joystick "Joystick - HOTAS Warthog" 2) 4, Key [Ctrl] "P"]
+                    { recenterBindings = [tap (JoystickButton (warthog 1) 23)]
+                    , pauseBindings = map tap [Key [] "F9", JoystickButton (Joystick "Joystick - HOTAS Warthog" 2) 4, Key [Ctrl] "P"]
                     }
     forM_
         [ [JoystickButton (warthog 1) 1]
@@ -46,19 +46,19 @@ tests = group "Config" $ do
         , [JoystickButton (Joystick "Controller (Xbox One For Windows)" 1) 7]
         , [JoystickButton (Joystick "T.16000M (HID)" 2) 256, JoystickButton (Joystick "VPC Stick MT-50CM2 + 3D" 1) 31]
         ]
-        $ \bs -> checkShowing "bindings round-trip" (renderBindings bs) $ parseBindings (renderBindings bs) == Right bs
-    check "rendered button" $ renderBindings [Key [] "F12", JoystickButton (warthog 2) 23] == "F12, Throttle - HOTAS Warthog (2) button 23"
+        $ \inputs -> let bs = map tap inputs in checkShowing "bindings round-trip" (renderBindings bs) $ parseBindings (renderBindings bs) == Right bs
+    check "rendered button" $ renderBindings (map tap [Key [] "F12", JoystickButton (warthog 2) 23]) == "F12, Throttle - HOTAS Warthog (2) button 23"
     check "button out of range" $ parseConfig "pause = Stick button 257" == Left "line 1: joystick buttons are numbered from 1 to 256"
     check "button zero" $ parseBinding "Stick button 0" == Left "joystick buttons are numbered from 1 to 256"
     check "button without number" $ parseBinding "Stick button" == Left "joystick buttons are numbered from 1 to 256"
     check "button without joystick" $
         parseBinding "button 3" == Left "a joystick button needs the joystick's name, like Throttle - HOTAS Warthog button 23"
     check "mouse buttons" $
-        parseBindings "MouseMiddle, ctrl+mouse4, Alt+Shift+Mouse5" == Right [Key [] "MouseMiddle", Key [Ctrl] "Mouse4", Key [Alt, Shift] "Mouse5"]
+        parseBindings "MouseMiddle, ctrl+mouse4, Alt+Shift+Mouse5" == Right (map tap [Key [] "MouseMiddle", Key [Ctrl] "Mouse4", Key [Alt, Shift] "Mouse5"])
     check "mouse buttons round-trip" $
-        let bs = [Key [Ctrl] "Mouse4", Key [] "MouseMiddle", Key [Win] "Mouse5"] in parseBindings (renderBindings bs) == Right bs
+        let bs = map tap [Key [Ctrl] "Mouse4", Key [] "MouseMiddle", Key [Win] "Mouse5"] in parseBindings (renderBindings bs) == Right bs
     check "mouse button codes" $ map virtualKey ["MouseMiddle", "Mouse4", "Mouse5"] == [4, 5, 6]
-    check "mouse button chosen in the window" $ bindingFromCodes 0x2 0x05 == Just (Key [Ctrl] "Mouse4")
+    check "mouse button chosen in the window" $ keyFromCodes 0x2 0x05 == Just (Key [Ctrl] "Mouse4")
     forM_ ["MouseLeft", "Ctrl+MouseRight", "mouse1", "Mouse2"] $ \b ->
         checkShowing "left and right mouse buttons refused" (b) $
             parseBinding b == Left "the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
@@ -162,12 +162,43 @@ tests = group "Config" $ do
 
     check "trim unbound by default" $ trimBindings defaultConfig == []
     check "trim bindings" $
-        fmap trimBindings (parseConfig "trim = Ctrl+F12, Stick button 3\n") == Right [Key [Ctrl] "F12", JoystickButton (Joystick "Stick" 1) 3]
+        fmap trimBindings (parseConfig "trim = Ctrl+F12, Stick button 3\n") == Right (map tap [Key [Ctrl] "F12", JoystickButton (Joystick "Stick" 1) 3])
     check "empty trim" $ parseConfig "trim =\n" == Right defaultConfig && parseConfig "trim =   # none\n" == Right defaultConfig
     check "empty trim rendered" $ "trim =" `elem` lines (renderConfig defaultConfig)
-    let withTrim = defaultConfig{trimBindings = [Key [] "F11"]}
+    let withTrim = defaultConfig{trimBindings = [tap (Key [] "F11")]}
     check "trim round-trips" $ parseConfig (renderConfig withTrim) == Right withTrim
     check "trim change described" $ describeChanges defaultConfig withTrim == "Settings reloaded: trim = F11"
+
+    -- Ways of pressing a key or button, written after it.
+    let stick = JoystickButton (Joystick "Stick" 1) 4
+    check "gestures" $
+        parseBindings "F12 hold, Stick button 4 Double,Ctrl + F9  tap, Stick button 4"
+            == Right [Binding (Key [] "F12") Hold, Binding stick Double, tap (Key [Ctrl] "F9"), tap stick]
+    check "gestures rendered, a tap unsaid" $
+        renderBindings [Binding (Key [] "F12") Hold, Binding stick Double, tap stick] == "F12 hold, Stick button 4 double, Stick button 4"
+    check "a gesture with no key" $ parseBinding "hold" == Left "unknown key \"hold\""
+    check "a gesture is the last word" $ parseBinding "hold F12" == Left "unknown key \"hold F12\""
+    check "a joystick named for a gesture" $ parseBinding "Hold button 2 hold" == Right (Binding (JoystickButton (Joystick "Hold" 1) 2) Hold)
+
+    -- Aiming: its keys, and its own curves and smoothing.
+    check "aim unbound by default" $ aimBindings defaultConfig == []
+    let aiming = aim . response
+        aimed = parseConfig "aim = Stick button 4 hold\naim yaw = 1:2\naim pitch = 1:1, precision 50\naim steadiness = 80\nsteadiness = 70\n"
+    check "aim settings" $
+        fmap aimBindings aimed == Right [Binding stick Hold]
+            && fmap aiming aimed == Right (Aim (tuned 80 45) (Points [(1, 2)]) (Expo (Multiplier 1 50 pitchRange)) (Points [(1, 1.5)]))
+            && fmap (smoothing . response) aimed == Right (tuned 70 45)
+    check "aim's smoothing off, the view's left on" $
+        fmap (\c -> (aimSmoothing (aiming c), smoothing (response c))) (parseConfig "aim smoothing = off\n")
+            == Right (NoSmoothing, smoothing (response defaultConfig))
+    check "bad aim smoothing" $ parseConfig "aim smoothing = some" == Left "line 1: aim smoothing is on or off"
+    check "aim steadiness out of range" $ parseConfig "aim steadiness = 101" == Left "line 1: aim steadiness is a number from 0 to 100"
+    check "aim change described" $
+        (describeChanges defaultConfig <$> aimed)
+            == Right "Settings reloaded: aim = Stick button 4 hold, steadiness = 70, aim yaw = 1:2, aim pitch = 1:1, precision 50, aim steadiness = 80"
+    check "a file from before aiming says the defaults" $
+        parseConfig (unlines (filter (not . isPrefixOf "aim") (lines (renderConfig defaultConfig)))) == Right defaultConfig
+    check "aim edited" $ editSettings [("aim", "F8 hold")] "aim = # none\n" == Right "aim = F8 hold # none\n"
 
     -- Drift is no longer a setting, but files that set it still load,
     -- with a note, and editing leaves the line alone.
@@ -183,8 +214,8 @@ tests = group "Config" $ do
     -- Editing the settings file from trackkat's window.
     let userFile = "# mine\npause=Pause # TrackIR style\nsmoothing = off\nsteadiness = 70\npause = F9\n"
     checkShowing "values as written" (show (settingValues userFile)) $
-        take 6 (settingValues userFile)
-            == [("recenter", "F12"), ("pause", "F9"), ("trim", ""), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
+        take 7 (settingValues userFile)
+            == [("recenter", "F12"), ("pause", "F9"), ("trim", ""), ("aim", ""), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
     check "names in file order" $ settingNames == map fst (settingValues "")
     check "unchanged values leave the file alone" $ editSettings (settingValues userFile) userFile == Right userFile
     checkShowing "edit keeps comments" (show (editSettings [("pause", "Ctrl+F9"), ("yaw", "1:5")] userFile)) $
@@ -212,8 +243,8 @@ tests = group "Config" $ do
     check "clip change described" $ (describeChanges defaultConfig <$> parseConfig "clip = 70 112 108\n") == Right "Settings reloaded: clip = 70 112 108"
     check "clip edited" $ editSettings [("clip", "70 112 108")] userFile == Right (userFile ++ "clip = 70 112 108\n")
     check "clip edit checked" $ isLeft (editSettings [("clip", "1 2 30")] userFile)
-    check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
-    check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
+    check "binding from codes" $ keyFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
+    check "binding from an unnamed key" $ keyFromCodes 0 0xBA == Nothing
     tree exampleFile
     tree properties
 
@@ -250,11 +281,11 @@ properties =
                 parseBindings (renderBindings bs) === Right bs
         , testProperty "modifiers written in any order are the same binding" $
             \(KeyBinding b) ->
-                let parts = splitOn '+' (renderBinding b)
-                 in forAnyOrder (init parts) $ \mods -> parseBinding (intercalate " + " (mods ++ mods ++ [last parts])) === Right b
+                let parts = splitOn '+' (renderKeyOrButton b)
+                 in forAnyOrder (init parts) $ \mods -> parseBinding (intercalate " + " (mods ++ mods ++ [last parts])) === Right (tap b)
         , testProperty "a key's binding is the one for its codes" $
             \(KeyBinding b) -> case b of
-                Key mods k -> bindingFromCodes (modifierMask mods) (virtualKey k) === Just b
+                Key mods k -> keyFromCodes (modifierMask mods) (virtualKey k) === Just b
                 JoystickButton{} -> property True
         , testProperty "a file edited to the values it has is left alone" $
             \(Edited file) ->
@@ -312,8 +343,12 @@ instance Arbitrary Edited where
     shrink (Edited file) = Edited <$> shrinkList (const []) file
 
 -- | A key or mouse button with modifiers.
-newtype KeyBinding = KeyBinding Binding
+newtype KeyBinding = KeyBinding KeyOrButton
     deriving (Show)
+
+-- | A key or button bound as a file binds one with no more said.
+tap :: KeyOrButton -> Binding
+tap i = Binding i Tap
 
 instance Arbitrary KeyBinding where
     arbitrary = KeyBinding <$> arbitrary `suchThat` isKey

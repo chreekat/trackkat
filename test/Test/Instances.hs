@@ -10,7 +10,7 @@ import Test.Tasty.QuickCheck
 import TrackKat.Belief (Belief, Chance, chance, inChance)
 import TrackKat.Branch (Clarity (..))
 import TrackKat.CommandLine (Start (..))
-import TrackKat.Config (Binding, HeadView (..))
+import TrackKat.Config (Binding, HeadView (..), KeyOrButton)
 import TrackKat.Frame (Blob, Stripe (..), frameHeight, frameWidth)
 import TrackKat.Idle (Use (..))
 import TrackKat.Linear (V3)
@@ -53,6 +53,10 @@ instance Arbitrary Blob where
 instance Arbitrary Sight where
     arbitrary = genSight 5000
     shrink = shrinkSight
+
+instance Arbitrary KeyOrButton where
+    arbitrary = genKeyOrButton
+    shrink = shrinkKeyOrButton
 
 instance Arbitrary Binding where
     arbitrary = genBinding
