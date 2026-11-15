@@ -15,6 +15,7 @@ import TrackKat.Idle (Use (..))
 import TrackKat.Linear (V3)
 import TrackKat.Match (Sight, Three)
 import TrackKat.Protocol (Command (..))
+import TrackKat.Response
 
 import Test.Gen
 
@@ -79,3 +80,44 @@ instance Arbitrary Start where
 instance Arbitrary Use where
     arbitrary = elements [Used, Unused]
     shrink = earlier [Used, Unused]
+
+-- | A multiplier with a precision, over one of the views' ranges; simpler
+-- with whole numbers, and no precision.
+instance Arbitrary Multiplier where
+    arbitrary = Multiplier <$> choose (0.1, 20) <*> choose (0, 100) <*> elements [yawRange, pitchRange, rollRange, leanRange]
+    shrink e =
+        [e{precision = 0} | precision e /= 0]
+            ++ [e{factor = whole} | let whole = fromIntegral (ceiling (factor e) :: Int), whole /= factor e]
+
+instance Arbitrary Curve where
+    arbitrary = oneof [Expo <$> arbitrary, Points <$> genPoints]
+    shrink (Points points) = map Points (shrinkPoints points)
+    shrink (Expo e) = Points [(1, factor e)] : map Expo (shrink e)
+
+-- | A response of any curves, smoothing and leaning; simpler with a curve
+-- a straight line, no smoothing, or leaning with the screen.
+instance Arbitrary Response where
+    arbitrary =
+        Response
+            <$> oneof [pure NoSmoothing, tuned <$> choose (0, 100) <*> choose (0, 100)]
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> elements [LeanWithView, LeanWithScreen]
+    shrink r =
+        filter
+            (/= r)
+            [ r{smoothing = NoSmoothing}
+            , r{yawCurve = straight}
+            , r{pitchCurve = straight}
+            , r{rollCurve = straight}
+            , r{xCurve = straight}
+            , r{yCurve = straight}
+            , r{zCurve = straight}
+            , r{lean = LeanWithScreen}
+            ]
+      where
+        straight = Points [(1, 1)]

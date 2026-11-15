@@ -10,6 +10,7 @@ module Test.Gen (
     shrinkWithin,
     shrinkFrom,
     earlier,
+    Fraction (..),
     forAnyOrder,
     forSomeOf,
     forOneOf,
@@ -60,6 +61,8 @@ module Test.Gen (
     genWritten,
     shrinkWritten,
     written,
+    genPoints,
+    shrinkPoints,
     genBinding,
     shrinkBinding,
     genConfig,
@@ -114,6 +117,14 @@ shrinkFrom least n = map (+ least) (shrink (n - least))
 -- | The values that come before one in a list of them all, as simpler.
 earlier :: (Eq a) => [a] -> a -> [a]
 earlier every x = takeWhile (/= x) every
+
+-- | A share of something, from none of it to all.
+newtype Fraction = Fraction Double
+    deriving (Show)
+
+instance Arbitrary Fraction where
+    arbitrary = Fraction <$> choose (0, 1)
+    shrink (Fraction share) = Fraction <$> shrinkWithin (0, 1) 0 share
 
 -- | That something holds of a list in any order; simplest in the order it
 -- came.
@@ -389,6 +400,16 @@ shrinkWritten x = [whole | let whole = fromIntegral (round x :: Int), whole /= x
 
 written :: Int -> Double
 written tenThousandths = fromMaybe (error "written") (parseNumber (renderNumber (fromIntegral tenThousandths / 10000)))
+
+-- | A curve's points: inputs going up from above zero, and any outputs.
+genPoints :: Gen [(Double, Double)]
+genPoints = do
+    steps <- scale (`div` 10) (listOf1 (choose (0.1, 50)))
+    mapM (\input -> (,) input <$> choose (-200, 200)) (drop 1 (scanl (+) 0 steps))
+
+-- | Curves of fewer points.
+shrinkPoints :: [(Double, Double)] -> [[(Double, Double)]]
+shrinkPoints points = [kept | kept <- shrinkList (const []) points, not (null kept)]
 
 -- | A key or mouse button with modifiers, as trackkat's window gives one
 -- from Windows' codes, or a joystick's button.

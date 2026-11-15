@@ -7,7 +7,9 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck hiding (once)
 
 import Test.Check
+import Test.Gen (Fraction (..), genPoints, shrinkFrom, shrinkPoints, shrinkWithin)
 import qualified Test.Gen as Gen
+import Test.Instances ()
 import Test.Simulation (deg)
 import TrackKat.GamePose
 import TrackKat.Pose (HeadPose (..))
@@ -120,23 +122,23 @@ properties =
     testGroup
         "properties"
         [ testProperty "a curve takes no movement to none, and is the same both sides of centre" $
-            forAllShrink genCurve shrinkCurve $ \c -> forAll (choose (0, 400)) $ \x ->
+            \c (Moved x) ->
                 applyCurve c 0 === 0 .&&. applyCurve c (negate x) === negate (applyCurve c x)
         , testProperty "a multiplier's curve never turns back" $
-            forAllShrink genExpo shrinkCurve $ \c -> forAll (choose (0, 400)) $ \x -> forAll (choose (0, 400)) $ \y ->
-                property (applyCurve c (min x y) <= applyCurve c (max x y))
+            \e (Moved x) (Moved y) ->
+                property (applyCurve (Expo e) (min x y) <= applyCurve (Expo e) (max x y))
         , testProperty "a multiplier's curve reaches the end of the view at its reach, gentler than the multiplier before it" $
-            forAllShrink genMultiplier shrinkMultiplier $ \e -> forAll (choose (0, 1)) $ \part ->
+            \e (Fraction part) ->
                 let x = part * reach e
                     f = applyCurve (Expo e)
                  in Gen.close (rounding 4 (viewRange e)) (f (reach e)) (viewRange e)
                         .&&. property (f x <= factor e * x + rounding 4 (viewRange e))
                         .&&. property (f x >= (1 - precision e / 100) * factor e * x - rounding 4 (viewRange e))
         , testProperty "a multiplier's curve with no precision is the multiplier" $
-            forAllShrink genMultiplier shrinkMultiplier $ \e -> forAll (choose (0, 400)) $ \x ->
+            \e (Moved x) ->
                 Gen.close (rounding 8 (viewRange e + factor e * x)) (applyCurve (Expo e{precision = 0}) x) (factor e * x)
         , testProperty "a curve of points goes through its points, and on past the last along its last line" $
-            forAllShrink genPoints shrinkPoints $ \points -> forAll (choose (0, 100)) $ \beyond ->
+            \(CurvePoints points) (Beyond beyond) ->
                 let f = applyCurve (Points points)
                     size = maximum (map (abs . snd) points) + maximum (map fst points)
                     (x0, y0) = last ((0, 0) : init points)
@@ -145,41 +147,40 @@ properties =
                  in conjoin [Gen.close (rounding 8 (size + abs slope * x1)) (f x) y | (x, y) <- points]
                         .&&. Gen.close (rounding 8 (size + abs slope * (x1 + beyond))) (f (x1 + beyond)) (y1 + beyond * slope)
         , testProperty "a curve of points that go up never turns back, but for rounding" $
-            forAllShrink (genPoints `suchThat` rising) (filter rising . shrinkPoints) $ \points -> forAll (choose (0, 400)) $ \x -> forAll (choose (0, 400)) $ \y ->
+            \(Rising points) (Moved x) (Moved y) ->
                 let f = applyCurve (Points points)
                  in property (f (min x y) <= f (max x y) + rounding 8 (abs (f (max x y))))
         , testProperty "steadier smoothing smooths a still head more, and more responsive gives way sooner" $
-            forAll (choose (0, 100)) $ \steadiness -> forAll (choose (0, 100)) $ \responsiveness -> forAll (choose (0, 100)) $ \other ->
+            \(Knob steadiness) (Knob responsiveness) (Knob other) ->
                 case (tuned steadiness responsiveness, tuned (max steadiness other) (max responsiveness other)) of
                     (Smoothing cutoff gives, Smoothing steadier sooner) -> property (cutoff > 0 && gives > 0 && steadier <= cutoff && sooner >= gives)
                     _ -> property False
         , testProperty "leaning with the view keeps how far the lean is, and changes nothing else" $
-            forAllShrink genHeadPose shrinkHeadPose $ \p ->
+            \(Seated p) ->
                 let leant = leanWithView p
                  in Gen.close (rounding 8 600) (sqrt (tx leant ^ (2 :: Int) + tz leant ^ (2 :: Int))) (sqrt (tx p ^ (2 :: Int) + tz p ^ (2 :: Int)))
                         .&&. leant{tx = tx p, tz = tz p} === p
                         .&&. leanWithView p{yaw = 0} === p{yaw = 0}
         , testProperty "a head held still is shaped to the same view in every frame, and with straight curves to itself" $
-            forAllShrink genResponse shrinkResponse $ \r -> forAllShrink genHeadPose shrinkHeadPose $ \p ->
+            \r (Seated p) ->
                 let views response = shaped response NoTrim (replicate 5 p)
                  in views r === concat (replicate 5 (take 1 (views r))) .&&. views straight === replicate 5 p
         , testProperty "a jump no head makes is left out for a frame" $
-            forAllShrink genHeadPose shrinkHeadPose $ \p -> forAll (choose (1.01, 10)) $ \beyond -> forAll (chooseInt (0, 5)) $ \axis ->
+            \(Seated p) (Jump beyond) (Axis axis) ->
                 shaped straight NoTrim [p, jumped axis beyond p, p] === [p, p, p]
         , testProperty "no trim is a trim of nothing, and the view trimmed to is where a head at centre looks" $
-            forAllShrink genHeadPose shrinkHeadPose $ \p ->
+            \(Seated p) ->
                 shaped straight (Trim centre) [p] === shaped straight NoTrim [p]
                     .&&. trimTo p === Trim p
                     .&&. shaped straight (trimTo p) [centre] === [p]
         , testProperty "a trimmed view looks within half a turn either way, and no further than straight up or down" $
-            forAllShrink genResponse shrinkResponse $ \r -> forAllShrink genHeadPose shrinkHeadPose $ \p -> forAllShrink genHeadPose shrinkHeadPose $ \view ->
+            \r (Seated p) (Seated view) ->
                 conjoin
                     [ property (yaw out >= -180 && yaw out < 180 && roll out >= -180 && roll out < 180 && pitch out >= -90 && pitch out <= 90)
                     | out <- shaped r (trimTo view{yaw = 3 * yaw view, roll = 3 * roll view, pitch = 3 * pitch view}) [p]
                     ]
         ]
   where
-    rising points = and (zipWith (<=) (0 : map snd points) (map snd points))
     straight = Response NoSmoothing one one one one one one LeanWithScreen
     one = Points [(1, 1)]
     centre = HeadPose 0 0 0 0 0 0
@@ -209,73 +210,77 @@ jumped axis beyond p = case axis of
     turn = beyond * inDegrees (headStepTurn world)
     move = beyond * inMillimetres (headStepMove world)
 
--- | A multiplier with a precision, over one of the views' ranges.
-genMultiplier :: Gen Multiplier
-genMultiplier = Multiplier <$> choose (0.1, 20) <*> choose (0, 100) <*> elements [yawRange, pitchRange, rollRange, leanRange]
-
--- | Multipliers with whole numbers, and no precision.
-shrinkMultiplier :: Multiplier -> [Multiplier]
-shrinkMultiplier e =
-    [e{precision = 0} | precision e /= 0]
-        ++ [e{factor = whole} | let whole = fromIntegral (ceiling (factor e) :: Int), whole /= factor e]
-
-genExpo :: Gen Curve
-genExpo = Expo <$> genMultiplier
-
--- | A curve's points: inputs going up from above zero, and any outputs.
-genPoints :: Gen [(Double, Double)]
-genPoints = do
-    steps <- scale (`div` 10) (listOf1 (choose (0.1, 50)))
-    mapM (\input -> (,) input <$> choose (-200, 200)) (drop 1 (scanl (+) 0 steps))
-
--- | Curves of fewer points.
-shrinkPoints :: [(Double, Double)] -> [[(Double, Double)]]
-shrinkPoints points = [kept | kept <- shrinkList (const []) points, not (null kept)]
-
-genCurve :: Gen Curve
-genCurve = oneof [genExpo, Points <$> genPoints]
-
-shrinkCurve :: Curve -> [Curve]
-shrinkCurve (Points points) = map Points (shrinkPoints points)
-shrinkCurve (Expo e) = Points [(1, factor e)] : map Expo (shrinkMultiplier e)
-
--- | A response of any curves, smoothing and leaning.
-genResponse :: Gen Response
-genResponse =
-    Response
-        <$> oneof [pure NoSmoothing, tuned <$> choose (0, 100) <*> choose (0, 100)]
-        <*> genCurve
-        <*> genCurve
-        <*> genCurve
-        <*> genCurve
-        <*> genCurve
-        <*> genCurve
-        <*> elements [LeanWithView, LeanWithScreen]
-
 -- | A head's pose from its centre: turned short of half a turn, and of
 -- straight up or down, and moved as far as a seated head leans.
-genHeadPose :: Gen HeadPose
-genHeadPose = HeadPose <$> choose (-170, 170) <*> choose (-85, 85) <*> choose (-170, 170) <*> choose (-300, 300) <*> choose (-300, 300) <*> choose (-300, 300)
+-- Simpler with an axis at centre.
+newtype Seated = Seated HeadPose
+    deriving (Show)
 
--- | Poses with an axis at centre.
-shrinkHeadPose :: HeadPose -> [HeadPose]
-shrinkHeadPose p =
-    [p' | p' <- [p{yaw = 0}, p{pitch = 0}, p{roll = 0}, p{tx = 0}, p{ty = 0}, p{tz = 0}], p' /= p]
+instance Arbitrary Seated where
+    arbitrary = Seated <$> (HeadPose <$> choose (-170, 170) <*> choose (-85, 85) <*> choose (-170, 170) <*> choose (-300, 300) <*> choose (-300, 300) <*> choose (-300, 300))
 
--- | Responses with a curve a straight line, no smoothing, or leaning with
--- the screen.
-shrinkResponse :: Response -> [Response]
-shrinkResponse r =
-    filter
-        (/= r)
-        [ r{smoothing = NoSmoothing}
-        , r{yawCurve = straight}
-        , r{pitchCurve = straight}
-        , r{rollCurve = straight}
-        , r{xCurve = straight}
-        , r{yCurve = straight}
-        , r{zCurve = straight}
-        , r{lean = LeanWithScreen}
-        ]
-  where
-    straight = Points [(1, 1)]
+    shrink (Seated p) =
+        [Seated p' | p' <- [p{yaw = 0}, p{pitch = 0}, p{roll = 0}, p{tx = 0}, p{ty = 0}, p{tz = 0}], p' /= p]
+
+-- | A curve's points: inputs going up from above zero, and any outputs;
+-- simpler of fewer.
+newtype CurvePoints = CurvePoints [(Double, Double)]
+    deriving (Show)
+
+instance Arbitrary CurvePoints where
+    arbitrary = CurvePoints <$> genPoints
+    shrink (CurvePoints points) = CurvePoints <$> shrinkPoints points
+
+-- | A curve's points as 'CurvePoints' has them, the outputs going up from
+-- nothing.
+newtype Rising = Rising [(Double, Double)]
+    deriving (Show)
+
+instance Arbitrary Rising where
+    arbitrary = Rising <$> genPoints `suchThat` rising
+    shrink (Rising points) = Rising <$> filter rising (shrinkPoints points)
+
+rising :: [(Double, Double)] -> Bool
+rising points = and (zipWith (<=) (0 : map snd points) (map snd points))
+
+-- | How far a head has moved from centre along an axis, in its degrees or
+-- mm, up to 400.
+newtype Moved = Moved Double
+    deriving (Show)
+
+instance Arbitrary Moved where
+    arbitrary = Moved <$> choose (0, 400)
+    shrink (Moved x) = Moved <$> shrinkWithin (0, 400) 0 x
+
+-- | How far beyond a curve's last point, up to 100.
+newtype Beyond = Beyond Double
+    deriving (Show)
+
+instance Arbitrary Beyond where
+    arbitrary = Beyond <$> choose (0, 100)
+    shrink (Beyond x) = Beyond <$> shrinkWithin (0, 100) 0 x
+
+-- | Where a knob of the smoothing's is set, from 0 to 100.
+newtype Knob = Knob Double
+    deriving (Show)
+
+instance Arbitrary Knob where
+    arbitrary = Knob <$> choose (0, 100)
+    shrink (Knob x) = Knob <$> shrinkWithin (0, 100) 0 x
+
+-- | How many times what a head can move in a frame a jump is, from just
+-- over it to ten times.
+newtype Jump = Jump Double
+    deriving (Show)
+
+instance Arbitrary Jump where
+    arbitrary = Jump <$> choose (1.01, 10)
+    shrink (Jump times) = Jump <$> shrinkWithin (1.01, 10) 2 times
+
+-- | One of a pose's six axes, by number.
+newtype Axis = Axis Int
+    deriving (Show)
+
+instance Arbitrary Axis where
+    arbitrary = Axis <$> chooseInt (0, 5)
+    shrink (Axis axis) = Axis <$> shrinkFrom 0 axis
