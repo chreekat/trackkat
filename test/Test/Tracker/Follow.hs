@@ -131,7 +131,7 @@ newtype SeenNear = SeenNear Placing
 
 instance Arbitrary SeenNear where
     arbitrary = SeenNear <$> genSeen 30 (400, 1500) headset
-    shrink (SeenNear placing) = SeenNear <$> shrinkSeen headset placing
+    shrink (SeenNear placing) = SeenNear <$> shrinkSeen (400, 1500) headset placing
 
 -- | One blob, of up to 2000 pixels, anywhere in the picture.
 newtype Lone = Lone Blob

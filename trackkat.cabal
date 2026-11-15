@@ -171,6 +171,7 @@ test-suite tests
     Test.Session
     Test.ServedGame
     Test.Shape
+    Test.Shrink
     Test.Simulation
     Test.Stats
     Test.Term

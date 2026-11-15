@@ -187,7 +187,7 @@ newtype InSight = InSight Placing
 
 instance Arbitrary InSight where
     arbitrary = InSight <$> genSeen 150 (100, 3000) headset
-    shrink (InSight placing) = InSight <$> shrinkSeen headset placing
+    shrink (InSight placing) = InSight <$> shrinkSeen (100, 3000) headset placing
 
 -- | A pose as 'InSight' has one, turned any way.
 newtype AnyWayRound = AnyWayRound Placing
@@ -195,7 +195,7 @@ newtype AnyWayRound = AnyWayRound Placing
 
 instance Arbitrary AnyWayRound where
     arbitrary = AnyWayRound <$> genSeen 180 (100, 3000) headset
-    shrink (AnyWayRound placing) = AnyWayRound <$> shrinkSeen headset placing
+    shrink (AnyWayRound placing) = AnyWayRound <$> shrinkSeen (100, 3000) headset placing
 
 -- | A pose as 'SeenWhole' has one, turned up to 150 degrees.
 newtype SeenTurned = SeenTurned Placing
@@ -203,7 +203,7 @@ newtype SeenTurned = SeenTurned Placing
 
 instance Arbitrary SeenTurned where
     arbitrary = SeenTurned <$> genSeen 150 trackedRange headset
-    shrink (SeenTurned placing) = SeenTurned <$> shrinkSeen headset placing
+    shrink (SeenTurned placing) = SeenTurned <$> shrinkSeen trackedRange headset placing
 
 -- | Where the head was recentered, if anywhere; simplest nowhere.
 newtype CentredAt = CentredAt (Maybe Placing)
@@ -212,7 +212,7 @@ newtype CentredAt = CentredAt (Maybe Placing)
 instance Arbitrary CentredAt where
     arbitrary = CentredAt <$> oneof [pure Nothing, Just <$> genSeen 60 trackedRange headset]
     shrink (CentredAt Nothing) = []
-    shrink (CentredAt (Just placing)) = CentredAt Nothing : map (CentredAt . Just) (shrinkSeen headset placing)
+    shrink (CentredAt (Just placing)) = CentredAt Nothing : map (CentredAt . Just) (shrinkSeen trackedRange headset placing)
 
 -- | How far a pose shows the reflectors from where they were seen, in pixels, up to four.
 newtype Fit = Fit Double

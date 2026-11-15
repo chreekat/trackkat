@@ -247,7 +247,7 @@ newtype SquareOn = SquareOn Placing
 
 instance Arbitrary SquareOn where
     arbitrary = SquareOn <$> genSeen 0 trackedRange trackClip
-    shrink (SquareOn placing) = SquareOn <$> shrinkSeen trackClip placing
+    shrink (SquareOn placing) = SquareOn <$> shrinkSeen trackedRange trackClip placing
 
 -- | How many times as far from the camera, from half to twice.
 newtype Nearer = Nearer Double
@@ -284,7 +284,7 @@ data ClipSeen = ClipSeen Model Placing
 
 instance Arbitrary ClipSeen where
     arbitrary = elements clips >>= \m -> ClipSeen m <$> genSeen 180 trackedRange m
-    shrink (ClipSeen m placing) = [ClipSeen m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipSeen m <$> shrinkSeen m placing)
+    shrink (ClipSeen m placing) = [ClipSeen m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipSeen m <$> shrinkSeen trackedRange m placing)
 
 -- | One of 'clips' as 'ClipSeen' has it, turned up to 25 degrees from
 -- squarely facing the camera.
@@ -293,7 +293,7 @@ data ClipFacing = ClipFacing Model Placing
 
 instance Arbitrary ClipFacing where
     arbitrary = elements clips >>= \m -> ClipFacing m <$> genSeen 25 trackedRange m
-    shrink (ClipFacing m placing) = [ClipFacing m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipFacing m <$> shrinkSeen m placing)
+    shrink (ClipFacing m placing) = [ClipFacing m' placing | m' <- earlier clips m, inView m' placing] ++ (ClipFacing m <$> shrinkSeen trackedRange m placing)
 
 -- | Degrees of yaw, pitch and roll, short of where they stop telling a
 -- turn apart: pitch straight up or down, and yaw or roll half a turn.
