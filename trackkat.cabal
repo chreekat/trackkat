@@ -138,6 +138,7 @@ test-suite tests
     Test.Match
     Test.Memory
     Test.Mount
+    Test.Number
     Test.Pose
     Test.Protocol
     Test.Recording

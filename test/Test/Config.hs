@@ -6,12 +6,15 @@ module Test.Config (tests) where
 import Control.Exception (IOException, try)
 import Control.Monad (forM_)
 import Data.Either (isLeft)
+import Data.List (intercalate)
 import System.Environment (lookupEnv)
 import System.IO (readFile')
-import Test.Tasty (TestTree)
+import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase)
+import Test.Tasty.QuickCheck
 
 import Test.Check
+import Test.Gen
 import TrackKat.Config
 import TrackKat.Response
 
@@ -19,7 +22,7 @@ tests :: TestTree
 tests = group "Config" $ do
     let deadzone = Points [(0.5, 0), (1.5, 1)]
         lookBehind = Points [(10, 10), (45, 120)]
-        close a b = abs (a - b) < 1e-9
+        closeTo a b = abs (a - b) < 1e-9
     -- Settings and key bindings.
     check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
     check "bindings" $
@@ -69,7 +72,7 @@ tests = group "Config" $ do
         fmap response (parseConfig "yaw = 10:10 45:120\nsmoothing = off\n")
             == Right ((response defaultConfig){smoothing = NoSmoothing, yawCurve = lookBehind})
     let smoothingOf = fmap (smoothing . response) . parseConfig
-        closeSmoothing (Smoothing a b) (Smoothing c d) = close a c && close b d
+        closeSmoothing (Smoothing a b) (Smoothing c d) = closeTo a c && closeTo b d
         closeSmoothing a b = a == b
     check "default config round-trips" $ parseConfig (renderConfig defaultConfig) == Right defaultConfig
     check "smoothing endpoints" $
@@ -211,6 +214,7 @@ tests = group "Config" $ do
     check "binding from codes" $ bindingFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
     check "binding from an unnamed key" $ bindingFromCodes 0 0xBA == Nothing
     tree exampleFile
+    tree properties
 
 -- | The example settings file in the repository is the one trackkat writes
 -- when there is none. With TRACKKAT_ACCEPT set, it is written afresh.
@@ -220,7 +224,90 @@ exampleFile =
         lookupEnv "TRACKKAT_ACCEPT" >>= \case
             Just _ -> writeFile example (renderConfig defaultConfig)
             Nothing -> do
-                written <- try (readFile' example)
-                assertBool "" (either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) written)
+                inRepository <- try (readFile' example)
+                assertBool "" (either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) inRepository)
   where
     example = "trackkat.conf.example"
+
+-- | Settings here are those a settings file can say (see 'genConfig').
+properties :: TestTree
+properties =
+    testGroup
+        "properties"
+        [ testProperty "settings are read back as written" $
+            forAllShrink genConfig shrinkConfig $
+                \c -> parseConfig (renderConfig c) === Right c
+        , testProperty "written settings set each setting once, in the order of their names, none of them retired" $
+            forAllShrink genConfig shrinkConfig $ \c ->
+                map fst (settingValues (renderConfig c)) === settingNames .&&. retiredSettings (renderConfig c) === []
+        , testProperty "nothing is said to have changed just when nothing but the head view has" $
+            forAllShrink genConfig shrinkConfig $ \a -> forAllShrink genConfig shrinkConfig $ \b ->
+                let same = a{headView = headView b} == b
+                 in describeChanges a a === "Settings reloaded." .&&. (describeChanges a b == "Settings reloaded.") === same
+        , testProperty "bindings are read back as written" $
+            forAllShrink (listOf genBinding) (shrinkList shrinkBinding) $
+                \bs -> parseBindings (renderBindings bs) === Right bs
+        , testProperty "modifiers written in any order are the same binding" $
+            forAllShrink (genBinding `suchThat` isKey) shrinkBinding $ \b ->
+                let parts = splitOn '+' (renderBinding b)
+                 in forAll (shuffle (init parts)) $ \mods -> parseBinding (intercalate " + " (mods ++ mods ++ [last parts])) === Right b
+        , testProperty "a key's binding is the one for its codes" $
+            forAllShrink (genBinding `suchThat` isKey) shrinkBinding $ \b -> case b of
+                Key mods k -> bindingFromCodes (modifierMask mods) (virtualKey k) === Just b
+                JoystickButton{} -> property True
+        , testProperty "a file edited to the values it has is left alone" $
+            forAllShrink genFile shrinkFile $ \file ->
+                let text = fileText file in editSettings (settingValues text) text === Right text
+        , testProperty "a file edited to other settings says those settings, its other lines and comments kept" $
+            forAllShrink genFile shrinkFile $ \file -> forAllShrink genConfig shrinkConfig $ \c ->
+                let text = fileText file
+                 in case editSettings (settingValues (renderConfig c)) text of
+                        Left err -> counterexample err False
+                        Right edited ->
+                            counterexample edited $
+                                conjoin
+                                    [ parseConfig edited === Right c
+                                    , take (length (lines text)) (map comment (lines edited)) === map comment (lines text)
+                                    , take (length (lines text)) (map named (lines edited)) === map named (lines text)
+                                    , property (all (null . comment) (drop (length (lines text)) (lines edited)))
+                                    ]
+        , testProperty "a file edited twice to the same settings is edited once" $
+            forAllShrink genFile shrinkFile $ \file -> forAllShrink genConfig shrinkConfig $ \c ->
+                let values = settingValues (renderConfig c)
+                    once' = editSettings values (fileText file)
+                 in (once' >>= editSettings values) === once'
+        ]
+  where
+    isKey Key{} = True
+    isKey JoystickButton{} = False
+    comment = dropWhile (/= '#')
+    -- The name a line sets, if it sets one.
+    named line = case break (== '=') (takeWhile (/= '#') line) of
+        (name, '=' : _) -> Just (unwords (words name))
+        _ -> Nothing
+    splitOn c str = case break (== c) str of
+        (a, []) -> [a]
+        (a, _ : rest) -> a : splitOn c rest
+
+-- | A line of a settings file a user has edited: a comment or nothing, or
+-- a setting, as a settings file writes it, perhaps with a comment after.
+data Line = Remark String | Setting String String String
+    deriving (Eq, Show)
+
+fileText :: [Line] -> String
+fileText = unlines . map line
+  where
+    line (Remark text) = text
+    line (Setting name value remark) = name ++ " = " ++ value ++ remark
+
+-- | Some of the settings of some settings, in any order and some of them
+-- more than once, among comments.
+genFile :: Gen [Line]
+genFile = do
+    c <- genConfig
+    let settings = [Setting name value | (name, value) <- settingValues (renderConfig c)]
+    listOf (oneof [Remark <$> elements ["", "# mine", "#", "  # as Zoë likes it"], elements settings <*> elements ["", " # mine", "   #"]])
+
+-- | Files of fewer lines.
+shrinkFile :: [Line] -> [[Line]]
+shrinkFile = shrinkList (const [])
