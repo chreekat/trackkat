@@ -33,7 +33,7 @@ tests =
                 (Left _, Left _, _) -> property True
                 (chosen, _, _) -> counterexample (show chosen) False
         , testProperty "following that isn't weak is taken, whatever else there is, and nothing else is worked out" $
-            forAllShrink genHypotheses shrinkHypotheses $ \h -> forAll (choose (nats weakScore, 0)) $ \strong ->
+            forAllShrink genHypotheses shrinkHypotheses $ \h -> forAll (oneof [pure (nats weakScore), choose (nats weakScore, 0)]) $ \strong ->
                 decide h{followed = Right (Score strong, ByFollowing), byLayout = unwanted, stillWhereItWas = unwanted}
                     === Right (Chosen Followed Nothing, ByFollowing)
         , testProperty "what following made out isn't lost" $

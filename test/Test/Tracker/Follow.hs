@@ -68,6 +68,13 @@ tests =
                                         , property (all (not . isImpossible . findingScore) judged)
                                         ]
                             Left (Why looking _) -> looking === Following
+        , testProperty "the clip isn't followed to where a head can't be, though it is just where the last pose has it" $
+            forAllShrink (genClipApart 30 (400, 1500) headset) (shrinkClipApart headset) $ \placing ->
+                let centre = turnedAbout pivot (rodrigues (V3 0 (150 * pi / 180) 0)) (placed placing)
+                    known = (knowing (placed placing)){knownReach = Reach pivot (Just centre)}
+                 in case follow known (1 + 1 / 120) (lastAt (placed placing)) (sortBlobs noMask (clipBlobs headset placing)) of
+                        Left why -> whyRejectedBy why === ["turned"]
+                        Right _ -> counterexample "followed" False
         , testProperty "with no blobs in view, nothing matches" $
             forAllShrink (genSeen 30 (400, 1500) headset) (shrinkSeen headset) $ \placing ->
                 case follow (knowing (placed placing)) (1 + 1 / 120) (lastAt (placed placing)) (sortBlobs noMask []) of

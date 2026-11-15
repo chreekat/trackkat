@@ -27,6 +27,10 @@ tests =
                         , property (all (\b -> blobPoints b >= minBlobPixels && 25 * blobPoints b >= 3 * biggest) big)
                         , property (all (\b -> b `elem` big || blobPoints b < minBlobPixels || 25 * blobPoints b < 3 * biggest) blobs)
                         ]
+        , testProperty "a blob just three twenty-fifths of the biggest is big, if of a fair size, and one a pixel less isn't" $
+            forAll (chooseInt (1, 200)) $ \k ->
+                let blob points = Blob 0 0 points (100 * points) 1 1 0
+                 in map blobPoints (bigAmong [blob (25 * k), blob (3 * k), blob (3 * k - 1)]) === 25 * k : [3 * k | 3 * k >= minBlobPixels]
         , testProperty "the big among the big blobs are all of them" $
             forAllShrink genBlobs shrinkBlobs $
                 \blobs -> bigAmong (bigAmong blobs) === bigAmong blobs
