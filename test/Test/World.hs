@@ -5,6 +5,8 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase)
 import Test.Tasty.QuickCheck
 
+import Test.Gen (close)
+import Test.Instances ()
 import TrackKat.World
 
 -- | A quantity is its number and no more: nothing is computed with one that
@@ -28,6 +30,14 @@ tests =
             inMillimetres (times k (millimetres x)) === k * x
         , testProperty "a rate comes to its number times the seconds" $ \rate t ->
             inDegrees (during (perSecond rate) (seconds t)) === rate * t
+        , testProperty "a moment is the seconds its clock told, and moments compare as they do" $ \x y ->
+            inClockSeconds (clockAt x) === x .&&. compare (clockAt x) (clockAt y) === compare x y
+        , testProperty "no time passes from a moment to itself, and one moment is no sooner than another just when no less than no time passes to it" $ \a b ->
+            a .-. a === seconds 0 .&&. (a <= b) === (b .-. a >= seconds 0)
+        , testProperty "a moment so long after another is that long after it, and the moment as long after one as another is, is the other" $ \a b d ->
+            close 1e-9 (inSeconds ((a .+^ d) .-. a)) (inSeconds d) .&&. close 1e-9 (inSeconds ((a .+^ (b .-. a)) .-. b)) 0
+        , testProperty "the time from one moment to another is the time to a moment between and on from it" $ \a b c ->
+            close 1e-9 (inSeconds (c .-. a)) (inSeconds (c .-. b) + inSeconds (b .-. a))
         , testCase "the world's facts agree with each other" $ do
             let w = world
                 perFrame speed = inPerSecond speed / inPerSecond (frameRate w)

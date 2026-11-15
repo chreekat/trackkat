@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | How to make up any value of trackkat's types of which every value
@@ -19,6 +20,7 @@ import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
 import TrackKat.Tracker.Outcome (Way (..))
 import TrackKat.Updater (Looking (..))
+import TrackKat.World (Instant, Seconds, clockAt, inClockSeconds, inSeconds, seconds)
 
 import Test.Gen
 
@@ -26,6 +28,16 @@ import Test.Gen
 instance Arbitrary V3 where
     arbitrary = genV3 1000
     shrink = shrinkV3
+
+-- | A moment in a clock's first day; simplest as the clock begins.
+instance Arbitrary Instant where
+    arbitrary = clockAt <$> choose (0, 86400)
+    shrink at = clockAt <$> shrinkWithin (0, 86400) 0 (inClockSeconds at)
+
+-- | A length of time of up to a day; simplest none.
+instance Arbitrary Seconds where
+    arbitrary = seconds <$> choose (0, 86400)
+    shrink d = seconds <$> shrinkWithin (0, 86400) 0 (inSeconds d)
 
 instance (Arbitrary a) => Arbitrary (Three a) where
     arbitrary = genThree arbitrary

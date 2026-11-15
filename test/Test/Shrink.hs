@@ -23,6 +23,7 @@ import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
 import TrackKat.Tracker.Outcome (Way (..))
 import TrackKat.Updater (Looking (..))
+import TrackKat.World (clockAt, seconds)
 
 -- | That a domain's values are made simpler as Note [Simplest first] in
 -- "Test.Gen" says, given its simplest value and what tells its values
@@ -73,6 +74,8 @@ tests =
         , shrinksWell "the reflectors' sights" (ReflectorSights (pure (Sight (0, 0) 6 Whole))) (\(ReflectorSights sights) -> all (sightOf 500) sights)
         , shrinksWell "settings a file can say" (Sayable defaultConfig{recenterBindings = [], pauseBindings = []}) (\(Sayable c) -> parseConfig (renderConfig c) == Right c)
         , shrinksWell "a vector" (V3 0 0 0) (upTo 1000)
+        , shrinksWell "a moment" (clockAt 0) (\at -> at >= clockAt 0 && at <= clockAt 86400)
+        , shrinksWell "a length of time" (seconds 0) (\d -> d >= seconds 0 && d <= seconds 86400)
         , shrinksWell "three of something" (pure (V3 0 0 0)) (all (upTo 1000) . toList :: Three V3 -> Bool)
         , shrinksWell "a blob" (roundBlob (0, 0) 6) (blobOf 5000)
         , shrinksWell "a sight" (Sight (0, 0) 6 Whole) (sightOf 5000)

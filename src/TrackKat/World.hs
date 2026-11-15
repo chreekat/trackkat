@@ -30,6 +30,13 @@ module TrackKat.World (
     times,
     during,
 
+    -- * Moments
+    Instant,
+    clockAt,
+    inClockSeconds,
+    (.-.),
+    (.+^),
+
     -- * The world
     World (..),
     world,
@@ -150,6 +157,56 @@ times k (Quantity x) = Quantity (k * x)
 -- | How much a rate comes to over a time.
 during :: Quantity (Per u Sec) -> Seconds -> Quantity u
 during (Quantity rate) (Quantity t) = Quantity (rate * t)
+
+-- Note [Moments and lengths of time]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- A moment ('Instant') and a length of time ('Seconds') are both so many
+-- seconds, and are different things: when a frame was seen, and how long
+-- since the last. What makes sense of them is what the types allow. The
+-- time from one moment to another is a length ('.-.'); a moment and a
+-- length make another moment ('.+^'); lengths compare, and can be told
+-- as numbers. Two moments are never added, and a moment is never taken
+-- for how long something took, which as bare numbers they could be.
+--
+-- A moment is told as a number only at an edge: read off a clock, written
+-- to a log.
+
+-- | A moment, as a clock that never goes back tells it: so many seconds
+-- since the clock began. See Note [Moments and lengths of time].
+--
+-- For moments @a@, @b@, @c@ and a length @d@, to within rounding:
+--
+-- > a .-. a == seconds 0
+-- > (a .+^ d) .-. a == d
+-- > a .+^ (b .-. a) == b
+-- > inSeconds (c .-. a) == inSeconds (c .-. b) + inSeconds (b .-. a)
+--
+-- and exactly, @a <= b@ just when @b .-. a >= seconds 0@.
+newtype Instant = Instant Double
+    deriving (Eq, Ord)
+
+instance Show Instant where
+    showsPrec d (Instant t) = showsPrec d t
+
+-- | The moment a clock tells as the given seconds.
+clockAt :: Double -> Instant
+clockAt = Instant
+
+-- | A moment as the seconds its clock tells, for saying it.
+inClockSeconds :: Instant -> Double
+inClockSeconds (Instant t) = t
+
+-- | How long after the second moment the first is.
+(.-.) :: Instant -> Instant -> Seconds
+Instant later .-. Instant earlier = Quantity (later - earlier)
+
+infixl 6 .-.
+
+-- | The moment so long after another.
+(.+^) :: Instant -> Seconds -> Instant
+Instant t .+^ Quantity d = Instant (t + d)
+
+infixl 6 .+^
 
 -- | The facts. Spreads are standard deviations: most of what happens is
 -- within one, and little beyond two.
