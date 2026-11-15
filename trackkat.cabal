@@ -38,6 +38,8 @@ library
     TrackKat.Stats
     TrackKat.Term
     TrackKat.Tracker
+    TrackKat.Tracker.Absence
+    TrackKat.Tracker.Outcome
     TrackKat.Visibility
     TrackKat.USB
     TrackKat.World
