@@ -102,13 +102,13 @@ instance Arbitrary LogOdds where
     arbitrary = LogOdds <$> choose (-30, 30)
     shrink (LogOdds x) = LogOdds <$> shrinkWithin (-30, 30) 0 x
 
--- | Nothing against, down to sixty nats against, and now and then
--- impossible; simplest nothing against.
+-- | What can be, as 'Likely' has it, and now and then impossible;
+-- simplest nothing against.
 instance Arbitrary Score where
-    arbitrary = frequency [(9, Score <$> choose (-60, 0)), (1, pure impossible)]
-    shrink s
-        | s == impossible = [possible]
-        | otherwise = Score <$> shrinkWithin (-60, 0) 0 (nats s)
+    arbitrary = frequency [(9, (\(Likely scored) -> scored) <$> arbitrary), (1, pure impossible)]
+    shrink scored
+        | scored == impossible = [possible]
+        | otherwise = [simpler | Likely simpler <- shrink (Likely scored)]
 
 instance Arbitrary Start where
     arbitrary = elements [ByHand, ByGame, AtLogin]

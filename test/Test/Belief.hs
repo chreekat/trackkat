@@ -4,10 +4,10 @@ module Test.Belief (tests) where
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (close, genWeights, shares, shrinkBelief, shrinkTo, shrinkWithin)
+import Test.Gen (Likely (..), close, genWeights, shares, shrinkBelief, shrinkTo, shrinkWithin)
 import Test.Instances ()
 import TrackKat.Belief
-import TrackKat.Term (LogOdds (..), Score, isImpossible)
+import TrackKat.Term (LogOdds (..))
 
 -- | A belief is four probabilities that add up to one, and everything that
 -- happens to one keeps them so; sums are right to 1e-12.
@@ -145,11 +145,3 @@ newtype Slight = Slight LogOdds
 instance Arbitrary Slight where
     arbitrary = Slight . LogOdds <$> choose (-1.5, 1.5)
     shrink (Slight x) = Slight . LogOdds <$> shrinkWithin (-1.5, 1.5) 0 (oddsNats x)
-
--- | What something scores that can be: any score but impossible.
-newtype Likely = Likely Score
-    deriving (Show)
-
-instance Arbitrary Likely where
-    arbitrary = Likely <$> arbitrary `suchThat` (not . isImpossible)
-    shrink (Likely scored) = Likely <$> filter (not . isImpossible) (shrink scored)

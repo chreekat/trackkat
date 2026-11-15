@@ -88,6 +88,7 @@ tests =
             tt > 0 && all (>= 0) [tm, mt, mm] && abs (tt + tm + mt + mm - 1) < 1e-9
         , shrinksWell "a chance" (chance 0) (\p -> p >= chance 0 && p <= chance 1)
         , shrinksWell "log odds" (LogOdds 0) (\(LogOdds x) -> abs x <= 30)
+        , shrinksWell "a score of what can be" (Likely possible) (\(Likely scored) -> scored <= possible && scored >= Score (-60))
         , shrinksWell "a score" possible (\scored -> scored == impossible || (scored <= possible && scored >= Score (-60)))
         , shrinksWell "how trackkat was started" ByHand (const True)
         , shrinksWell "whether trackkat is used" Used (const True)
