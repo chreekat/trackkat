@@ -101,7 +101,7 @@ import TrackKat.Pose
 import TrackKat.Response
 import TrackKat.Synth (allLit, pointDiscs, renderDiscs)
 import TrackKat.Tracker.Blobs (findBlobs)
-import TrackKat.World (World (..), inMillimetres, world)
+import TrackKat.World (Seconds, World (..), inMillimetres, inSeconds, seconds, world)
 
 -- | That two numbers are within a tolerance of each other.
 close :: Double -> Double -> Double -> Property
@@ -176,14 +176,14 @@ instance Arbitrary Fraction where
     arbitrary = Fraction <$> choose (0, 1)
     shrink (Fraction share) = Fraction <$> shrinkWithin (0, 1) 0 share
 
--- | Seconds from one frame to the next that follows it: from a frame of
+-- | The time from one frame to the next that follows it: from a frame of
 -- the camera's fastest to half a second.
-newtype FrameGap = FrameGap Double
+newtype FrameGap = FrameGap Seconds
     deriving (Eq, Show)
 
 instance Arbitrary FrameGap where
-    arbitrary = FrameGap <$> choose (1 / 120, 0.5)
-    shrink (FrameGap dt) = FrameGap <$> shrinkWithin (1 / 120, 0.5) (1 / 120) dt
+    arbitrary = FrameGap . seconds <$> choose (1 / 120, 0.5)
+    shrink (FrameGap dt) = FrameGap . seconds <$> shrinkWithin (1 / 120, 0.5) (1 / 120) (inSeconds dt)
 
 -- | That something holds of a list in any order; simplest in the order it
 -- came.
