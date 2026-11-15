@@ -12,6 +12,7 @@ import qualified Test.Frame
 import qualified Test.Icons
 import qualified Test.Level
 import qualified Test.Lights
+import qualified Test.Linear
 import qualified Test.Match
 import qualified Test.Memory
 import qualified Test.Mount
@@ -26,6 +27,7 @@ import qualified Test.Stats
 import qualified Test.Term
 import qualified Test.Tracker
 import qualified Test.Visibility
+import qualified Test.World
 
 -- | The tests in two groups: "unit", quick ones of one piece at a time, and
 -- "simulation", of heads and clips in front of the camera, tracked for
@@ -43,6 +45,8 @@ main = do
                 "unit"
                 [ Test.Protocol.tests
                 , Test.Frame.tests
+                , Test.World.tests
+                , Test.Linear.tests
                 , Test.Pose.tests
                 , Test.Term.tests
                 , Test.Match.tests
