@@ -8,6 +8,15 @@ import Test.Tasty (TestTree, testGroup)
 
 import Test.Check
 import Test.Simulation
+import qualified Test.Tracker.Blobs
+import qualified Test.Tracker.Choose
+import qualified Test.Tracker.Follow
+import qualified Test.Tracker.Judge
+import qualified Test.Tracker.Kept
+import qualified Test.Tracker.Layout
+import qualified Test.Tracker.Sizes
+import qualified Test.Tracker.Step
+import qualified Test.Tracker.Trail
 import TrackKat.Calibration
 import TrackKat.Linear
 import TrackKat.Pose
@@ -59,6 +68,16 @@ tests = group "Tracker" $ do
                 && abs (c - 23) < 0.02
                 && third == second
         _ -> False
+
+    tree Test.Tracker.Blobs.tests
+    tree Test.Tracker.Sizes.tests
+    tree Test.Tracker.Trail.tests
+    tree Test.Tracker.Judge.tests
+    tree Test.Tracker.Layout.tests
+    tree Test.Tracker.Follow.tests
+    tree Test.Tracker.Choose.tests
+    tree Test.Tracker.Kept.tests
+    tree Test.Tracker.Step.tests
 
 simulations :: TestTree
 simulations = testGroup "Tracker" [followed, explained]

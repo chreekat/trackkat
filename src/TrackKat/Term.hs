@@ -94,7 +94,7 @@ import Numeric (showFFloat)
 --
 -- Scores choose among hypotheses in one place so far: whether a frame's
 -- blobs are the clip followed from the last pose or found by their layout
--- (see Note [Following or finding afresh] in "TrackKat.Tracker").
+-- (see Note [Following or finding afresh] in "TrackKat.Tracker.Choose").
 -- Elsewhere hypotheses are still accepted or rejected one at a time, by
 -- gates; softening those into likelihoods is what comes next (see
 -- docs/heuristics.md).
