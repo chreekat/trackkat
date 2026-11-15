@@ -550,7 +550,6 @@ static void tray_menu(void)
 #define C_AMBER RGB(240, 170, 60)
 #define C_RED RGB(230, 85, 75)
 #define C_GREY RGB(120, 126, 138)
-#define C_HEAD_FAINT RGB(150, 124, 64)
 #define C_ACCENT_FAINT RGB(66, 112, 166)
 
 /* Rotate a point on the head, in head axes (x the user's right, y up, z out
