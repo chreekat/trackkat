@@ -12,6 +12,7 @@ import qualified Test.Tracker.Blobs
 import qualified Test.Tracker.Choose
 import qualified Test.Tracker.Follow
 import qualified Test.Tracker.Judge
+import qualified Test.Tracker.Kept
 import qualified Test.Tracker.Layout
 import qualified Test.Tracker.Sizes
 import qualified Test.Tracker.Trail
@@ -74,6 +75,7 @@ tests = group "Tracker" $ do
     tree Test.Tracker.Layout.tests
     tree Test.Tracker.Follow.tests
     tree Test.Tracker.Choose.tests
+    tree Test.Tracker.Kept.tests
 
 simulations :: TestTree
 simulations = testGroup "Tracker" [followed, explained]
