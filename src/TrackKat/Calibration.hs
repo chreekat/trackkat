@@ -296,7 +296,7 @@ upConfident = 180
 -- from a few odd turns or one from before the camera moved, can keep out
 -- the evidence against it: beyond 'upMemory' degrees older turns fade as
 -- new ones come, and the main axes follow. (Counting only turns near the
--- current up, as was done before, held on to a wrong up for good.) An
+-- current up would hold on to a wrong up for good.) An
 -- explicit calibration is taken as half of what is remembered, so that
 -- everyday turning goes on refining it.
 --
