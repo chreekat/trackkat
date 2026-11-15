@@ -141,8 +141,9 @@ properties =
                         , closeV 1e-9 (V3 (tx hp) (ty hp) (tz hp)) (V3 0 0 0)
                         ]
         , testProperty "a head's pose from its reference turns and moves as far as the poses are apart" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \a -> forAllShrink (genPlacing 2000) shrinkPlacing $ \b -> forAllShrink (genV3 300) shrinkV3 $ \pivot -> forAllShrink genUp shrinkNothing $ \up ->
-                let hp = relativePose (levelFromUp up) pivot (placed a) (placed b)
+            forAllShrink (genPlacing 2000) shrinkPlacing $ \a -> forAllShrink (genPlacing 2000) shrinkPlacing $ \b -> forAllShrink (genV3 300) shrinkV3 $ \pivot -> forAllShrink (genTurn 60) shrinkTurn $ \tipped ->
+                let up = mulMV (rodrigues tipped) (V3 0 (-1) 0)
+                    hp = relativePose (levelFromUp up) pivot (placed a) (placed b)
                     (_, move) = poseChange pivot (placed a) (placed b)
                  in close 1e-9 (norm (V3 (tx hp) (ty hp) (tz hp))) move
                         .&&. closeM 1e-9 (rotYXZ (yaw hp) (pitch hp) (roll hp)) (levelTurn up `mulMM` poseR (placed b) `mulMM` transpose (poseR (placed a)) `mulMM` transpose (levelTurn up))
@@ -237,10 +238,6 @@ genModel = elements [trackClip, headset, clipBent]
 -- turn apart: pitch straight up or down, and yaw or roll half a turn.
 genAngles :: Gen (Double, Double, Double)
 genAngles = (,,) <$> choose (-170, 170) <*> choose (-80, 80) <*> choose (-170, 170)
-
--- | Up, as a camera tipped by up to 60 degrees has it.
-genUp :: Gen V3
-genUp = (\turn -> mulMV (rodrigues turn) (V3 0 (-1) 0)) <$> genTurn 60
 
 -- | The turn from the camera's axes to level axes with the given up: its
 -- rows are level right, down and forward (see 'levelFromUp').

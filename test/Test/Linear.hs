@@ -57,10 +57,10 @@ tests =
             forAllShrink (genV3 1000) shrinkV3 $ \a -> forAllShrink (genV3 1000) shrinkV3 $ \b ->
                 angleBetween a b === angleBetween b a .&&. property (angleBetween a b >= 0 && angleBetween a b <= pi)
         , testProperty "a turn moves no vector by more than its angle" $
-            forAllShrink (genTurn 180) shrinkTurn $ \w -> forAllShrink genDirection shrinkNothing $ \v ->
+            forAllShrink (genTurn 180) shrinkTurn $ \w -> forAllShrink genDirection shrinkDirection $ \v ->
                 property (angleBetween v (mulMV (rodrigues w) v) <= norm w + 1e-7)
         , testProperty "turning toward a direction goes all the way close the limit, and by the limit beyond it" $
-            forAllShrink genApart shrinkNothing $ \(from, to) -> forAll (choose (0, pi)) $ \limit ->
+            forAllShrink genApart shrinkApart $ \(from, to) -> forAll (choose (0, pi)) $ \limit ->
                 let turned = rotateToward limit from to
                     apart = angleBetween from to
                  in if apart <= limit
@@ -101,3 +101,11 @@ genSystem = do
 -- which leaves the diagonal as heavy.
 shrinkSystem :: ([[Double]], [Double]) -> [([[Double]], [Double])]
 shrinkSystem (a, x) = [(map init (init a), init x) | length a > 1]
+
+-- | The same angle apart, along the first axis and in the plane of the
+-- first two.
+shrinkApart :: (V3, V3) -> [(V3, V3)]
+shrinkApart (from, to) = [simplest | simplest /= (from, to)]
+  where
+    angle = angleBetween from to
+    simplest = (V3 1 0 0, V3 (cos angle) (sin angle) 0)
