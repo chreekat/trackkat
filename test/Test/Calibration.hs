@@ -97,7 +97,7 @@ properties =
     testGroup
         "properties"
         [ testProperty "a calibration file is loaded as it says" $
-            forAllShrink genSaved shrinkSaved $ \file ->
+            \file ->
                 case parseCalibration (savedText file) of
                     Left err -> counterexample err False
                     Right c ->
@@ -110,7 +110,7 @@ properties =
                             , maybe (property True) (pivotTurns c ===) (savedWindows file)
                             ]
         , testProperty "a calibration saved, loaded and saved again is saved the same" $
-            forAllShrink genSaved shrinkSaved $ \file ->
+            \file ->
                 case parseCalibration (savedText file) of
                     Left err -> counterexample err False
                     Right c ->
@@ -145,32 +145,30 @@ savedText file =
 
 -- | A file as trackkat writes one, or with some of its lines gone: up
 -- within 40 degrees of the camera's, a pivot within 300 mm of the clip,
--- and information that tells the pivot in every direction.
-genSaved :: Gen Saved
-genSaved =
-    Saved
-        <$> perhaps ((\turn -> writtenV (mulMV (rodrigues turn) (V3 0 (-1) 0))) <$> genTurn 40)
-        <*> perhaps (genWritten (0, 50000000))
-        <*> perhaps (V3 <$> mm <*> mm <*> mm)
-        <*> perhaps (written . (* 10000) <$> chooseInt (0, 500))
-        <*> perhaps information
-  where
-    perhaps g = frequency [(1, pure Nothing), (4, Just <$> g)]
-    mm = genWritten (-3000000, 3000000)
-    writtenV (V3 x y z) = V3 (rounded x) (rounded y) (rounded z)
-    rounded x = written (round (x * 10000))
-    information = (\a b d f g j -> [a, b, d, f, g, j]) <$> diagonal <*> off <*> off <*> diagonal <*> off <*> diagonal
-    diagonal = genWritten (10000, 5000000)
-    off = genWritten (-3000, 3000)
-
--- | Files with a line gone.
-shrinkSaved :: Saved -> [Saved]
-shrinkSaved file =
-    [file{savedUp = Nothing} | Just _ <- [savedUp file]]
-        ++ [file{savedTurning = Nothing} | Just _ <- [savedTurning file]]
-        ++ [file{savedPivot = Nothing} | Just _ <- [savedPivot file]]
-        ++ [file{savedWindows = Nothing} | Just _ <- [savedWindows file]]
-        ++ [file{savedInformation = Nothing} | Just _ <- [savedInformation file]]
+-- and information that tells the pivot in every direction. Simpler with a
+-- line gone.
+instance Arbitrary Saved where
+    arbitrary =
+        Saved
+            <$> perhaps ((\turn -> writtenV (mulMV (rodrigues turn) (V3 0 (-1) 0))) <$> genTurn 40)
+            <*> perhaps (genWritten (0, 50000000))
+            <*> perhaps (V3 <$> mm <*> mm <*> mm)
+            <*> perhaps (written . (* 10000) <$> chooseInt (0, 500))
+            <*> perhaps information
+      where
+        perhaps g = frequency [(1, pure Nothing), (4, Just <$> g)]
+        mm = genWritten (-3000000, 3000000)
+        writtenV (V3 x y z) = V3 (rounded x) (rounded y) (rounded z)
+        rounded x = written (round (x * 10000))
+        information = (\a b d f g j -> [a, b, d, f, g, j]) <$> diagonal <*> off <*> off <*> diagonal <*> off <*> diagonal
+        diagonal = genWritten (10000, 5000000)
+        off = genWritten (-3000, 3000)
+    shrink file =
+        [file{savedUp = Nothing} | Just _ <- [savedUp file]]
+            ++ [file{savedTurning = Nothing} | Just _ <- [savedTurning file]]
+            ++ [file{savedPivot = Nothing} | Just _ <- [savedPivot file]]
+            ++ [file{savedWindows = Nothing} | Just _ <- [savedWindows file]]
+            ++ [file{savedInformation = Nothing} | Just _ <- [savedInformation file]]
 
 -- | A camera tipped 13 degrees down and 4 to its right.
 tilt :: M33
