@@ -169,7 +169,8 @@ request r t = t{trPending = trPending t ++ [r]}
 setModel :: Model -> Tracker -> Tracker
 setModel m t = request Recenter t{trClip = m, trTrail = noTrail, trLearners = changeClipOf m (trLearners t), trCentre = (trCentre t){centreBelief = newBranch m}}
 
--- | A frame as the stages after the first see it.
+-- | A frame as it is looked at: what the stages that take it into what is
+-- kept are given of it.
 data Look
     = Look
         -- | when it was seen, in seconds

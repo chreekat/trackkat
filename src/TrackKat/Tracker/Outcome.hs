@@ -80,7 +80,8 @@ data Outcome
         -- [Explaining]); worked out only if looked at
         , outChosen :: Chosen
         -- ^ how the pose was come by, of the ways tried (see Note
-        -- [Following or finding afresh]); worked out only if looked at
+        -- [Following or finding afresh] in "TrackKat.Tracker.Choose");
+        -- worked out only if looked at
         }
     | -- | The clip couldn't be made out.
       Lost
@@ -92,8 +93,8 @@ data Outcome
         -- ^ why not (see Note [Explaining]); worked out only if looked at
         , outHeld :: Maybe Held
         -- ^ a pose found by layout that wasn't taken, the clip being
-        -- likelier where it was (see Note [Following or finding afresh]);
-        -- worked out only if looked at
+        -- likelier where it was (see Note [Following or finding afresh] in
+        -- "TrackKat.Tracker.Choose"); worked out only if looked at
         }
     deriving (Show)
 
@@ -105,7 +106,7 @@ data Outcome
 -- and with the blobs' sizes when finding it afresh ('clipLike'). Before
 -- them come rules about which blobs to try at all: how many big blobs
 -- there are when finding the clip afresh ('threeBig'), and for how long
--- the clip may be followed with a reflector out of sight ('stillShowing').
+-- the clip may be followed with a reflector out of sight ('partlySeen').
 --
 -- A frame where the clip isn't made out says why ('Why'): what was being
 -- tried, and which terms rejected the best candidate, with the figure each
@@ -126,9 +127,10 @@ data Outcome
 --
 -- With a pose to go on, following and finding by layout are both tried
 -- when the first is rejected or weak (see Note [Following or finding
--- afresh]). A tracked frame says which gave its pose and what became of
--- the other ('outChosen'); a lost one gives following's reason, and any
--- pose found by layout that was passed over ('outHeld').
+-- afresh] in "TrackKat.Tracker.Choose"). A tracked frame says which gave
+-- its pose and what became of the other ('outChosen'); a lost one gives
+-- following's reason, and any pose found by layout that was passed over
+-- ('outHeld').
 --
 -- What learns from tracked poses says what it did likewise: a light
 -- learnt says why it was taken for one, a correction says on what
@@ -136,7 +138,7 @@ data Outcome
 -- them ('trackerWindows').
 
 -- | How a tracked frame's pose was come by (see Note [Following or
--- finding afresh]).
+-- finding afresh] in "TrackKat.Tracker.Choose").
 data Way
     = -- | by following the last pose, its reflectors matched to blobs near
       -- where it predicts them
