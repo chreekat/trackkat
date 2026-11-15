@@ -31,7 +31,7 @@ tests =
     testGroup
         "Layout"
         [ testProperty "three blobs are the clip only at a pose where they are like it, and say what rejected them otherwise" $
-            forAllShrink (genThree (genBlob 500)) (shrinkThree shrinkBlob) $ \three -> forAllShrink (genSizes 3000) shrinkSizes $ \sizes ->
+            \(ReflectorBlobs three) (Sizes sizes) ->
                 let known = knowing sizes Nothing
                     isClip = clipLike (knownReach known) sizes
                  in case asClip known (toList three) of
@@ -46,11 +46,11 @@ tests =
                         Left NoPoseFits -> property True
                         Left NothingMatches -> counterexample "nothing matches" False
         , testProperty "three blobs are the clip, or aren't, in whatever order they come" $
-            forAllShrink (genThree (genBlob 500)) (shrinkThree shrinkBlob) $ \three -> forAllShrink (genSizes 3000) shrinkSizes $ \sizes ->
+            \(ReflectorBlobs three) (Sizes sizes) ->
                 let told blobs = either (Left . show) (\(Found pose _, fit, _) -> Right (poseR pose, poseT pose, fit)) (asClip (knowing sizes Nothing) blobs)
                  in conjoin [told ordered === told (toList three) | ordered <- permutations (toList three)]
         , testProperty "the clip alone in view is found afresh where its blobs are, each a reflector, nothing else told" $
-            forAllShrink (genClipApart 20 (400, 1500) headset) (shrinkClipApart headset) $ \placing ->
+            \(Apart20 placing) ->
                 let blobs = clipBlobs headset placing
                  in case findAfresh (knowing (pure noSize) Nothing) (sortBlobs noMask blobs) of
                         Right (Sighting pose fit sights strays masked judged, restored) ->
@@ -64,52 +64,50 @@ tests =
                                 ]
                         Left why -> counterexample (explainWhy why) False
         , testProperty "found afresh, the clip is three of the blobs, and the rest are told as strays" $
-            forAllShrink genBlobs (shrinkList shrinkBlob) $ \others -> forAllShrink (genClipApart 20 (400, 1500) headset) (shrinkClipApart headset) $ \placing ->
-                forAllShrink (genSizes 3000) shrinkSizes $ \sizes ->
-                    let blobs = sortOn (negate . blobWeight) (others ++ clipBlobs headset placing)
-                     in case findAfresh (knowing sizes Nothing) (sortBlobs noMask blobs) of
-                            Right (found, restored) ->
-                                conjoin
-                                    [ sightingStrays found + 3 === length blobs
-                                    , sightingMasked found === 0
-                                    , length restored === 0
-                                    , property (all (\s -> any ((== sightAt s) . at) blobs) [s | Just s <- toList (sightingSights found)])
-                                    ]
-                            Left (Why looking _) -> looking === Afresh
+            \(Blobs others) (Apart20 placing) (Sizes sizes) ->
+                let blobs = sortOn (negate . blobWeight) (others ++ clipBlobs headset placing)
+                 in case findAfresh (knowing sizes Nothing) (sortBlobs noMask blobs) of
+                        Right (found, restored) ->
+                            conjoin
+                                [ sightingStrays found + 3 === length blobs
+                                , sightingMasked found === 0
+                                , length restored === 0
+                                , property (all (\s -> any ((== sightAt s) . at) blobs) [s | Just s <- toList (sightingSights found)])
+                                ]
+                        Left (Why looking _) -> looking === Afresh
         , testProperty "with other than three big blobs in view, nothing masked and the clip not seen before, nothing is found, for there not being three" $
-            forAllShrink genBlobs (shrinkList shrinkBlob) $ \blobs ->
+            \(Blobs blobs) ->
                 let big = length (bigAmong blobs)
                  in big /= 3 ==> case findAfresh (knowing (pure noSize) Nothing) (sortBlobs noMask blobs) of
                         Left (Why Afresh (Unfit [Finding name _ (Just (Measure counted _ 3 _))])) -> brief name === "big blobs" .&&. counted === fromIntegral big
                         other -> counterexample (either explainWhy (const "found") other) False
         , testProperty "with a pose predicting, nothing is tried by layout without three big blobs, nor of more before the clip was seen" $
-            forAllShrink genBlobs (shrinkList shrinkBlob) $ \blobs ->
+            \(Blobs blobs) ->
                 length (bigAmong blobs) /= 3 ==> case findHere (knowing (pure noSize) (Just facing)) 1 (lastAt facing) Nothing (sortBlobs noMask blobs) Nothing of
                     Nothing -> property True
                     Just tried -> counterexample (either show (show . layoutScore) tried) False
         , testProperty "by layout with a pose predicting, the clip is refound just when no impossible jump from it, and scored no better than nothing against it" $
-            forAllShrink (genClipApart 20 (400, 1500) headset) (shrinkClipApart headset) $ \placing -> forAllShrink (genTurn 30) shrinkTurn $ \turn ->
-                forAll (choose (1 / 120, 0.5)) $ \dt ->
-                    let was = turnedAbout pivot (rodrigues turn) (placed placing)
-                     in case findHere (knowing (pure noSize) (Just was)) 1 (lastAt was){recentTime = 1 - dt} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
-                            Just (Right found) ->
-                                counterexample (show (layoutScore found, layoutWay found, renderFindings (layoutJump found), renderFindings (sightingJudged (layoutFound found)), afreshCost dt)) . conjoin $
-                                    [ (layoutWay found == Refound) === all (not . isImpossible . findingScore) (layoutJump found)
-                                    , property (layoutWay found `elem` [Refound, FoundAfresh])
-                                    , property (layoutScore found <= possible)
-                                    , property (layoutWay found /= FoundAfresh || nats (layoutScore found) <= 1e-9 - afreshCost dt)
-                                    , sightingStrays (layoutFound found) === 0
-                                    ]
-                            Just (Left whyNot) -> counterexample (show whyNot) False
-                            Nothing -> counterexample "not tried" False
+            \(Apart20 placing) (Turned turn) (FrameGap dt) ->
+                let was = turnedAbout pivot (rodrigues turn) (placed placing)
+                 in case findHere (knowing (pure noSize) (Just was)) 1 (lastAt was){recentTime = 1 - dt} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
+                        Just (Right found) ->
+                            counterexample (show (layoutScore found, layoutWay found, renderFindings (layoutJump found), renderFindings (sightingJudged (layoutFound found)), afreshCost dt)) . conjoin $
+                                [ (layoutWay found == Refound) === all (not . isImpossible . findingScore) (layoutJump found)
+                                , property (layoutWay found `elem` [Refound, FoundAfresh])
+                                , property (layoutScore found <= possible)
+                                , property (layoutWay found /= FoundAfresh || nats (layoutScore found) <= 1e-9 - afreshCost dt)
+                                , sightingStrays (layoutFound found) === 0
+                                ]
+                        Just (Left whyNot) -> counterexample (show whyNot) False
+                        Nothing -> counterexample "not tried" False
         , testProperty "by layout, the clip where the pose predicting has it is refound" $
-            forAllShrink (genClipApart 20 (400, 1500) headset) (shrinkClipApart headset) $ \placing ->
+            \(Apart20 placing) ->
                 let was = placed placing
                  in case findHere (knowing (pure noSize) (Just was)) 1 (lastAt was){recentTime = 1 - 1 / 120} Nothing (sortBlobs noMask (clipBlobs headset placing)) Nothing of
                         Just (Right found) -> counterexample (renderFindings (layoutJump found) ++ show (sightingPose (layoutFound found))) (layoutWay found === Refound)
                         other -> counterexample (maybe "not tried" (either show (show . layoutScore)) other) False
         , testProperty "the three blobs following took aren't tried by layout too, nor any against following with nothing against it" $
-            forAllShrink (genClipApart 20 (400, 1500) headset) (shrinkClipApart headset) $ \placing -> forAll (choose (-60, 0)) $ \scored ->
+            \(Apart20 placing) (Scored scored) ->
                 let was = placed placing
                     blobs = clipBlobs headset placing
                     tried taken = findHere (knowing (pure noSize) (Just was)) 1 (lastAt was) Nothing (sortBlobs noMask blobs) (Just taken)
@@ -146,7 +144,27 @@ roundAt :: Sight -> Blob
 roundAt s = Blob (fst (sightAt s)) (snd (sightAt s)) (round (sightPixels s)) 0 0 0 0
 
 -- | A few blobs of sizes from a fragment's to a lamp's.
-genBlobs :: Gen [Blob]
-genBlobs = do
-    n <- chooseInt (0, 6)
-    vectorOf n (oneof [genBlob 40, genBlob 400, genBlob 5000])
+newtype Blobs = Blobs [Blob]
+    deriving (Show)
+
+instance Arbitrary Blobs where
+    arbitrary = do
+        n <- chooseInt (0, 6)
+        Blobs <$> vectorOf n (oneof [genBlob 40, genBlob 400, genBlob 5000])
+    shrink (Blobs blobs) = Blobs <$> shrinkList shrinkBlob blobs
+
+-- | How a head has turned since the last pose, by up to 30 degrees.
+newtype Turned = Turned V3
+    deriving (Show)
+
+instance Arbitrary Turned where
+    arbitrary = Turned <$> genTurn 30
+    shrink (Turned w) = Turned <$> shrinkTurn w
+
+-- | What following scored, in nats, from nothing against it down to 60.
+newtype Scored = Scored Double
+    deriving (Show)
+
+instance Arbitrary Scored where
+    arbitrary = Scored <$> choose (-60, 0)
+    shrink (Scored x) = Scored <$> shrinkWithin (-60, 0) 0 x
