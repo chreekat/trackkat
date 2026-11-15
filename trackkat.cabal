@@ -135,6 +135,7 @@ test-suite tests
     Test.Memory
     Test.Mount
     Test.Pose
+    Test.Protocol
     Test.Recording
     Test.Release
     Test.Response

@@ -4,7 +4,10 @@ module Test.Frame (tests) where
 import Control.Monad (forM_)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
-import Test.Tasty (TestTree)
+import Data.List (inits, sort, sortOn, tails)
+import Data.Word (Word8)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.QuickCheck hiding ((.&.))
 
 import Test.Check
 import TrackKat.Frame
@@ -50,9 +53,9 @@ tests = group "Frame" $ do
         counters ps = [n | Frame n _ <- ps]
         corrupt ps = [why | Corrupt why _ <- ps]
         stream = B.concat [frame 0x7E blobA, frame 0x7F [], frame 0x80 blobB]
-        cutAt i j = feed [B.take i stream, B.take (j - i) (B.drop i stream), B.drop j stream]
+        cutIn i j = feed [B.take i stream, B.take (j - i) (B.drop i stream), B.drop j stream]
         whole (ps, done) = counters ps == [0x7E, 0x7F, 0x80] && null (corrupt ps) && done
-        cutBadly = [(i, j) | i <- [0 .. B.length stream], j <- [i .. B.length stream], not (whole (cutAt i j))]
+        cutBadly = [(i, j) | i <- [0 .. B.length stream], j <- [i .. B.length stream], not (whole (cutIn i j))]
     checkShowing "a stream cut into three transfers anywhere" (show cutBadly) (null cutBadly)
 
     let truncated = B.take 20 (frame 0x81 blobA) <> frame 0x82 blobB
@@ -66,3 +69,110 @@ tests = group "Frame" $ do
     checkShowing "status reply between frames" (show withReply) (counters withReply == [0x20, 0x21] && length [() | StatusReply _ <- withReply] == 1)
 
     check "status reply" $ fmap statusReady (parseStatus (B.pack [0x07, 0x20, 0, 1, 0, 0, 0])) == Just True
+    tree properties
+
+properties :: TestTree
+properties =
+    testGroup
+        "properties"
+        [ testProperty "a stripe is read back as packed" $
+            forAllShrink genStripe shrinkStripe $
+                \s -> decodeStripe (encodeStripe s) === s
+        , testProperty "any eight bytes are a stripe, packed as read" $
+            forAll (B.pack <$> vectorOf 8 arbitrary) $
+                \bytes -> encodeStripe (decodeStripe bytes) === bytes
+        , testProperty "frames back to back, cut into transfers anywhere, are read as sent" $
+            forAllShrink genFrames shrinkFrames $ \frames ->
+                let stream = B.concat (map frameBytes frames)
+                 in forAllShrink (genCuts (B.length stream)) shrinkCuts $ \cuts ->
+                        let (packets, rest) = fed (cutAt cuts stream)
+                         in counterexample (show packets) $
+                                [(n, ss) | Frame n ss <- packets] === frames .&&. length packets === length frames .&&. B.null rest
+        , testProperty "blobs keep every lit pixel of the stripes they are made of" $
+            forAllShrink (snd <$> genFrame 0) (map snd . shrinkFrame . (,) 0) $ \stripes ->
+                sum (map blobPoints (stripesToBlobs 1 maxBound stripes)) === sum (map stPoints stripes)
+        ]
+
+-- | A stripe within the camera's image and its fields' bits.
+genStripe :: Gen Stripe
+genStripe = do
+    line <- chooseInt (0, frameHeight - 1)
+    start <- chooseInt (0, frameWidth - 1)
+    points <- chooseInt (1, frameWidth - start)
+    Stripe line start points <$> chooseInt (0, 0xFFFFF) <*> chooseInt (0, 0x7FFF)
+
+-- | Stripes nearer the image's corner, shorter and dimmer.
+shrinkStripe :: Stripe -> [Stripe]
+shrinkStripe (Stripe line start points sumX brightness) =
+    [ Stripe line' start' points' sumX' total'
+    | (line', start', points', sumX', total') <- shrink (line, start, points, sumX, brightness)
+    , line' >= 0 && start' >= 0 && points' >= 1 && sumX' >= 0 && total' >= 0
+    ]
+
+-- | A frame as the camera sends one, with the given counter: its stripes in
+-- order down and across the image, none overlapping, and none spelling the
+-- header of the frame that follows, which would cut it short (see Note
+-- [Camera byte stream]).
+genFrame :: Word8 -> Gen (Word8, [Stripe])
+genFrame n = (,) n . asSent <$> listOf genStripe `suchThat` (not . spellsNextHeader n . asSent)
+
+-- | Stripes in the camera's order, without those that overlap one before.
+asSent :: [Stripe] -> [Stripe]
+asSent = foldr keep [] . sortOn (\s -> (stLine s, stStart s))
+  where
+    keep s rest = s : dropWhile (\next -> stLine next == stLine s && stStart next < stStart s + stPoints s) rest
+
+spellsNextHeader :: Word8 -> [Stripe] -> Bool
+spellsNextHeader n stripes = any header (windows (B.unpack (B.concat (map encodeStripe stripes))))
+  where
+    windows bytes = [take 4 (drop i bytes) | i <- [0 .. length bytes - 4]]
+    header w = case w of
+        [counter, 0x10, format, checked] -> counter == n + 1 && format `elem` [0, 5] && foldl xor 0 [counter, 0x10, format, checked] == 0xAA
+        _ -> False
+
+shrinkFrame :: (Word8, [Stripe]) -> [(Word8, [Stripe])]
+shrinkFrame (n, stripes) = [(n, kept) | kept <- map asSent (shrinkList shrinkStripe stripes), not (spellsNextHeader n kept)]
+
+-- | A few frames, their counters going up from anywhere.
+genFrames :: Gen [(Word8, [Stripe])]
+genFrames = do
+    first <- arbitrary
+    count <- chooseInt (0, 4)
+    mapM (\i -> scale (`div` 4) (genFrame (first + fromIntegral i))) [0 .. count - 1]
+
+-- | Fewer frames from the end, so the counters still follow on, and
+-- frames of fewer stripes.
+shrinkFrames :: [(Word8, [Stripe])] -> [[(Word8, [Stripe])]]
+shrinkFrames frames =
+    [take k frames | k <- [0 .. length frames - 1]]
+        ++ [before ++ [frame'] ++ after | (before, frame : after) <- zip (inits frames) (tails frames), frame' <- shrinkFrame frame]
+
+-- | A frame's bytes: header, stripes, and how many bytes of stripes.
+frameBytes :: (Word8, [Stripe]) -> B.ByteString
+frameBytes (n, stripes) =
+    B.concat
+        [ B.pack [n, 0x10, 0x05, n `xor` 0x10 `xor` 0x05 `xor` 0xAA]
+        , body
+        , B.pack [fromIntegral (B.length body `shiftR` s .&. 0xFF) | s <- [24, 16, 8, 0]]
+        ]
+  where
+    body = B.concat (map encodeStripe stripes)
+
+-- | Where to cut a stream of so many bytes into transfers.
+genCuts :: Int -> Gen [Int]
+genCuts len = sort <$> listOf (chooseInt (0, len))
+
+-- | Fewer cuts.
+shrinkCuts :: [Int] -> [[Int]]
+shrinkCuts = shrinkList (const [])
+
+cutAt :: [Int] -> B.ByteString -> [B.ByteString]
+cutAt cuts stream = zipWith (\from to -> B.take (to - from) (B.drop from stream)) (0 : cuts) (cuts ++ [B.length stream])
+
+-- | The packets read from transfers one after another, and what is left
+-- over.
+fed :: [B.ByteString] -> ([Packet], B.ByteString)
+fed = go B.empty
+  where
+    go pending [] = parseStream pending
+    go pending (c : cs) = let (ps, rest) = parseStream (pending <> c); (more, left) = go rest cs in (ps ++ more, left)
