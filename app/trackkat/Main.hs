@@ -8,7 +8,7 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, withAsync)
 import Control.Concurrent.MVar
-import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
+import Control.Exception (Handler (..), IOException, SomeAsyncException (..), SomeException, bracket_, catch, catches, displayException, fromException, throwIO, try)
 import Control.Monad (foldM, forM_, forever, unless, void, (<=<))
 import Data.Functor (($>))
 import Data.IORef
@@ -133,11 +133,11 @@ run start window after = do
         (naming, named) <- nameButtons <$> getMonotonicTime
         logLine named
         alongside
-            [ watchSettings settingsFile shell stamp
-            , joysticks naming
-            , saveCalibrations calibrationFile (shSaving shell)
-            , rememberServedGame gameFile
-            , maintain place shell
+            [ ("Watching the settings file", watchSettings settingsFile shell stamp)
+            , ("Watching joysticks", joysticks naming)
+            , ("Saving calibrations", saveCalibrations calibrationFile (shSaving shell))
+            , ("Noting the game served", rememberServedGame gameFile)
+            , ("Keeping trackkat up to date", maintain place shell)
             ]
             $ withAsync (cameraLoop shell)
             $ \camera -> do
@@ -151,9 +151,19 @@ run start window after = do
                 hFlush stdout `catch` \e -> const (pure ()) (e :: IOException)
                 quitProcess
 
--- | Run threads alongside some work, stopping them when it ends.
-alongside :: [IO ()] -> IO a -> IO a
-alongside threads work = foldr (\thread rest -> withAsync thread (const rest)) work threads
+-- | Run threads, each named for what it does, alongside some work,
+-- stopping them when it ends. Nothing waits for them, so one that an
+-- exception stops says so in the log; the exception goes on.
+alongside :: [(String, IO ())] -> IO a -> IO a
+alongside threads work = foldr (\(what, thread) rest -> withAsync (noted what thread) (const rest)) work threads
+  where
+    noted what thread =
+        thread `catch` \e -> do
+            case fromException e of
+                -- Told to stop, as when the work ends.
+                Just (SomeAsyncException _) -> pure ()
+                Nothing -> say (what ++ " stopped: " ++ displayException e)
+            throwIO (e :: SomeException)
 
 -- | Tell games to load the NPClient chosen, trackkat's from its own folder,
 -- falling back to that if NaturalPoint's isn't installed.
