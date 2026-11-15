@@ -27,6 +27,16 @@ module Test.Gen (
     movedCamera,
     turnedAbout,
 
+    -- * What the camera shows
+    genBlob,
+    shrinkBlob,
+    genSizes,
+    shrinkSizes,
+    genSight,
+    shrinkSight,
+    genThree,
+    shrinkThree,
+
     -- * Settings
     genWritten,
     shrinkWritten,
@@ -41,9 +51,10 @@ import Data.Maybe (fromMaybe)
 import Test.Tasty.QuickCheck
 
 import TrackKat.Config
-import TrackKat.Frame (frameHeight, frameWidth)
+import TrackKat.Frame (Blob (..), frameHeight, frameWidth)
 import TrackKat.Lights (Masking (..))
 import TrackKat.Linear
+import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
 import TrackKat.Number
 import TrackKat.Pose
 import TrackKat.Response
@@ -161,6 +172,71 @@ turnedAbout :: V3 -> M33 -> Pose -> Pose
 turnedAbout pivot turn pose@(Pose r _) = Pose turned (poseAt pose pivot ^-^ mulMV turned pivot)
   where
     turned = turn `mulMM` r
+
+-- * What the camera shows
+
+-- | A round blob of up to the given number of pixels, anywhere in the
+-- picture.
+genBlob :: Int -> Gen Blob
+genBlob most = do
+    points <- chooseInt (6, most)
+    u <- choose (0, fromIntegral frameWidth)
+    v <- choose (0, fromIntegral frameHeight)
+    pure (roundBlob (u, v) points)
+
+-- | A round blob of so many pixels at a place.
+roundBlob :: (Double, Double) -> Int -> Blob
+roundBlob (u, v) points = Blob u v points (100 * points) spread spread 0
+  where
+    spread = fromIntegral points / (4 * pi)
+
+-- | Blobs of fewer pixels, and at whole numbers of pixels.
+shrinkBlob :: Blob -> [Blob]
+shrinkBlob b =
+    [roundBlob (blobX b, blobY b) points | points <- shrink (blobPoints b), points >= 6]
+        ++ [roundBlob (whole (blobX b), whole (blobY b)) (blobPoints b) | whole (blobX b) /= blobX b || whole (blobY b) /= blobY b]
+  where
+    whole x = fromIntegral (truncate x :: Int)
+
+-- | The sizes the reflectors have had, in pixels at 1 m: none seen yet, or
+-- each seen at up to the given size, its usual size no less than its
+-- latest.
+genSizes :: Double -> Gen (Three Size)
+genSizes most = oneof [pure (pure noSize), genThree size]
+  where
+    size = do
+        latest <- choose (1, most)
+        Size latest . (latest *) <$> choose (1, 2)
+
+-- | None seen yet, and each with its usual size its latest.
+shrinkSizes :: Three Size -> [Three Size]
+shrinkSizes sizes =
+    [pure noSize | any ((> 0) . sizeUsual) sizes]
+        ++ [settled | let settled = (\s -> s{sizeUsual = sizeLatest s}) <$> sizes, or ((/=) <$> (sizeUsual <$> sizes) <*> (sizeUsual <$> settled))]
+
+-- | How a reflector showed: a blob of its own, two taken as one, or its
+-- share of a blob, of up to the given number of pixels, anywhere in the
+-- picture.
+genSight :: Double -> Gen Sight
+genSight most = do
+    u <- choose (0, fromIntegral frameWidth)
+    v <- choose (0, fromIntegral frameHeight)
+    Sight (u, v) <$> choose (6, most) <*> elements [Whole, Rejoined, Merged]
+
+-- | A blob of its own, for one that isn't; and of a whole number of
+-- pixels.
+shrinkSight :: Sight -> [Sight]
+shrinkSight s =
+    [s{sightKind = Whole} | sightKind s /= Whole]
+        ++ [s{sightPixels = whole} | let whole = fromIntegral (truncate (sightPixels s) :: Int), whole /= sightPixels s, whole >= 6]
+
+-- | One of something for each reflector.
+genThree :: Gen a -> Gen (Three a)
+genThree g = Three <$> g <*> g <*> g
+
+-- | One of the three made simpler.
+shrinkThree :: (a -> [a]) -> Three a -> [Three a]
+shrinkThree f (Three a b c) = [Three a' b c | a' <- f a] ++ [Three a b' c | b' <- f b] ++ [Three a b c' | c' <- f c]
 
 -- * Settings
 
