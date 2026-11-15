@@ -39,6 +39,7 @@ library
     TrackKat.Term
     TrackKat.Tracker
     TrackKat.Tracker.Absence
+    TrackKat.Tracker.Judge
     TrackKat.Tracker.Outcome
     TrackKat.Visibility
     TrackKat.USB
@@ -152,6 +153,7 @@ test-suite tests
     Test.Stats
     Test.Term
     Test.Tracker
+    Test.Tracker.Judge
     Test.Visibility
     Test.World
   ghc-options:      "-with-rtsopts=-T"

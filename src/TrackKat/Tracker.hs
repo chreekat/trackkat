@@ -60,14 +60,14 @@ import TrackKat.Calibration
 import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
 import TrackKat.Lights hiding (News (..))
 import qualified TrackKat.Lights as Lights
-import TrackKat.Linear (M33, dot, mulMM, norm, normalize, transpose, (*^), (^-^))
+import TrackKat.Linear (M33, mulMM, norm, transpose)
 import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Term
 import TrackKat.Tracker.Absence
+import TrackKat.Tracker.Judge
 import TrackKat.Tracker.Outcome
-import TrackKat.World (Seconds, World (..), during, inDegrees, inMillimetres, inPerSecond, inPixels, seconds, times, world)
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
@@ -357,43 +357,6 @@ predictionSeconds = 0.5
 confirmSeconds :: Double
 confirmSeconds = 0.5
 
--- | The most a head turns (degrees) and moves (mm, at its pivot) between
--- frames the given number of seconds apart: from one frame to the next,
--- the world's 'headStepTurn' and 'headStepMove', which is what the shaping
--- for games allows, and more the longer apart, by its 'headTurnRate' and
--- 'headMoveRate'. A bigger jump means the blobs were matched to the wrong
--- reflectors.
-maxTurn, maxMove :: Double -> Double
-maxTurn dt = inDegrees (headStepTurn world) + inPerSecond (headTurnRate world) * dt
-maxMove dt = inMillimetres (headStepMove world) + inPerSecond (headMoveRate world) * dt
-
--- | The spreads of how far a head turns (degrees) and its pivot moves (mm)
--- in the given seconds: the world's 'headTurnSpeed' and 'headMoveSpeed'
--- for that long, or for a frame if that is longer.
-turnSpread, moveSpread :: Double -> Double
-turnSpread dt = inDegrees (headTurnSpeed world `during` sinceSeen dt)
-moveSpread dt = inMillimetres (headMoveSpeed world `during` sinceSeen dt)
-
-sinceSeen :: Double -> Seconds
-sinceSeen dt = seconds (max dt (1 / inPerSecond (frameRate world)))
-
--- | How much likelier, in nats, a pose is where a pose so many seconds
--- before says it most likely is than where a head most likely is with
--- nothing known of where it was: what finding the clip afresh gives up
--- (see Note [Following or finding afresh]).
---
--- It is the log of how much more room a head has anywhere than a head
--- followed has: in turning, the world's 'headTurnSpread' against
--- 'turnSpread', each of three ways; in place, the box 'canBeThere' allows
--- ('maxReachMove' to either side, and up or down, and from 'nearest' to
--- 'farthest') against a gaussian of 'moveSpread' each way. Neither is
--- less than nothing: after long enough, a pose says no more than that the
--- head is somewhere.
-afreshCost :: Double -> Double
-afreshCost dt = 3 * log (max 1 (inDegrees (headTurnSpread world) / turnSpread dt)) + log (max 1 (box / (moveSpread dt * sqrt (2 * pi)) ^ (3 :: Int)))
-  where
-    box = (2 * maxReachMove) ^ (2 :: Int) * (farthest - nearest)
-
 -- | The score below which a followed pose is doubted, and the clip looked
 -- for by layout in the same frame too (see Note [Following or finding
 -- afresh]): what a head turning and moving at twice the spreads of its
@@ -403,38 +366,11 @@ weakScore = Score (negate (2 * (twice * twice / 2)))
   where
     twice = 2 :: Double
 
--- | The farthest a head turns (degrees) and moves (mm, at its pivot) from
--- where it was recentered: three of the world's 'headTurnSpread', and its
--- 'headReachAside', the move to either side, or up or down, as the camera
--- sees it. Toward or away from the camera it goes as near as 'nearest' or
--- as far as 'farthest': people lean in, and sit back after a break. Beyond
--- that the blobs aren't the clip, but something like a phone's light.
-maxReachTurn, maxReachMove :: Double
-maxReachTurn = inDegrees (times 3 (headTurnSpread world))
-maxReachMove = inMillimetres (headReachAside world)
-
--- | The nearest and farthest, in mm, the clip can be from the camera: the
--- world's 'cameraNearest' and 'cameraFarthest'.
-nearest, farthest :: Double
-nearest = inMillimetres (cameraNearest world)
-farthest = inMillimetres (cameraFarthest world)
-
--- | The worst RMS reprojection error, in pixels, of a pose matched from a
--- prediction: twice the world's 'centroidNoise'.
-maxFit :: Double
-maxFit = inPixels (times 2 (centroidNoise world))
-
 -- | A blob as big as a reflector, when finding the clip afresh, is at
 -- least this fraction (so many parts in so many) of the biggest blob in
 -- view: other reflections are often tiny beside the reflectors.
 besideBiggest :: (Int, Int)
 besideBiggest = (3, 25)
-
--- | When finding the clip afresh, none of its blobs lights less than one
--- in this many of the pixels its reflector has lately, at the pose's
--- distance.
-smallestShare :: Double
-smallestShare = 8
 
 -- | Up to how many of the heaviest big blobs, when there are more than
 -- three, are searched for the only three laid out like the clip; and up
@@ -478,14 +414,6 @@ data Layout = Layout
     , layoutSighting :: Fate -> Sighting
     , layoutJump :: [Finding]
     }
-
--- | A pose following the last: the pose, its RMS reprojection error in
--- pixels, and the degrees it turned and mm its pivot moved from the last.
-data Moved = Moved Pose Double Double Double
-
--- | Three blobs taken for the clip, when finding it afresh: the pose, and
--- the blobs taken for the left, right and top reflectors.
-data Found = Found Pose (Three Blob)
 
 -- | Handle one frame's stripes, seen at the given time in seconds. Pending
 -- requests wait for a frame where the clip is tracked.
@@ -652,7 +580,7 @@ step now stripes t =
         let biggestSeen = maximum (0 : [sightPixels s | Just s <- toList sights])
          in [(seenAt k m pose which, 15 + 2 * sqrt (biggestSeen / pi)) | which <- toList reflectors]
     pivot = appliedPivot (trLearner t)
-    metres pose = norm (poseT pose) / 1000
+    reach = Reach pivot (trReference t)
     sighting = maybe (either (\why -> Left (why, Nothing)) (Right . fst) (findAfresh (mask, (masked, visible)))) followOrFind following
     -- The better of following the given pose and finding the clip by
     -- layout, the second tried only when the first is rejected or weak
@@ -717,7 +645,7 @@ step now stripes t =
         -- put the clip can only cost them more.
         worthTrying three (followed, sights) =
             not (sightsOf three sights) && case identify m at three of
-                Just (l, rt, top) -> score usualSize (recentPose r, whole <$> Three l rt top) > followed
+                Just (l, rt, top) -> score (usualSize (trSizes t)) (recentPose r, whole <$> Three l rt top) > followed
                 Nothing -> False
     -- Three blobs as the clip, with the given pose still predicting, as
     -- 'findHere' tells it.
@@ -731,14 +659,14 @@ step now stripes t =
             from was since =
                 let (turn, move) = poseChange pivot (recentPose was) pose
                     moved = Moved pose fit turn move
-                    likelier = if score (continuing since) moved >= score (anywhere dt) moved then continuing since else anywhere dt
+                    likelier = if score (continuing since) moved >= score (anywhere reach dt) moved then continuing since else anywhere reach dt
                  in (accepts (jumpable since) moved, about (const moved) likelier, findings (jumpable since) moved)
             (way, prior, jump) = case (from r dt, (\(LeftBehind was _) -> from was (now - recentTime was)) <$> left) of
                 ((True, continued, jumped), _) -> (Refound, continued, jumped)
                 (_, Just (True, continued, jumped)) -> (Resumed, continued, jumped)
-                ((False, _, jumped), _) -> (FoundAfresh, anywhere dt, jumped)
+                ((False, _, jumped), _) -> (FoundAfresh, anywhere reach dt, jumped)
             placed = Moved pose fit 0 0
-            likely = blobsSay pose sights <> prior
+            likely = blobsSay (trSizes t) pose sights <> prior
         Right
             Layout
                 { layoutScore = score likely placed
@@ -779,28 +707,9 @@ step now stripes t =
             Nothing -> Left NoPoseFits
             Just (pose, fit) ->
                 let found = Found pose (Three l r top)
-                 in if accepts clipLike found
-                        then Right (pose, fit, (l, r, top), findings clipLike found)
-                        else Left (Unfit (rejections clipLike found))
-    -- Three blobs at a pose are the clip: the pose is somewhere a head can
-    -- be, and the blobs are big enough.
-    clipLike = about (\(Found pose _) -> pose) canBeThere <> bigEnough
-    -- None of the blobs far smaller than its reflector has lately been,
-    -- at the pose's distance: lights much nearer the camera than the
-    -- head, laid out like the clip, light far fewer pixels than its
-    -- reflectors would there. Its figure is that of the blob smallest
-    -- for its reflector: its pixels, against the least its reflector
-    -- would light.
-    bigEnough =
-        gate
-            (Name "size" "the lights in view are much smaller than the clip's reflectors have been")
-            (\(Found pose three) -> and (liftA2 (\size b -> fromIntegral (blobPoints b) * smallestShare * metres pose ^ (2 :: Int) >= sizeUsual size) (trSizes t) three))
-            ( \(Found pose three) ->
-                let least size = sizeUsual size / (smallestShare * metres pose ^ (2 :: Int))
-                    sized = toList (liftA2 (\size b -> (fromIntegral (blobPoints b), least size)) (trSizes t) three)
-                    (lit, wanted) = foldr1 (\a b -> if fst a - snd a <= fst b - snd b then a else b) sized
-                 in Measure lit AtLeast wanted "px"
-            )
+                 in if accepts (clipLike reach (trSizes t)) found
+                        then Right (pose, fit, (l, r, top), findings (clipLike reach (trSizes t)) found)
+                        else Left (Unfit (rejections (clipLike reach (trSizes t)) found))
     -- With nothing to predict from, three big blobs by their layout,
     -- solved from where the clip was last seen if anywhere, given a mask
     -- and the blobs it masks and doesn't; and the masked blobs taken as
@@ -867,17 +776,17 @@ step now stripes t =
                     let (turn, move) = poseChange pivot (recentPose r) pose
                         jump = max (turn / maxTurn dt) (move / maxMove dt)
                         moved = Moved pose fit turn move
-                        likely = blobsSay pose (matchSights c)
-                     in if accepts (followable dt) moved
+                        likely = blobsSay (trSizes t) pose (matchSights c)
+                     in if accepts (followable reach dt) moved
                             then
                                 Right
                                     ( jump
                                     ,
                                         ( Score (fromIntegral (3 - seenCount c) * nats unseenScore + nats (score (likely <> continuing dt) moved))
-                                        , Sighting (Chosen Followed Nothing) pose fit (matchSights c) (matchUnused c) (length masked) (matchJudged c ++ findings (followable dt <> likely <> continuing dt) moved)
+                                        , Sighting (Chosen Followed Nothing) pose fit (matchSights c) (matchUnused c) (length masked) (matchJudged c ++ findings (followable reach dt <> likely <> continuing dt) moved)
                                         )
                                     )
-                            else Left (Unfit (rejections (followable dt) moved))
+                            else Left (Unfit (rejections (followable reach dt) moved))
          in case candidates of
                 [] -> Left . Why Following $ case allMatches of
                     c : _ -> Unfit (rejections stillShowing c)
@@ -889,74 +798,6 @@ step now stripes t =
                          in case sortOn fst (rights (map attempt (take jumpRetries alike))) of
                                 (_, s) : _ -> Right s
                                 [] -> Left (Why Following reason)
-    -- A pose follows the last, so many seconds before: it fits what was
-    -- seen, it isn't an impossible jump, and it is somewhere a head can be.
-    followable dt =
-        atMost (Name "fit" "the lights in view don't fit the clip's shape") "px" maxFit (\(Moved _ fit _ _) -> fit)
-            <> jumpable dt
-            <> about (\(Moved pose _ _ _) -> pose) canBeThere
-    -- A pose isn't an impossible jump from the last, so many seconds
-    -- before.
-    jumpable dt =
-        gate
-            (Name "turn" "the head would have turned faster than heads turn")
-            (\(Moved _ _ turn _) -> turn / maxTurn dt <= 1)
-            (\(Moved _ _ turn _) -> Measure turn AtMost (maxTurn dt) "degrees")
-            <> gate
-                (Name "move" "the head would have moved faster than heads move")
-                (\(Moved _ _ _ move) -> move / maxMove dt <= 1)
-                (\(Moved _ _ _ move) -> Measure move AtMost (maxMove dt) "mm")
-    -- The soft terms that hypotheses about a frame are compared by (see
-    -- Note [Following or finding afresh]).
-    --
-    -- How likely the reflectors are seen so far from where a pose puts
-    -- them: each a centre out by the fit, under the world's
-    -- 'centroidNoise'.
-    misfit = gaussian (Name "misfit" "the lights in view don't quite fit the clip's shape") "px" (inPixels (centroidNoise world) / sqrt 3) (\(Moved _ fit _ _) -> fit)
-    -- How likely a head turned and moved as far as a pose is from the
-    -- last, so many seconds before.
-    continuing dt =
-        gaussian (Name "turning" "the head would have turned faster than heads mostly turn") "degrees" (turnSpread dt) (\(Moved _ _ turn _) -> turn)
-            <> gaussian (Name "moving" "the head would have moved faster than heads mostly move") "mm" (moveSpread dt) (\(Moved _ _ _ move) -> move)
-    -- How likely a head is at a pose with nothing known of where it was,
-    -- beside how likely one followed for so many seconds is where it was:
-    -- anywhere it can be, and turned from the centre as heads are.
-    anywhere dt =
-        cost (Name "afresh" "nothing says where the clip would be") (const (afreshCost dt))
-            <> maybe mempty (\ref -> gaussian (Name "reach" "turned further than heads mostly turn") "degrees" (inDegrees (headTurnSpread world)) (\(Moved pose _ _ _) -> fst (poseChange pivot ref pose))) (trReference t)
-    -- What the blobs taken for the reflectors at a pose say of it: how
-    -- well they fit it, and how likely each that is a reflector's own is
-    -- the size its reflector has been lately, at the pose's distance, as
-    -- a match's terms for sizes score a size. (Against the usual size, not
-    -- the latest as matching goes by: the latest is whatever the last
-    -- frame took for the reflector, which is what is in question.)
-    blobsSay pose sights = about (const (pose, sights)) usualSize <> misfit
-    usualSize :: Term (Pose, Three (Maybe Sight))
-    usualSize =
-        likelihood (Name "usual size" "the lights in view aren't the size the clip's reflectors have been") $ \(pose, sights) ->
-            sum [nats (sizeScore (sizeUsual size / metres pose ^ (2 :: Int)) (sightPixels sight)) | (size, Just sight) <- toList ((,) <$> trSizes t <*> sights), sightKind sight /= Merged]
-    -- Somewhere a head can be: at a sane distance from the camera, and not
-    -- too far to the side of where it was recentered, though as near or as
-    -- far from the camera as it likes.
-    canBeThere :: Term Pose
-    canBeThere =
-        within
-            ( Name "near" "too close to the camera"
-            , Name "far" "too far from the camera"
-            )
-            "mm"
-            (nearest, farthest)
-            (norm . poseT)
-            <> maybe mempty reach (trReference t)
-      where
-        reach ref =
-            atMost (Name "turned" "turned further from where you recentered than a head turns") "degrees" maxReachTurn (\pose -> fst (poseChange pivot ref pose))
-                <> atMost (Name "aside" "too far to the side of where you recentered") "mm" maxReachMove (aside ref)
-        aside ref pose =
-            let fromCamera = normalize (poseAt ref pivot)
-                moved = poseAt pose pivot ^-^ poseAt ref pivot
-                back = dot moved fromCamera
-             in norm (moved ^-^ back *^ fromCamera)
     seenCount c = length (catMaybes (toList (matchSights c)))
     observations z c = catMaybes (toList (observe z <$> reflectors <*> trSizes t <*> matchSights c))
     -- A dim reflector, smaller than usual, counts for less: part of it may
