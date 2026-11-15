@@ -110,8 +110,8 @@ data Outcome
 --
 -- A frame where the clip isn't made out says why ('Why'): what was being
 -- tried, and which terms rejected the best candidate, with the figure each
--- judged and its limit. A limit that vetoes good blobs, as the reach from
--- the centre has, then shows as itself and not as three strays. A frame
+-- judged and its limit. A limit that vetoes good blobs then shows as
+-- itself and not as three strays. A frame
 -- where it is made out says what each term found, so that how close a
 -- limit came can be watched ('outJudged').
 --
