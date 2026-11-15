@@ -120,6 +120,7 @@ data Layout a = Layout
     , layoutFound :: a
     -- ^ what it makes of the frame
     }
+    deriving (Show)
 
 -- | The clip by the layout of the big blobs in view at the given time,
 -- with the first pose given still predicting, and perhaps one left behind

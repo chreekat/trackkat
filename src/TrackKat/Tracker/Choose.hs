@@ -155,6 +155,7 @@ data Hypotheses a = Hypotheses
     -- ^ the clip where the pose predicts it, with so many reflectors out
     -- of sight, and what that scores
     }
+    deriving (Show)
 
 -- | What to make of a frame, of the hypotheses about it, and how that
 -- was come by; or, if nothing, following's reason, with any pose found by
