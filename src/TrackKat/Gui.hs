@@ -17,6 +17,7 @@ module TrackKat.Gui (
     showUpdateCheck,
     UpdateStatus (..),
     showUpdateStatus,
+    Notice (..),
     showOffer,
     windowOpen,
     Action (..),
@@ -50,6 +51,7 @@ import Foreign.Ptr (Ptr, nullPtr)
 
 import TrackKat.CommandLine (WindowAtStart (..))
 import TrackKat.Config (Binding, bindingFromCodes, renderBinding)
+import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
@@ -126,21 +128,11 @@ showUpdateButton :: UpdateButton -> IO ()
 showUpdateButton UpdateButtonEnabled = c_updatable 1
 showUpdateButton UpdateButtonDisabled = c_updatable 0
 
--- | Whether trackkat is looking for a newer version.
-data UpdateCheck = CheckRunning | CheckIdle
-
 -- | Show a look for a newer version running, on the Check for updates
 -- button, which says so and can't be clicked until it is done.
 showUpdateCheck :: UpdateCheck -> IO ()
 showUpdateCheck CheckRunning = c_checking 1
 showUpdateCheck CheckIdle = c_checking 0
-
--- | What the last look for a newer version found, in a few words.
-data UpdateStatus
-    = -- | none is newer, as the words say; shown with a tick
-      UpToDate String
-    | -- | anything else, such as that it couldn't look
-      UpdateNote String
 
 -- | Show what the last look for a newer version found, in the strip across
 -- the top of the window, beside the Check for updates button.
@@ -151,11 +143,11 @@ showUpdateStatus (UpdateNote s) = withCWString s (c_update_status 0)
 -- | Offer something in the strip across the top of the window, which turns
 -- amber, with a button, and perhaps an item in the tray's menu, either of
 -- which asks for it with 'OfferAction'. Nothing takes the offer back.
-showOffer :: Maybe (String, String, Maybe String) -> IO ()
+showOffer :: Maybe Notice -> IO ()
 showOffer o = withCWString text $ \t -> withCWString button $ \b -> withCWString tray (c_offer t b)
   where
     (text, button, tray) = case o of
-        Just (t, b, m) -> (t, b, fromMaybe "" m)
+        Just (Notice t b m) -> (t, b, fromMaybe "" m)
         Nothing -> ("", "", "")
 
 -- | Whether the window or the log's own window is open; hidden in the tray
@@ -215,23 +207,10 @@ list TrimKey = 2
 guiLog :: String -> IO ()
 guiLog line = withCWString line c_log
 
-data CameraState
-    = Searching
-    | Tracking
-    | -- | why not
-      CameraDown String
-
 showCamera :: CameraState -> IO ()
 showCamera Searching = withCWString "" (c_camera 0)
 showCamera Tracking = withCWString "" (c_camera 1)
 showCamera (CameraDown why) = withCWString why (c_camera 2)
-
--- | What a frame showed of the clip.
-data Sighting
-    = -- | the head, and the reflectors out of sight
-      InSight HeadPose [Reflector]
-    | -- | how many reflectors were seen
-      OutOfSight Int
 
 -- | Show a frame: the head, which reflectors were seen, and the pose games
 -- are sent. Skipped if the window is busy copying the last one.
@@ -279,9 +258,6 @@ showClip Nothing = c_clip 0 nullPtr
 showClip (Just (l, r, t)) = withArray (concatMap coords [l, r, t]) (c_clip 1)
   where
     coords (V3 x y z) = map realToFrac [x, y, z]
-
--- | Whether games see the head move.
-data Output = Live | Paused
 
 showOutput :: Output -> IO ()
 showOutput Live = c_paused 0
