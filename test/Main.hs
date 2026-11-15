@@ -53,6 +53,7 @@ main = do
                 , Test.Term.tests
                 , Test.Match.tests
                 , Test.Belief.tests
+                , Test.Lights.tests
                 , Test.Tracker.tests
                 , Test.Calibration.tests
                 , Test.Visibility.tests
