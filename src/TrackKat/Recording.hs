@@ -44,17 +44,17 @@ import qualified Data.ByteString as B
 import Data.ByteString.Builder (Builder, char7, hPutBuilder, intDec, integerDec, string7, stringUtf8, word8Dec)
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy.Char8 as BL
-import Data.Char (isDigit, isSpace)
+import Data.Char (intToDigit, isDigit, isSpace)
 import Data.List (dropWhileEnd)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8Lenient)
 import Data.Word (Word64, Word8)
 import System.IO (BufferMode (..), IOMode (..), hFlush, hSetBinaryMode, hSetBuffering, withFile)
-import Text.Read (readMaybe)
 
 import TrackKat.Calibration (defaultCalibration, parseCalibration)
 import TrackKat.Config (Config (..), clipModel, parseConfig)
 import TrackKat.Frame (Stripe (..))
+import TrackKat.Number (parseExact, parseNatural, renderExact)
 import TrackKat.Pose (Intrinsics (..))
 import TrackKat.Tracker
 
@@ -65,7 +65,9 @@ import TrackKat.Tracker
 --
 --   trackkat recording 1
 --   # tirprobe 0.1.142+3f9c2e1 --record problem.txt     (comments: notes)
---   camera 660.2235… 320.0 240.0     (focal length and centre, in pixels)
+--   camera 660.2235… 320.0 240.0     (focal length and centre, in pixels,
+--                                     each in the fewest digits that read
+--                                     back as the very same number)
 --   setting clip = 70 110 110        (each of trackkat.conf's settings)
 --   setting ignore lights = on
 --   calibration up = 0 -0.9 0.4      (trackkat.calibration's lines; none
@@ -160,7 +162,7 @@ renderStart s =
     mconcat $
         [string7 "trackkat recording " <> intDec formatVersion <> nl]
             ++ [stringUtf8 ("# " ++ n) <> nl | n <- startNotes s]
-            ++ [string7 "camera " <> string7 (unwords (map show [focal k, cx k, cy k])) <> nl]
+            ++ [string7 "camera " <> string7 (unwords (map renderExact [focal k, cx k, cy k])) <> nl]
             ++ [stringUtf8 ("setting " ++ n ++ " =" ++ (if null v then "" else " " ++ v)) <> nl | (n, v) <- startSettings s]
             ++ [stringUtf8 ("calibration " ++ l) <> nl | l <- calibrationLines (startCalibration s)]
             ++ [string7 "clock " <> integerDec (toInteger (startClock s)) <> nl]
@@ -182,8 +184,8 @@ renderEntry s = \case
     time t =
         let d = toInteger t - toInteger (startClock s)
             (whole, frac) = abs d `quotRem` 1000000000
-            digits = show frac
-         in (if d < 0 then char7 '-' else mempty) <> integerDec whole <> char7 '.' <> string7 (replicate (9 - length digits) '0' ++ digits)
+            nanoseconds = [intToDigit (fromInteger (frac `quot` 10 ^ place `rem` 10)) | place <- [8, 7 .. 0 :: Int]]
+         in (if d < 0 then char7 '-' else mempty) <> integerDec whole <> char7 '.' <> string7 nanoseconds
     stripe (Stripe line start points sumX total) =
         char7 ' ' <> intDec line <> char7 ',' <> intDec start <> char7 ',' <> intDec points <> char7 ',' <> intDec sumX <> char7 ',' <> intDec total
     oneLine = map (\c -> if c == '\n' || c == '\r' then ' ' else c)
@@ -238,7 +240,9 @@ parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
     [] -> Left "empty: not a trackkat recording"
     (_, Nothing) : _ -> Left "cut short: not a trackkat recording"
     (_, Just first) : rest
-        | BL.words first == ["trackkat", "recording", BL.pack (show formatVersion)] -> header emptyHeader rest
+        | ["trackkat", "recording", version] <- BL.words first
+        , parseNatural (BL.unpack version) == Just (toInteger formatVersion) ->
+            header emptyHeader rest
         | take 2 (BL.words first) == ["trackkat", "recording"] ->
             Left ("a version " ++ BL.unpack (BL.unwords (drop 2 (BL.words first))) ++ " recording; this reads version " ++ show formatVersion)
         | otherwise -> Left "not a trackkat recording: it should start with \"trackkat recording\""
@@ -252,12 +256,12 @@ parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
             | startsTimed str -> finish h ls
             | otherwise -> case break (== ' ') str of
                 ("camera", spec)
-                    | Just [f, x, y] <- traverse readMaybe (words spec) -> header h{hIntrinsics = Just (Intrinsics f x y)} rest
+                    | Just [f, x, y] <- traverse parseExact (words spec) -> header h{hIntrinsics = Just (Intrinsics f x y)} rest
                 ("setting", spec)
                     | (name, '=' : value) <- break (== '=') spec -> header h{hSettings = hSettings h ++ [(trim name, trim value)]} rest
                 ("calibration", ' ' : line) -> header h{hCalibration = hCalibration h ++ [line]} rest
                 ("clock", spec)
-                    | Just c <- readMaybe spec -> header h{hClock = Just c} rest
+                    | Just c <- parseNatural (trim spec), c <= toInteger (maxBound :: Word64) -> header h{hClock = Just (fromInteger c)} rest
                 _ -> Left ("line " ++ show n ++ ": not part of a recording's start: " ++ str)
     finish h ls = do
         k <- maybe (Left "no camera line") Right (hIntrinsics h)
@@ -334,11 +338,8 @@ parseTime str = case B8.uncons str of
     Just ('-', rest) -> negate <$> parseTime rest
     _ -> case B8.split '.' str of
         [whole, frac]
-            | not (B.null whole)
-            , B8.all isDigit whole
-            , B.length frac == 9
-            , B8.all isDigit frac ->
-                Just (read (B8.unpack whole) * 1000000000 + read (B8.unpack frac))
+            | B.length frac == 9 ->
+                (\seconds nanoseconds -> seconds * 1000000000 + nanoseconds) <$> parseNatural (B8.unpack whole) <*> parseNatural (B8.unpack frac)
         _ -> Nothing
 
 -- | Read a recording from a file, unless it can't be opened.
