@@ -48,6 +48,7 @@ import Foreign.C.Types (CFloat (..), CInt (..))
 import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
 import Foreign.Ptr (Ptr, nullPtr)
 
+import TrackKat.CommandLine (WindowAtStart (..))
 import TrackKat.Config (Binding, bindingFromCodes, renderBinding)
 import TrackKat.Frame (Blob (..))
 import TrackKat.Linear (V3 (..))
@@ -85,9 +86,6 @@ foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> I
 foreign import ccall unsafe "hts_gui_settings_message" c_settings_message :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_set_setting" c_set_setting :: CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString -> CWString -> CInt -> IO CInt
-
--- | Whether the window opens at start; the tray icon always shows.
-data WindowAtStart = WindowShown | WindowHidden
 
 -- | Start the window and tray icon on a thread of their own. Left is a
 -- Windows error code.

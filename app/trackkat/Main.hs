@@ -12,7 +12,6 @@ import Control.Exception (Handler (..), IOException, bracket_, catch, catches, d
 import Control.Monad (forM_, forever, unless, void, when, (<=<))
 import Data.Functor (($>), (<&>))
 import Data.IORef
-import Data.Maybe (fromMaybe)
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
 import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
@@ -27,6 +26,7 @@ import Text.Printf (printf)
 import TrackKat.Build
 import TrackKat.Calibration
 import TrackKat.Camera
+import TrackKat.CommandLine
 import TrackKat.Config
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
@@ -41,73 +41,6 @@ import TrackKat.Stats
 import TrackKat.Tracker
 import qualified TrackKat.USB as USB
 import TrackKat.Windows
-
--- | How trackkat was started.
-data Start
-    = ByHand
-    | -- | by NPClient, for a game (@--by-game@): in the tray, and quitting
-      -- when nothing has used it for 'idleSeconds'
-      ByGame
-    | -- | by Windows at login (@--tray@): in the tray, until quit
-      AtLogin
-
--- | What the command line asks for.
-data Command
-    = -- | track, after the process given, if any, has quit
-      Run Start WindowAtStart (Maybe Int)
-    | -- | install this copy, and start it
-      InstallCommand
-    | UninstallCommand Uninstall
-    | -- | name the files of a release, for CI to check the zip
-      ListFiles
-
-parseCommand :: [String] -> Maybe Command
-parseCommand = \case
-    ["--install"] -> Just InstallCommand
-    ["--uninstall"] -> Just (UninstallCommand AskFirst)
-    ["--uninstall", "--quiet"] -> Just (UninstallCommand Quietly)
-    ["--list-files"] -> Just ListFiles
-    args -> go ByHand Nothing Nothing args
-  where
-    go s w a = \case
-        [] -> Just (Run s (fromMaybe (defaultWindow s) w) a)
-        "--by-game" : rest -> go ByGame w a rest
-        "--tray" : rest -> go AtLogin w a rest
-        "--window" : rest -> go s (Just WindowShown) a rest
-        "--after" : pid : rest | [(n, "")] <- reads pid -> go s w (Just n) rest
-        _ -> Nothing
-
-usage :: String
-usage =
-    unlines
-        [ "usage: trackkat [--by-game | --tray] [--window] [--after PID]"
-        , "       trackkat --install | --uninstall [--quiet] | --list-files"
-        , ""
-        , "  --by-game    started by a game: in the tray, quitting once games are done"
-        , "  --tray       started at login: in the tray"
-        , "  --window     open the window even so"
-        , "  --after PID  take over from that trackkat once it has quit"
-        , "  --install    install this copy for this user, and start it"
-        , "  --uninstall  uninstall trackkat; --quiet keeps settings without asking"
-        , "  --list-files name the files of a release"
-        ]
-
-defaultWindow :: Start -> WindowAtStart
-defaultWindow ByHand = WindowShown
-defaultWindow _ = WindowHidden
-
--- | The arguments that start trackkat as it was started.
-startArgs :: Start -> WindowAtStart -> [String]
-startArgs s w = how ++ window
-  where
-    how = case s of
-        ByHand -> []
-        ByGame -> ["--by-game"]
-        AtLogin -> ["--tray"]
-    window = case (s, w) of
-        (ByHand, _) -> []
-        (_, WindowShown) -> ["--window"]
-        (_, WindowHidden) -> []
 
 -- | This build's version; none for a development build.
 version :: Maybe Version
@@ -137,7 +70,7 @@ installFromCommandLine = do
     v <- maybe (putStrLn "A development build can't be installed." >> exitFailure) pure version
     dir <- installCopy paths v >>= either (\err -> putStrLn ("Can't install trackkat: " ++ err) >> exitFailure) pure
     running <- quitRunning
-    launch (dir </> "trackkat.exe") (maybe [] (\pid -> ["--after", show pid]) running) >>= \case
+    launch (dir </> "trackkat.exe") (afterArgs running) >>= \case
         Right () -> putStrLn ("Installed trackkat in " ++ dir ++ ".")
         Left e -> putStrLn ("Installed trackkat in " ++ dir ++ ", but can't start it (error " ++ show e ++ ").") >> exitFailure
 
@@ -149,7 +82,7 @@ run start window after = do
     -- An older version, perhaps started by a game from its NPClient, or
     -- with an update waiting, hands over to the newest installed.
     forM_ (newerInstalled place installedNow) $ \v ->
-        launch (versionExe paths v) (startArgs start window ++ maybe [] (\pid -> ["--after", show pid]) after) >>= \case
+        launch (versionExe paths v) (startArgs start window ++ afterArgs after) >>= \case
             Right () -> exitSuccess
             Left e -> consoleLine ("Can't start trackkat " ++ versionFolder v ++ " (error " ++ show e ++ "); carrying on.")
     first <- case after of
