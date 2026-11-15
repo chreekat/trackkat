@@ -38,7 +38,7 @@ simulations =
                 "a synthetic session"
                 [ testCase "the recording's start reads back" $ reading session $ \_ r ->
                     assertBool "" $
-                        show (recStart r) == show sessionStart{startCalibration = startCalibration (recStart r)}
+                        recStart r == sessionStart{startCalibration = startCalibration (recStart r)}
                             && fmap (renderCalibration . trackerCalibration) (startTracker (recStart r)) == fmap (renderCalibration . trackerCalibration) (startTracker sessionStart)
                 , testCase "the recording's entries read back" $ reading session $ \_ r ->
                     assertBool "" $ recEntries r == concatMap sessionEntries recordedSession
