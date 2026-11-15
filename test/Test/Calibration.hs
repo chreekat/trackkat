@@ -6,12 +6,16 @@ import Control.Monad (forM_)
 import Data.Either (isLeft)
 import Data.List (isPrefixOf)
 import Data.Maybe (isNothing)
-import Test.Tasty (TestTree)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.QuickCheck
 
 import Test.Check
+import Test.Gen (genTurn, genWritten, written)
+import qualified Test.Gen as Gen
 import Test.Simulation
 import TrackKat.Calibration
 import TrackKat.Linear
+import TrackKat.Number (renderNumber)
 import TrackKat.Pose
 import TrackKat.Synth
 
@@ -86,6 +90,87 @@ tests = group "Calibration" $ do
     check "bad up" $ isLeft (parseCalibration "up = 0 0 0\n")
     check "bad line" $ isLeft (parseCalibration "# fine\nnonsense\n")
     check "unknown calibration setting" $ either id (const "") (parseCalibration "tilt = 3\n") == "line 1: unknown setting \"tilt\""
+    tree properties
+
+properties :: TestTree
+properties =
+    testGroup
+        "properties"
+        [ testProperty "a calibration file is loaded as it says" $
+            forAllShrink genSaved shrinkSaved $ \file ->
+                case parseCalibration (savedText file) of
+                    Left err -> counterexample err False
+                    Right c ->
+                        conjoin
+                            [ case (savedUp file, savedTurning file) of
+                                (Just up, Just turning) | turning > 0 -> counterexample (show (levelUp (estimatedLevel c))) (property (angleBetween (levelUp (estimatedLevel c)) up < 1e-9))
+                                _ -> property True
+                            , maybe (property True) (\turning -> levelTurning c === min 1800 turning) (savedTurning file)
+                            , maybe (property True) (Gen.closeV 1e-6 (estimatedPivot c)) (savedPivot file)
+                            , maybe (property True) (pivotTurns c ===) (savedWindows file)
+                            ]
+        , testProperty "a calibration saved, loaded and saved again is saved the same" $
+            forAllShrink genSaved shrinkSaved $ \file ->
+                case parseCalibration (savedText file) of
+                    Left err -> counterexample err False
+                    Right c ->
+                        let settings = map (unwords . map unsigned . words) . filter ((/= "#") . take 1) . lines
+                            -- A number that rounds to nothing from below is written so.
+                            unsigned number = if number == "-0" then "0" else number
+                         in fmap (settings . renderCalibration) (parseCalibration (renderCalibration c)) === Right (settings (renderCalibration c))
+        ]
+
+-- | What a calibration file says: up, the turning it was learnt from, the
+-- pivot, the windows it was learnt from, and the information about it.
+data Saved = Saved
+    { savedUp :: Maybe V3
+    , savedTurning :: Maybe Double
+    , savedPivot :: Maybe V3
+    , savedWindows :: Maybe Double
+    , savedInformation :: Maybe [Double]
+    }
+    deriving (Show)
+
+savedText :: Saved -> String
+savedText file =
+    unlines . concat $
+        [ ["up = " ++ numbers [x, y, z] | Just (V3 x y z) <- [savedUp file]]
+        , ["turning = " ++ numbers [w] | Just w <- [savedTurning file]]
+        , ["pivot = " ++ numbers [x, y, z] | Just (V3 x y z) <- [savedPivot file]]
+        , ["pivot windows = " ++ numbers [w] | Just w <- [savedWindows file]]
+        , ["pivot information = " ++ numbers info | Just info <- [savedInformation file]]
+        ]
+  where
+    numbers = unwords . map renderNumber
+
+-- | A file as trackkat writes one, or with some of its lines gone: up
+-- within 40 degrees of the camera's, a pivot within 300 mm of the clip,
+-- and information that tells the pivot in every direction.
+genSaved :: Gen Saved
+genSaved =
+    Saved
+        <$> perhaps ((\turn -> writtenV (mulMV (rodrigues turn) (V3 0 (-1) 0))) <$> genTurn 40)
+        <*> perhaps (genWritten (0, 50000000))
+        <*> perhaps (V3 <$> mm <*> mm <*> mm)
+        <*> perhaps (written . (* 10000) <$> chooseInt (0, 500))
+        <*> perhaps information
+  where
+    perhaps g = frequency [(1, pure Nothing), (4, Just <$> g)]
+    mm = genWritten (-3000000, 3000000)
+    writtenV (V3 x y z) = V3 (rounded x) (rounded y) (rounded z)
+    rounded x = written (round (x * 10000))
+    information = (\a b d f g j -> [a, b, d, f, g, j]) <$> diagonal <*> off <*> off <*> diagonal <*> off <*> diagonal
+    diagonal = genWritten (10000, 5000000)
+    off = genWritten (-3000, 3000)
+
+-- | Files with a line gone.
+shrinkSaved :: Saved -> [Saved]
+shrinkSaved file =
+    [file{savedUp = Nothing} | Just _ <- [savedUp file]]
+        ++ [file{savedTurning = Nothing} | Just _ <- [savedTurning file]]
+        ++ [file{savedPivot = Nothing} | Just _ <- [savedPivot file]]
+        ++ [file{savedWindows = Nothing} | Just _ <- [savedWindows file]]
+        ++ [file{savedInformation = Nothing} | Just _ <- [savedInformation file]]
 
 -- | A camera tipped 13 degrees down and 4 to its right.
 tilt :: M33
