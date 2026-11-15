@@ -489,14 +489,14 @@ instance Arbitrary ReflectorBlobs where
     shrink (ReflectorBlobs three) = ReflectorBlobs <$> shrinkThree shrinkBlob three
 
 -- | The sizes the reflectors have had, in pixels at 1 m: none seen yet, or
--- each seen at up to the given size, its usual size no less than its
--- latest.
+-- each seen at up to the given size, its usual size from twice its latest
+-- down to a twentieth of it, as when it has faded out of sight.
 genSizes :: Double -> Gen (Three Size)
 genSizes most = oneof [pure (pure noSize), genThree size]
   where
     size = do
         latest <- choose (1, most)
-        Size latest . (latest *) <$> choose (1, 2)
+        Size latest . (latest *) <$> choose (0.05, 2)
 
 -- | None seen yet, and each with its usual size its latest.
 shrinkSizes :: Three Size -> [Three Size]

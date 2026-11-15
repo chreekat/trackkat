@@ -50,7 +50,8 @@ data Size = Size
     { sizeLatest :: !Double
     -- ^ in the last frame it was seen in
     , sizeUsual :: !Double
-    -- ^ the most it has been lately
+    -- ^ the most it has been lately, faded since: no less than the latest
+    -- when that was seen, and nothing only if the reflector never was
     }
     deriving (Eq, Show)
 
