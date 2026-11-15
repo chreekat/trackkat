@@ -36,6 +36,9 @@ Roughly in order.
 - Ground truth from a webcam: record it alongside the camera and estimate the
   head pose from the face, to check poses, the learnt pivot and level, and the
   reflectors' shift.
+- Aim in the window: its curves and smoothing are only in `trackkat.conf`,
+  and a binding's `hold` or `double` is typed after it in its list rather
+  than chosen.
 
 - For a second kind of clip (e.g. the side-mounted, LED TrackClip PRO),
   once one is in hand to check against:
@@ -124,8 +127,17 @@ that tests found false. None is fixed.
   contradictions 16 to 19 in [docs/heuristics.md](docs/heuristics.md).
 - A settings reload that changes nothing still rebinds hotkeys and
   re-shows settings.
-- Hotkeys are only read when frames arrive, so they do nothing while the
-  camera is away.
+- Keys and buttons are only looked at when frames arrive, so they do nothing
+  while the camera is away, and then every press made meanwhile acts at
+  once when it is back, up to 64 presses and releases; and a hold begins,
+  and a tap that waited on a double is made, only at a frame.
+- A key whose release Windows never tells of, as when the screen is locked
+  while it is down, stays held, and aiming its hold began stays on, until
+  the key is next pressed.
+- With two keys down that each aim while held, letting go of either ends
+  aiming.
+- `describeChanges` says a list of bindings emptied as `trim = `, with a
+  space after it.
 - Pause after a recenter with the clip out of sight holds the centred
   view, not the pose games last saw.
 - A "Check for updates" click with no network still puts off the next
