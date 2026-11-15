@@ -1,5 +1,7 @@
--- | Generators, each with the shrinks that go with it, and comparisons to
--- within a tolerance, for properties of several subjects.
+-- | What properties of several subjects are about: a type for each kind of
+-- thing they hold of, made up and made simpler by its 'Arbitrary'
+-- instance; the generators and shrinks those are made of; and comparisons
+-- to within a tolerance. (See "Test.Instances" for trackkat's own types.)
 module Test.Gen (
     -- * Comparing
     close,
