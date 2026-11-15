@@ -32,6 +32,7 @@ module TrackKat.Branch (
 import Data.Maybe (fromMaybe)
 import Text.Printf (printf)
 
+import TrackKat.Belief
 import TrackKat.Calibration
 import TrackKat.Linear (V3)
 import TrackKat.Pose
@@ -107,15 +108,6 @@ import TrackKat.World (World (..), inDegrees, inMillimetres, times, world)
 -- ('Evidence'), and windows are counted by whether they said anything
 -- ('branchWindows').
 
--- | Probabilities of the four combinations of the tracked pose and the
--- reference being the head's or the mirror image.
-data Belief = Belief
-    { bothTrue :: !Double
-    , referenceMirrored :: !Double
-    , trackedMirrored :: !Double
-    , bothMirrored :: !Double
-    }
-
 -- | Whether the tracked pose and its mirror image are close.
 data Closeness = Apart | Together
     deriving (Eq)
@@ -158,7 +150,7 @@ data Place = Place !Pose !Double
 
 -- | Nothing known yet about a clip of the given shape.
 newBranch :: Model -> Branch
-newBranch m = Branch m (Belief 0.25 0.25 0.25 0.25) Apart Nothing Nothing Nothing [] noTally
+newBranch m = Branch m unknown Apart Nothing Nothing Nothing [] noTally
 
 -- | How many windows of turning have been weighed since the clip was
 -- last set, and how many said nothing, by the term that says so.
@@ -170,23 +162,10 @@ branchWindows = brTally
 followedMirror :: Branch -> Maybe Pose
 followedMirror = brMirror
 
--- | How likely the tracked pose is the mirror image.
-trackedMirrorChance :: Belief -> Double
-trackedMirrorChance b = trackedMirrored b + bothMirrored b
-
--- | How likely the reference is the mirror image.
-referenceMirrorChance :: Belief -> Double
-referenceMirrorChance b = referenceMirrored b + bothMirrored b
-
 -- | Probability needed to act on: to switch to a mirror image, or to
 -- learn from the tracked pose.
 sure :: Double
 sure = 0.99
-
--- | The least any combination's probability gets, so that a long run of
--- evidence one way doesn't make the other unrecoverable.
-leastChance :: Double
-leastChance = 1e-3
 
 -- | The chance that tracking comes out of a meeting of the two poses on the
 -- other one from the one it went in on.
@@ -234,29 +213,6 @@ placesRemembered = 4
 -- world's 'headTurnSpread'.
 headReachDegrees :: Double
 headReachDegrees = inDegrees (headTurnSpread world)
-
-normalise :: Belief -> Belief
-normalise b = Belief (f bothTrue) (f referenceMirrored) (f trackedMirrored) (f bothMirrored)
-  where
-    floored = Belief (g bothTrue) (g referenceMirrored) (g trackedMirrored) (g bothMirrored)
-    g sel = max leastChance (sel b)
-    total = bothTrue floored + referenceMirrored floored + trackedMirrored floored + bothMirrored floored
-    f sel = sel floored / total
-
--- | The tracked pose's truth becomes, with the given chance, the opposite
--- of what it was.
-crossed :: Double -> Belief -> Belief
-crossed chance (Belief tt tm mt mm) =
-    Belief (stay tt mt) (stay tm mm) (stay mt tt) (stay mm tm)
-  where
-    stay same other = (1 - chance) * same + chance * other
-
--- | The odds for the tracked pose being the mirror image multiplied by
--- e to the given power.
-evidence :: Double -> Belief -> Belief
-evidence logOdds (Belief tt tm mt mm) = normalise (Belief tt tm (e * mt) (e * mm))
-  where
-    e = exp logOdds
 
 -- | Take in a tracked pose seen at the given time in seconds, given the
 -- pivot in the model's axes, the reference if there is one, how clearly
@@ -337,20 +293,14 @@ foundAfresh br = br{brBelief = crossed 0.5 (brBelief br), brCloseness = Apart, b
 
 -- | The tracked pose became the reference.
 recentered :: Branch -> Branch
-recentered br = br{brBelief = Belief (tt + tm) 0 0 (mt + mm), brTurned = Nothing}
-  where
-    Belief tt tm mt mm = brBelief br
+recentered br = br{brBelief = agreed (brBelief br), brTurned = Nothing}
 
 -- | The belief, weighed by how far the head would have turned from the
 -- reference on each combination.
 judged :: Branch -> Belief
 judged br = case brTurned br of
     Nothing -> b
-    Just (Turned alike unalike) ->
-        let near = reach alike
-            far = reach unalike
-            total = near * (bothTrue b + bothMirrored b) + far * (referenceMirrored b + trackedMirrored b)
-         in Belief (near * bothTrue b / total) (far * referenceMirrored b / total) (far * trackedMirrored b / total) (near * bothMirrored b / total)
+    Just (Turned alike unalike) -> weighed (reach alike) (reach unalike) b
   where
     b = brBelief br
     reach = exp . nats . score reaching
@@ -376,8 +326,6 @@ corrected c was br = case c of
     MirrorTracked -> trackedSwitched (swapTracked (brBelief br)) (swapTurned <$> brTurned br)
     MirrorBoth -> trackedSwitched (swapTracked (swapReference (brBelief br))) (brTurned br)
   where
-    swapTracked (Belief tt tm mt mm) = Belief mt mm tt tm
-    swapReference (Belief tt tm mt mm) = Belief tm tt mm mt
     -- Switching either pose for its mirror image swaps which combinations
     -- have the head turned alike.
     swapTurned (Turned alike unalike) = Turned unalike alike
