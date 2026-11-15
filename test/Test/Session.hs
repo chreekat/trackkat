@@ -4,11 +4,13 @@
 module Test.Session (tests) where
 
 import Data.List (mapAccumL)
+import Data.Maybe (isJust)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck
 
 import Test.Gen
+import Test.Instances ()
 import TrackKat.Calibration
 import TrackKat.Config
 import TrackKat.Controls
@@ -55,7 +57,7 @@ tests =
                     , "Trying the camera again in 3 seconds."
                     ]
         , testProperty "every frame sends games one pose and shows the window one frame, and nothing else sends or shows one" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 conjoin
                     [ counterexample (show event) $
                         (length [() | Publish _ <- effects], length [() | ShowFrame _ _ <- effects], length [() | ShowBlobs _ _ <- effects])
@@ -63,7 +65,7 @@ tests =
                     | (_, event, _, effects) <- trace moves
                     ]
         , testProperty "paused, games are sent the pose held, the view as it was then, whatever happens until the user resumes" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 conjoin
                     [ counterexample (show event) $ case (sSending before, sSending after) of
                         (Following, Holding held) -> held === sLatest after .&&. property (pauses event)
@@ -76,7 +78,7 @@ tests =
                     | (before, event, after, effects) <- trace moves
                     ]
         , testProperty "pausing and resuming tell the window and the log, and nothing else does" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 conjoin
                     [ counterexample (show event) $
                         [o | ShowOutput o <- effects] === case (sSending before, sSending after) of
@@ -86,13 +88,13 @@ tests =
                     | (before, event, after, effects) <- trace moves
                     ]
         , testProperty "recentering clears the trim, telling the window and the log if there was one" $
-            forAllShrink genMoves shrinkMoves $ \moves -> forAll (elements [Ask ToRecenter, Keys [RecenterKey] NoGameAsked, Keys [] GameAsked]) $ \recentering ->
+            \(Moves moves) (Recentering recentering) ->
                 let (before, _, after, effects) = last (trace (moves ++ [recentering]))
                  in sTrim after === NoTrim
                         .&&. [t | ShowTrim t <- effects] === [NoTrim | sTrim before /= NoTrim]
                         .&&. userLines effects === ["Trim cleared." | sTrim before /= NoTrim]
         , testProperty "trimming takes the pose games are sent as forward, and doesn't move a pose held" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 let (before, _, after, effects) = last (trace (moves ++ [Ask ToTrim]))
                     view = case sSending before of
                         Holding held -> held
@@ -101,20 +103,20 @@ tests =
                         .&&. sSending after === sSending before
                         .&&. [t | ShowTrim t <- effects] === [trimTo view]
         , testProperty "with the clip out of sight, recentering centres the view at once" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 let (before, _, after, _) = last (trace (moves ++ [Ask ToRecenter]))
                  in case sOutcome before of
                         Just Tracked{} -> sLatest after === sLatest before
                         _ -> sLatest after === centred
         , testProperty "whatever changes what the window says of the camera, the output, the trim or the calibration is logged for the user" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 conjoin
                     [ counterexample (show event) $ counterexample (show effects) $ not (null (userLines effects))
                     | (_, event, _, effects) <- trace moves
                     , any logged effects
                     ]
         , testProperty "a settings file saved with nothing changed changes nothing and logs nothing: the hotkeys are bound again and the window shown its text" $
-            forAllShrink genMoves shrinkMoves $ \moves -> forAll (elements [VirtualView, PhysicalView, CameraView]) $ \view ->
+            \(Moves moves) view ->
                 let before = reached moves
                     same = (sSettings before){headView = view}
                     (after, effects) = step (SettingsSaved "text" same) before
@@ -122,7 +124,7 @@ tests =
                         .&&. sSettings after === same
                         .&&. unchanged before after
         , testProperty "settings saved are the session's settings, and games and Windows are told of just what changed for them" $
-            forAllShrink genMoves shrinkMoves $ \moves -> forAllShrink genConfig shrinkConfig $ \new ->
+            \(Moves moves) (Sayable new) ->
                 let before = reached moves
                     old = sSettings before
                     (after, effects) = step (SettingsSaved "text" new) before
@@ -134,7 +136,7 @@ tests =
                             === [describeChanges old new | new /= old{headView = headView new}]
                                 ++ ["Tracking the clip's new shape; recentering." | clip new /= clip old]
         , testProperty "a hotkey held or pressed twice between looks acts once, and games asking to recenter count just when they have since the last look" $
-            forAllShrink genMoves shrinkMoves $ \moves -> forAll (sublistOf [RecenterKey, PauseKey, TrimKey, RecenterKey, PauseKey, TrimKey] >>= shuffle) $ \keys -> forAll (elements [GameAsked, NoGameAsked]) $ \game ->
+            \(Moves moves) (Held keys) game ->
                 let before = reached moves
                     recenters = sRecenters before + (if game == GameAsked then 1 else 0)
                     asked =
@@ -147,14 +149,14 @@ tests =
                         .&&. unchanged one polled
                         .&&. sRecenters polled === recenters
         , testProperty "what games asked while the camera was away is forgotten when it is found" $
-            forAllShrink genMoves shrinkMoves $ \moves -> forAll (chooseInt (0, 5)) $ \more ->
+            \(Moves moves) (More more) ->
                 let before = reached moves
                     recenters = sRecenters before + more
                     (found, _) = step (CameraConnected recenters) before
                     (after, effects) = step (ControlsPolled [] recenters) found
                  in map brief effects === [] .&&. unchanged found after
         , testProperty "a calibration file that is missing or can't be read starts the session from none, and one that can from what it says" $
-            forAll (elements [Nothing, Just (Left "line 3: no pivot"), Just (Right defaultCalibration)]) $ \found ->
+            \(Found found) ->
                 let (c, effects) = startingCalibration "trackkat.calibration" found
                     none = [noCalibration]
                  in renderCalibration c === renderCalibration defaultCalibration
@@ -165,7 +167,7 @@ tests =
                                     .&&. [shown | ShowCalibration shown <- effects] === none
                             Just (Right _) -> length (userLines effects) === 2 .&&. length [() | ShowCalibration _ <- effects] === 1
         , testProperty "clearing the calibration tracks afresh from none, and saves none" $
-            forAllShrink genMoves shrinkMoves $ \moves ->
+            \(Moves moves) ->
                 let (_, _, after, effects) = last (trace (moves ++ [Ask ToClear]))
                     none = renderCalibration defaultCalibration
                  in renderCalibration (trackerCalibration (sTracker after)) === none
@@ -232,7 +234,7 @@ data Move
     | -- | the settings file saved
       Save Config
     | Corrupt
-    deriving (Show)
+    deriving (Eq, Show)
 
 data GameAsked = GameAsked | NoGameAsked
     deriving (Eq, Show)
@@ -293,29 +295,73 @@ pauses _ = False
 
 -- | A few moves: mostly frames, of a head turning a little way from one
 -- to the next so that it can be followed, with all else among them.
-genMoves :: Gen [Move]
-genMoves = scale (`div` 3) (listOf genMove)
+-- Simpler of fewer moves, and simpler ones.
+newtype Moves = Moves [Move]
+    deriving (Show)
 
-genMove :: Gen Move
-genMove =
-    frequency
-        [ (6, See <$> (fromIntegral <$> chooseInt (-8, 8)) <*> (fromIntegral <$> chooseInt (-5, 5)))
-        , (1, pure Dark)
-        , (1, pure Glint)
-        , (3, Keys <$> sublistOf [RecenterKey, PauseKey, TrimKey] <*> elements [NoGameAsked, NoGameAsked, GameAsked])
-        , (5, Ask <$> elements [ToRecenter, ToPause, ToPause, ToTrim, ToTrim, ToCalibrate, ToClear])
-        , (1, Save <$> genConfig)
-        , (1, elements [Seek, Connect, Stop "The camera stopped.", Corrupt])
-        ]
+instance Arbitrary Moves where
+    arbitrary = Moves <$> scale (`div` 3) (listOf arbitrary)
+    shrink (Moves moves) = Moves <$> shrink moves
 
--- | Fewer moves, and simpler ones: a head turned less, fewer keys, and
--- settings nearer the defaults.
-shrinkMoves :: [Move] -> [[Move]]
-shrinkMoves = shrinkList shrinkMove
+-- | Simpler with a head turned less, fewer keys, and settings nearer the
+-- defaults.
+instance Arbitrary Move where
+    arbitrary =
+        frequency
+            [ (6, See <$> (fromIntegral <$> chooseInt (-8, 8)) <*> (fromIntegral <$> chooseInt (-5, 5)))
+            , (1, pure Dark)
+            , (1, pure Glint)
+            , (3, Keys <$> sublistOf [RecenterKey, PauseKey, TrimKey] <*> elements [NoGameAsked, NoGameAsked, GameAsked])
+            , (5, Ask <$> elements [ToRecenter, ToPause, ToPause, ToTrim, ToTrim, ToCalibrate, ToClear])
+            , (1, Save <$> genConfig)
+            , (1, elements [Seek, Connect, Stop "The camera stopped.", Corrupt])
+            ]
+    shrink move = case move of
+        See y p -> [See 0 0 | (y, p) /= (0, 0)]
+        Keys keys game -> [Keys keys' game | keys' <- shrinkList (const []) keys] ++ [Keys keys NoGameAsked | game == GameAsked]
+        Save config -> Save <$> shrinkConfig config
+        _ -> []
 
-shrinkMove :: Move -> [Move]
-shrinkMove move = case move of
-    See y p -> [See 0 0 | (y, p) /= (0, 0)]
-    Keys keys game -> [Keys keys' game | keys' <- shrinkList (const []) keys] ++ [Keys keys NoGameAsked | game == GameAsked]
-    Save config -> Save <$> shrinkConfig config
-    _ -> []
+-- | A move that recenters: asked for in the window, by the hotkey, or by a
+-- game.
+newtype Recentering = Recentering Move
+    deriving (Show)
+
+instance Arbitrary Recentering where
+    arbitrary = Recentering <$> elements recenterings
+    shrink (Recentering move) = Recentering <$> earlier recenterings move
+
+recenterings :: [Move]
+recenterings = [Ask ToRecenter, Keys [RecenterKey] NoGameAsked, Keys [] GameAsked]
+
+-- | The hotkeys found pressed at a look, some of them twice, in any order;
+-- simpler of fewer.
+newtype Held = Held [Hotkey]
+    deriving (Show)
+
+instance Arbitrary Held where
+    arbitrary = Held <$> (sublistOf [RecenterKey, PauseKey, TrimKey, RecenterKey, PauseKey, TrimKey] >>= shuffle)
+    shrink (Held keys) = Held <$> shrinkList (const []) keys
+
+instance Arbitrary GameAsked where
+    arbitrary = elements [GameAsked, NoGameAsked]
+    shrink = earlier [NoGameAsked, GameAsked]
+
+-- | How many more times games have asked to recenter, up to five.
+newtype More = More Int
+    deriving (Show)
+
+instance Arbitrary More where
+    arbitrary = More <$> chooseInt (0, 5)
+    shrink (More n) = More <$> shrinkFrom 0 n
+
+-- | What is found of a calibration file: none, one that can't be read, or
+-- what one says. Simplest none.
+newtype Found = Found (Maybe (Either String Calibration))
+
+instance Show Found where
+    show (Found found) = show (fmap (fmap renderCalibration) found)
+
+instance Arbitrary Found where
+    arbitrary = Found <$> elements [Nothing, Just (Left "line 3: no pivot"), Just (Right defaultCalibration)]
+    shrink (Found found) = [Found Nothing | isJust found]
