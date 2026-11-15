@@ -36,7 +36,7 @@ import TrackKat.Belief
 import TrackKat.Calibration
 import TrackKat.Linear (V3)
 import TrackKat.Pose
-import TrackKat.Term (Bound (..), Measure (..), Name (..), Score (..), Tally, Term, accepts, gate, gaussian, likelihood, noTally, score, tally, verdict)
+import TrackKat.Term (Bound (..), LogOdds (..), Measure (..), Name (..), Tally, Term, accepts, gate, gaussian, likelihood, noTally, over, score, tally, verdict)
 import TrackKat.World (Instant, World (..), inDegrees, inMillimetres, times, world, (.-.))
 
 -- Note [Which pose is the head's]
@@ -166,13 +166,13 @@ followedMirror = brMirror
 
 -- | Probability needed to act on: to switch to a mirror image, or to
 -- learn from the tracked pose.
-sure :: Double
-sure = 0.99
+sure :: Chance
+sure = chance 0.99
 
 -- | The chance that tracking comes out of a meeting of the two poses on the
 -- other one from the one it went in on.
-crossingChance :: Double
-crossingChance = 0.3
+crossingChance :: Chance
+crossingChance = chance 0.3
 
 -- | Degrees between the tracked pose and its mirror image within which the
 -- two have met.
@@ -256,7 +256,7 @@ watch now pivot reference clarity pose seen br = case seen of
                     [] -> (Place pose 0, near)
                 after = max (negate windowWeight) (min windowWeight (before + odds))
                 places = Place at after : take (placesRemembered - 1) rest
-             in (evidence (after - before) (brBelief br), foldr seq places places)
+             in (evidence (LogOdds (after - before)) (brBelief br), foldr seq places places)
   where
     weight = (swayMM / pivotSpreadMM) ^ (2 :: Int)
     -- The log of a window's likelihood on its poses being the head's, given
@@ -268,7 +268,7 @@ watch now pivot reference clarity pose seen br = case seen of
     -- How much likelier, in nats, a window is on the mirror image's poses
     -- than on the tracked ones, if the head turned enough to tell.
     logOdds a b
-        | accepts telling a = Just (nats (score turning b) - nats (score turning a))
+        | accepts telling a = Just (oddsNats (score turning b `over` score turning a))
         | otherwise = Nothing
 
 -- | Whether a window of tracked poses turned enough to say which pose is
@@ -291,7 +291,7 @@ logAddExp a b = max a b + log (1 + exp (negate (abs (a - b))))
 
 -- | The clip was found afresh, on either pose as likely.
 foundAfresh :: Branch -> Branch
-foundAfresh br = br{brBelief = crossed 0.5 (brBelief br), brCloseness = Apart, brMirror = Nothing, brWindows = Nothing, brTurned = Nothing, brPlaces = []}
+foundAfresh br = br{brBelief = crossed (chance 0.5) (brBelief br), brCloseness = Apart, brMirror = Nothing, brWindows = Nothing, brTurned = Nothing, brPlaces = []}
 
 -- | The tracked pose became the reference.
 recentered :: Branch -> Branch
@@ -302,10 +302,9 @@ recentered br = br{brBelief = agreed (brBelief br), brTurned = Nothing}
 judged :: Branch -> Belief
 judged br = case brTurned br of
     Nothing -> b
-    Just (Turned alike unalike) -> weighed (reach alike) (reach unalike) b
+    Just (Turned alike unalike) -> weighed (score reaching alike) (score reaching unalike) b
   where
     b = brBelief br
-    reach = exp . nats . score reaching
 
 -- | Which poses to switch for their mirror images.
 data Correction = MirrorNeither | MirrorTracked | MirrorReference | MirrorBoth
@@ -342,8 +341,8 @@ corrected c was br = case c of
 -- switched, if that is known.
 data Evidence = Evidence
     { evCorrection :: Correction
-    , evTrackedMirrored :: Double
-    , evReferenceMirrored :: Double
+    , evTrackedMirrored :: Chance
+    , evReferenceMirrored :: Chance
     , evTurned :: Maybe (Double, Double)
     }
     deriving (Eq, Show)
@@ -370,11 +369,11 @@ describeEvidence (Evidence c tracked reference turned) =
             MirrorReference -> "switched the centre"
             MirrorBoth -> "switched the tracked pose and the centre"
         )
-        (100 * tracked)
-        (100 * reference)
+        (100 * inChance tracked)
+        (100 * inChance reference)
         (maybe "" (\(alike, unalike) -> printf "; the head turned %.0f degrees from centre as it was, %.0f with one switched" alike unalike :: String) turned)
 
 -- | Whether the tracked pose is surely the head's, so that what it shows
 -- can be learnt from.
 settled :: Branch -> Bool
-settled br = brCloseness br == Apart && trackedMirrorChance (judged br) <= 1 - sure
+settled br = brCloseness br == Apart && inChance (trackedMirrorChance (judged br)) <= 1 - inChance sure
