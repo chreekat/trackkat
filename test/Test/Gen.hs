@@ -10,6 +10,7 @@ module Test.Gen (
     genV3,
     shrinkV3,
     genDirection,
+    shrinkDirection,
     genTurn,
     shrinkTurn,
     degreesOf,
@@ -28,6 +29,7 @@ module Test.Gen (
 
     -- * Settings
     genWritten,
+    shrinkWritten,
     written,
     genBinding,
     shrinkBinding,
@@ -76,6 +78,10 @@ shrinkV3 (V3 x y z) = [V3 x' y z | x' <- simpler x] ++ [V3 x y' z | y' <- simple
 -- | A unit vector.
 genDirection :: Gen V3
 genDirection = normalize <$> genV3 1 `suchThat` ((> 0.1) . norm)
+
+-- | The axes, for a direction that isn't one.
+shrinkDirection :: V3 -> [V3]
+shrinkDirection v = [axis | axis <- [V3 1 0 0, V3 0 1 0, V3 0 0 1], v `notElem` [V3 1 0 0, V3 0 1 0, V3 0 0 1]]
 
 -- | A turn, as the vector along its axis as long as its angle in radians
 -- (see 'rodrigues'), of up to the given degrees.
@@ -163,6 +169,10 @@ turnedAbout pivot turn pose@(Pose r _) = Pose turned (poseAt pose pivot ^-^ mulM
 -- out, which isn't always the nearest number to them.
 genWritten :: (Int, Int) -> Gen Double
 genWritten range = written <$> chooseInt range
+
+-- | The whole number a written number is nearest, if it isn't one.
+shrinkWritten :: Double -> [Double]
+shrinkWritten x = [whole | let whole = fromIntegral (round x :: Int), whole /= x]
 
 written :: Int -> Double
 written tenThousandths = fromMaybe (error "written") (parseNumber (renderNumber (fromIntegral tenThousandths / 10000)))

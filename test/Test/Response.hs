@@ -160,7 +160,7 @@ properties =
                         .&&. leant{tx = tx p, tz = tz p} === p
                         .&&. leanWithView p{yaw = 0} === p{yaw = 0}
         , testProperty "a head held still is shaped to the same view in every frame, and with straight curves to itself" $
-            forAllShrink genResponse shrinkNothing $ \r -> forAllShrink genHeadPose shrinkHeadPose $ \p ->
+            forAllShrink genResponse shrinkResponse $ \r -> forAllShrink genHeadPose shrinkHeadPose $ \p ->
                 let views response = shaped response NoTrim (replicate 5 p)
                  in views r === concat (replicate 5 (take 1 (views r))) .&&. views straight === replicate 5 p
         , testProperty "a jump no head makes is left out for a frame" $
@@ -172,7 +172,7 @@ properties =
                     .&&. trimTo p === Trim p
                     .&&. shaped straight (trimTo p) [centre] === [p]
         , testProperty "a trimmed view looks within half a turn either way, and no further than straight up or down" $
-            forAllShrink genResponse shrinkNothing $ \r -> forAllShrink genHeadPose shrinkHeadPose $ \p -> forAllShrink genHeadPose shrinkHeadPose $ \view ->
+            forAllShrink genResponse shrinkResponse $ \r -> forAllShrink genHeadPose shrinkHeadPose $ \p -> forAllShrink genHeadPose shrinkHeadPose $ \view ->
                 conjoin
                     [ property (yaw out >= -180 && yaw out < 180 && roll out >= -180 && roll out < 180 && pitch out >= -90 && pitch out <= 90)
                     | out <- shaped r (trimTo view{yaw = 3 * yaw view, roll = 3 * roll view, pitch = 3 * pitch view}) [p]
@@ -261,3 +261,21 @@ genHeadPose = HeadPose <$> choose (-170, 170) <*> choose (-85, 85) <*> choose (-
 shrinkHeadPose :: HeadPose -> [HeadPose]
 shrinkHeadPose p =
     [p' | p' <- [p{yaw = 0}, p{pitch = 0}, p{roll = 0}, p{tx = 0}, p{ty = 0}, p{tz = 0}], p' /= p]
+
+-- | Responses with a curve a straight line, no smoothing, or leaning with
+-- the screen.
+shrinkResponse :: Response -> [Response]
+shrinkResponse r =
+    filter
+        (/= r)
+        [ r{smoothing = NoSmoothing}
+        , r{yawCurve = straight}
+        , r{pitchCurve = straight}
+        , r{rollCurve = straight}
+        , r{xCurve = straight}
+        , r{yCurve = straight}
+        , r{zCurve = straight}
+        , r{lean = LeanWithScreen}
+        ]
+  where
+    straight = Points [(1, 1)]

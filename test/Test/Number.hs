@@ -5,7 +5,7 @@ import Data.Char (isDigit)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (close, genWritten)
+import Test.Gen (close, genWritten, shrinkWritten)
 import TrackKat.Number
 
 tests :: TestTree
@@ -13,7 +13,7 @@ tests =
     testGroup
         "Number"
         [ testProperty "a number read from up to four decimals is read back the same once written" $
-            forAllShrink (genWritten (-100000000, 100000000)) shrinkNothing $ \x ->
+            forAllShrink (genWritten (-100000000, 100000000)) shrinkWritten $ \x ->
                 parseNumber (renderNumber x) === Just x
         , testProperty "a number is written to the nearest ten-thousandth, with no more decimals than it needs" $
             forAll (choose (-1e6, 1e6)) $ \x ->
