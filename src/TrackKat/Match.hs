@@ -19,7 +19,6 @@ module TrackKat.Match (
     sizeScore,
     unseenScore,
     matches,
-    splitMerged,
     bigEnoughForTwo,
 ) where
 

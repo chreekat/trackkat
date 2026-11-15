@@ -21,7 +21,6 @@ module TrackKat.Session (
     -- * In words
     status,
     noCalibration,
-    describeTrim,
 ) where
 
 import Text.Printf (printf)

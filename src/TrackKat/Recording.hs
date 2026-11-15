@@ -12,18 +12,15 @@ module TrackKat.Recording (
     StartingCalibration (..),
     Entry (..),
     Input (..),
-    formatVersion,
     renderStart,
     renderEntry,
     parseRecording,
     readRecording,
 
     -- * Time
-    trackerTime,
     secondsSince,
 
     -- * Tracking live
-    applyInput,
     startTracker,
     Recorder,
     notRecording,

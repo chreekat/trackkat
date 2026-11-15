@@ -8,7 +8,6 @@ module TrackKat.Tracker.Follow (
     follow,
     partlySeen,
     stillThere,
-    jumpRetries,
 ) where
 
 import Data.Either (rights)

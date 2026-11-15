@@ -32,10 +32,6 @@ module TrackKat.Tracker.Judge (
     -- * Limits
     maxTurn,
     maxMove,
-    turnSpread,
-    moveSpread,
-    maxReachTurn,
-    maxReachMove,
     nearest,
     farthest,
     maxFit,
