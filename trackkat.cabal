@@ -167,6 +167,7 @@ test-suite tests
     Test.Tracker.Choose
     Test.Tracker.Follow
     Test.Tracker.Judge
+    Test.Tracker.Kept
     Test.Tracker.Layout
     Test.Tracker.Sizes
     Test.Tracker.Trail
