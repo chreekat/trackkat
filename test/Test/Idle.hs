@@ -5,6 +5,8 @@ import Data.List (mapAccumL)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
+import Test.Gen (earlier)
+import Test.Instances ()
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Idle
 import TrackKat.Log
@@ -14,17 +16,17 @@ tests =
     testGroup
         "Idle"
         [ testProperty "started by hand or at login, trackkat never quits for want of use, and says nothing of it" $
-            forAllShrink genLooks shrinkLooks $ \looks -> forAll (elements [ByHand, AtLogin]) $ \start ->
+            \(Looking looks) (NotByGame start) ->
                 map snd (run start looks) === map (const (Busy, [])) looks
         , testProperty "started by a game, trackkat is to quit just once every look for a minute has found it unused" $
-            forAllShrink genLooks shrinkLooks $ \looks ->
+            \(Looking looks) ->
                 conjoin
                     [ counterexample (show (at, state)) $
                         (state == Quitting) === any (\since -> at - since >= fromIntegral idleSeconds) (unusedSince at looks)
                     | ((at, _), (state, _)) <- beforeQuitting (run ByGame looks)
                     ]
         , testProperty "the log says when the wait to quit begins, when it is called off and when it ends, each once" $
-            forAllShrink genLooks shrinkLooks $ \looks ->
+            \(Looking looks) ->
                 let states = map (fst . snd) (run ByGame looks)
                  in conjoin
                         [ counterexample (show (was, now, said)) $ case (was, now) of
@@ -36,7 +38,7 @@ tests =
                         ]
                         .&&. property (and [isUser line | (_, (_, said)) <- run ByGame looks, line <- said])
         , testProperty "once to quit, trackkat stays so" $
-            forAllShrink genLooks shrinkLooks $ \looks -> forAll (elements [ByHand, ByGame, AtLogin]) $ \start -> forAll (elements [Used, Unused]) $ \use ->
+            \(Looking looks) start use ->
                 idle start (sum (map fst looks)) use Quitting === (Quitting, [])
         ]
   where
@@ -71,12 +73,21 @@ unusedSince at looks = case span ((== Unused) . snd) (reverse (takeWhile ((<= at
   where
     timed = drop 1 (scanl (\(clock, _) (after, use) -> (clock + after, use)) (0, Used) looks)
 
--- | Looks half a second to a minute apart, in runs of the same finding.
-genLooks :: Gen Looks
-genLooks = concat <$> listOf (do use <- elements [Used, Unused]; n <- chooseInt (1, 8); vectorOf n ((,) <$> gap <*> pure use))
-  where
-    gap = oneof [pure 0.5, choose (0.5, 20), elements [59.5, 60]]
+-- | Looks half a second to a minute apart, in runs of the same finding;
+-- simpler of fewer, each half a second after the last.
+newtype Looking = Looking Looks
+    deriving (Show)
 
--- | Fewer looks, each half a second after the last.
-shrinkLooks :: Looks -> [Looks]
-shrinkLooks = shrinkList (\(after, use) -> [(0.5, use) | after /= 0.5])
+instance Arbitrary Looking where
+    arbitrary = Looking . concat <$> listOf (do use <- arbitrary; n <- chooseInt (1, 8); vectorOf n ((,) <$> gap <*> pure use))
+      where
+        gap = oneof [pure 0.5, choose (0.5, 20), elements [59.5, 60]]
+    shrink (Looking looks) = Looking <$> shrinkList (\(after, use) -> [(0.5, use) | after /= 0.5]) looks
+
+-- | A way trackkat is started that isn't by a game.
+newtype NotByGame = NotByGame Start
+    deriving (Show)
+
+instance Arbitrary NotByGame where
+    arbitrary = NotByGame <$> elements [ByHand, AtLogin]
+    shrink (NotByGame start) = NotByGame <$> earlier [ByHand, AtLogin] start
