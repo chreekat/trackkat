@@ -28,10 +28,12 @@ import TrackKat.Calibration
 import TrackKat.Camera
 import TrackKat.CommandLine
 import TrackKat.Config
+import TrackKat.Controls
 import TrackKat.Frame (Packet (..))
 import TrackKat.GamePose
 import TrackKat.Gui
 import TrackKat.Install
+import TrackKat.Log
 import TrackKat.Pose
 import TrackKat.Release
 import TrackKat.Response
@@ -127,17 +129,13 @@ run start window after = do
             (Keyboard, e) -> say ("Can't watch the keyboard for hotkeys (error " ++ show e ++ ").")
             (Mouse, e) -> say ("Can't watch the mouse for buttons (error " ++ show e ++ ").")
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
-        say $
-            printf
-                "Recenter: %s   Pause: %s   Trim: %s"
-                (keysAndButtons (recenterBindings config))
-                (keysAndButtons (pauseBindings config))
-                (keysAndButtons (trimBindings config))
+        say (describeBindings config)
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
         session <- newSession config =<< loadCalibration (clipModel (clip config)) calibrationFile
-        showButtons session
+        (naming, named) <- nameButtons <$> getMonotonicTime
+        logLine named
         withAsync (watchSettings paths settingsFile session stamp config) $ \_ ->
-            withAsync (joysticks session) $ \_ ->
+            withAsync (joysticks naming) $ \_ ->
                 withAsync (saveCalibrations calibrationFile (sSaving session)) $ \_ ->
                     withAsync (rememberServedGame gameFile) $ \_ ->
                         withAsync (maintain paths place session offered) $ \_ ->
@@ -383,6 +381,11 @@ rememberServedGame path = go 0
 say :: String -> IO ()
 say line = consoleLine line >> guiLog line
 
+-- | Log a line where those it is for read it.
+logLine :: Line -> IO ()
+logLine (ForUser line) = say line
+logLine (ForDeveloper line) = consoleLine line
+
 -- | Print a line to the terminal trackkat was started from, or to the file
 -- or pipe its output goes to, if any; quietly not, if it can't, as once
 -- the terminal has closed the pipe.
@@ -596,8 +599,6 @@ data Session = Session
     -- ^ where forward is for the view, until the next recenter
     , sLatest :: IORef HeadPose
     -- ^ the last pose sent, shaped
-    , sButtonsShown :: IORef Double
-    -- ^ until when joystick button presses are printed, in monotonic seconds
     , sSaving :: MVar Calibration
     -- ^ a calibration waiting to be saved
     , sCheckAsked :: MVar ()
@@ -615,7 +616,6 @@ newSession config c =
         <*> newIORef Nothing
         <*> newIORef NoTrim
         <*> newIORef centred
-        <*> newIORef 0
         <*> newEmptyMVar
         <*> newEmptyMVar
 
@@ -685,30 +685,16 @@ describeTrim NoTrim = "straight ahead"
 describeTrim (Trim t) =
     printf "yaw %+.0f pitch %+.0f roll %+.0f, x %+.0f y %+.0f z %+.0f mm" (yaw t) (pitch t) (roll t) (tx t) (ty t) (tz t)
 
--- | Print joystick button presses for the next minute, so they can be
--- copied into the settings file.
-showButtons :: Session -> IO ()
-showButtons s = do
-    now <- getMonotonicTime
-    writeIORef (sButtonsShown s) (now + 60)
-    say "For the next minute, joystick buttons you press are named here, ready to bind in trackkat.conf."
-
--- | Report joysticks coming and going, and the buttons pressed while
--- 'sButtonsShown' says to. A button pressed while trackkat's window waits
--- for one is added to the window's bindings.
-joysticks :: Session -> IO ()
-joysticks s = forever $ do
+-- | Report joysticks coming and going, and the buttons pressed, as
+-- 'joystickEffects' has it.
+joysticks :: ButtonNaming -> IO ()
+joysticks naming = forever $ do
     threadDelay 100000
     events <- takeJoystickEvents
     now <- getMonotonicTime
-    shownUntil <- readIORef (sButtonsShown s)
-    forM_ events $ \case
-        Connected j -> say ("Joystick connected: " ++ renderJoystick j)
-        Disconnected j -> say ("Joystick disconnected: " ++ renderJoystick j)
-        Pressed j n -> do
-            let b = JoystickButton j n
-            when (now < shownUntil) $ say ("Joystick button pressed: " ++ renderBinding b)
-            capturing >>= mapM_ (`addBinding` b)
+    forM_ (concatMap (joystickEffects naming now) events) $ \case
+        JoystickLog line -> logLine line
+        OfferButton b -> capturing >>= mapM_ (`addBinding` b)
 
 -- | Track until the camera goes away.
 track :: Session -> Camera -> IO ()
@@ -812,17 +798,6 @@ handleControls s seenRecenters = do
     when (RecenterKey `elem` keys || fromGames /= before) $ recenter s
     when (PauseKey `elem` keys) $ togglePause s
     when (TrimKey `elem` keys) $ trim s
-
--- | The keys and buttons bound to each hotkey.
-hotkeyBindings :: Config -> Hotkey -> [Binding]
-hotkeyBindings c RecenterKey = recenterBindings c
-hotkeyBindings c PauseKey = pauseBindings c
-hotkeyBindings c TrimKey = trimBindings c
-
--- | Bindings as the console lists them.
-keysAndButtons :: [Binding] -> String
-keysAndButtons [] = "none"
-keysAndButtons bs = renderBindings bs
 
 -- | Refinements are applied slowly, so only a new centre or a requested
 -- calibration resets shaping.

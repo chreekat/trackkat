@@ -9,6 +9,7 @@ import qualified Test.Calibration
 import qualified Test.Clips
 import qualified Test.CommandLine
 import qualified Test.Config
+import qualified Test.Controls
 import qualified Test.Following
 import qualified Test.Frame
 import qualified Test.Icons
@@ -66,6 +67,7 @@ main = do
                 , Test.Release.tests
                 , Test.ServedGame.tests
                 , Test.CommandLine.tests
+                , Test.Controls.tests
                 , Test.Icons.tests
                 ]
             , testGroup

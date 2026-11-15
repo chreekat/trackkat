@@ -41,6 +41,7 @@ import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
 
 import TrackKat.Config (Binding (..), Joystick (..), modifierMask, virtualKey)
+import TrackKat.Controls (Hotkey (..), JoystickEvent (..))
 import TrackKat.GamePose
 import TrackKat.ServedGame
 
@@ -221,10 +222,6 @@ scrambledGameName game = do
     name <- c_scrambled_game (fromIntegral game)
     if name == nullPtr then pure Nothing else Just <$> peekCString name
 
--- | An action bound to keys and joystick buttons.
-data Hotkey = RecenterKey | PauseKey | TrimKey
-    deriving (Eq, Show, Enum, Bounded)
-
 -- | What is watched for hotkeys.
 data Watched = Keyboard | Mouse | Joysticks
     deriving (Eq, Show)
@@ -264,11 +261,6 @@ hotkeyBit :: Hotkey -> CInt
 hotkeyBit RecenterKey = 1
 hotkeyBit PauseKey = 2
 hotkeyBit TrimKey = 4
-
--- | Something that happened to a joystick: it was attached (or found at
--- start), detached, or one of its buttons was pressed.
-data JoystickEvent = Connected Joystick | Disconnected Joystick | Pressed Joystick Int
-    deriving (Eq, Show)
 
 -- | Joystick events since the last call, oldest first.
 takeJoystickEvents :: IO [JoystickEvent]

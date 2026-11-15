@@ -23,11 +23,13 @@ library
     TrackKat.Camera
     TrackKat.CommandLine
     TrackKat.Config
+    TrackKat.Controls
     TrackKat.Display
     TrackKat.Frame
     TrackKat.GamePose
     TrackKat.Lights
     TrackKat.Linear
+    TrackKat.Log
     TrackKat.Match
     TrackKat.Number
     TrackKat.Pose
@@ -131,6 +133,7 @@ test-suite tests
     Test.Clips
     Test.CommandLine
     Test.Config
+    Test.Controls
     Test.Following
     Test.Frame
     Test.Gen
