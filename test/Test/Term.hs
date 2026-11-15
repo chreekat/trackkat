@@ -52,27 +52,27 @@ properties =
     testGroup
         "properties"
         [ testProperty "no terms change nothing, before or after" $
-            forAllShrink genSpecs shrinkSpecs $ \specs h ->
+            \specs h ->
                 let t = built specs
                  in said (mempty <> t) h === said t h .&&. said (t <> mempty) h === said t h
         , testProperty "terms add up the same however they are grouped" $
-            forAllShrink genSpecs shrinkSpecs $ \a -> forAllShrink genSpecs shrinkSpecs $ \b -> forAllShrink genSpecs shrinkSpecs $ \c h ->
+            \a b c h ->
                 let (x, y, z) = (built a, built b, built c)
                  in Term.findings ((x <> y) <> z) h === Term.findings (x <> (y <> z)) h
                         .&&. sameScore (Term.findings (x <> y <> z) h) (Term.score ((x <> y) <> z) h) (Term.score (x <> (y <> z)) h)
         , testProperty "a score is the sum of what each term scored" $
-            forAllShrink genSpecs shrinkSpecs $ \specs h ->
+            \specs h ->
                 let t = built specs
                  in sameScore (Term.findings t h) (Term.score t h) (Score (sum (map (nats . snd) (Term.explain t h))))
         , testProperty "terms together accept just what each of them accepts" $
-            forAllShrink genSpecs shrinkSpecs $ \specs h ->
+            \specs h ->
                 Term.accepts (built specs) h === all (\s -> Term.accepts (built [s]) h) specs
         , testProperty "one impossible term makes the sum impossible, wherever it is" $
-            forAllShrink genSpecs shrinkSpecs $ \before -> forAllShrink genSpecs shrinkSpecs $ \after h ->
+            \before after h ->
                 let never = Term.gate (Name "never" "never") (const False) (const (Measure 0 AtMost 0 "")) :: Term Figures
                  in Term.score (built before <> never <> built after) h === Term.impossible
         , testProperty "accepting, an accepting verdict, no rejections and a possible score go together" $
-            forAllShrink genSpecs shrinkSpecs $ \specs h ->
+            \specs h ->
                 let t = built specs
                     accepted = Term.accepts t h
                  in conjoin
@@ -83,21 +83,21 @@ properties =
                             Rejected failed -> property (not accepted) .&&. failed === Term.rejections t h
                         ]
         , testProperty "what rejects is among what is found, in order, and named by the verdict" $
-            forAllShrink genSpecs shrinkSpecs $ \specs h ->
+            \specs h ->
                 let t = built specs
                  in Term.rejections t h === filter (Term.isImpossible . findingScore) (Term.findings t h)
                         .&&. Term.rejectedBy (Term.verdict t h) === map (brief . findingName) (Term.rejections t h)
         , testProperty "each term finds one thing, in the order they were added" $
-            forAllShrink genSpecs shrinkSpecs $ \specs h ->
+            \specs h ->
                 map (brief . findingName) (Term.findings (built specs) h) === map specName specs
         , testProperty "a term about a part judges the whole as it judges the part" $
-            forAllShrink genSpecs shrinkSpecs $ \specs -> forAllShrink genPart shrinkPart $ \part h ->
+            \specs part h ->
                 said (Term.about (taking part) (built specs)) h === said (built specs) (taking part h)
         , testProperty "a term about a part of a part is about the part's part" $
-            forAllShrink genSpecs shrinkSpecs $ \specs -> forAllShrink genPart shrinkPart $ \f -> forAllShrink genPart shrinkPart $ \g h ->
+            \specs f g h ->
                 said (Term.about (taking f) (Term.about (taking g) (built specs))) h === said (Term.about (taking g . taking f) (built specs)) h
         , testProperty "verdicts are counted once each, acceptances first" $
-            forAllShrink genSpecs shrinkSpecs $ \specs hs ->
+            \specs hs ->
                 let verdicts = map (Term.verdict (built specs)) hs
                     counted = foldr Term.tally Term.noTally verdicts
                     rejected = [failed | Rejected failed <- verdicts]
@@ -163,20 +163,18 @@ built = foldMap one
         CostSpec w (NonNegative each) -> Term.cost (named spec) ((each *) . abs . figure w)
     named spec = Name (specName spec) ("it is " ++ specName spec)
 
-genSpecs :: Gen [Spec]
-genSpecs = listOf (oneof [MostSpec <$> which <*> arbitrary, LeastSpec <$> which <*> arbitrary, GaussianSpec <$> which <*> arbitrary, CostSpec <$> which <*> arbitrary])
-  where
-    which = arbitraryBoundedEnum
+-- | Simpler about earlier figures, with simpler limits.
+instance Arbitrary Spec where
+    arbitrary = oneof [MostSpec <$> which <*> arbitrary, LeastSpec <$> which <*> arbitrary, GaussianSpec <$> which <*> arbitrary, CostSpec <$> which <*> arbitrary]
+      where
+        which = arbitraryBoundedEnum
+    shrink (MostSpec w limit) = [MostSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
+    shrink (LeastSpec w limit) = [LeastSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
+    shrink (GaussianSpec w sigma) = [GaussianSpec w' sigma' | (w', sigma') <- shrinkPair (w, sigma)]
+    shrink (CostSpec w each) = [CostSpec w' each' | (w', each') <- shrinkPair (w, each)]
 
--- | Fewer terms, about earlier figures, with simpler limits.
-shrinkSpecs :: [Spec] -> [[Spec]]
-shrinkSpecs = shrinkList one
-  where
-    one (MostSpec w limit) = [MostSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
-    one (LeastSpec w limit) = [LeastSpec w' limit' | (w', limit') <- shrinkPair (w, limit)]
-    one (GaussianSpec w sigma) = [GaussianSpec w' sigma' | (w', sigma') <- shrinkPair (w, sigma)]
-    one (CostSpec w each) = [CostSpec w' each' | (w', each') <- shrinkPair (w, each)]
-    shrinkPair (w, x) = [(w', x) | w' <- shrinkBoundedEnum w] ++ [(w, x') | x' <- shrink x]
+shrinkPair :: (Arbitrary a) => (Which, a) -> [(Which, a)]
+shrinkPair (w, x) = [(w', x) | w' <- shrinkBoundedEnum w] ++ [(w, x') | x' <- shrink x]
 
 -- | A way of taking figures from other figures, as what to make it from:
 -- them turned about, or all of them scaled.
@@ -187,9 +185,7 @@ taking :: Part -> Figures -> Figures
 taking TurnedAbout (x, y, z) = (y, z, x)
 taking (Scaled k) (x, y, z) = (k * x, k * y, k * z)
 
-genPart :: Gen Part
-genPart = oneof [pure TurnedAbout, Scaled <$> arbitrary]
-
-shrinkPart :: Part -> [Part]
-shrinkPart TurnedAbout = []
-shrinkPart (Scaled k) = TurnedAbout : map Scaled (shrink k)
+instance Arbitrary Part where
+    arbitrary = oneof [pure TurnedAbout, Scaled <$> arbitrary]
+    shrink TurnedAbout = []
+    shrink (Scaled k) = TurnedAbout : map Scaled (shrink k)
