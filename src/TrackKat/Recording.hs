@@ -29,6 +29,7 @@ module TrackKat.Recording (
     notRecording,
     record,
     withRecorder,
+    liveFrame,
     trackLive,
 
     -- * Replaying
@@ -364,13 +365,20 @@ startTracker s = do
     pure (newTracker (startIntrinsics s) (clipModel (clip config)) (lightMasking config) calibration)
 
 -- | Carry out what the user did since the last frame, then track a frame
--- seen at the given time on the monotonic clock, recording both: what
--- tracking live does, and what 'replay' repeats.
+-- seen at the given time on the monotonic clock, with its counter: the
+-- entries that say so, which 'replay' repeats, and what tracking comes to.
+liveFrame :: [(Word64, Input)] -> Word64 -> Word8 -> [Stripe] -> Tracker -> ([Entry], (Tracker, Outcome, [Event]))
+liveFrame inputs at n stripes t =
+    ( [InputEntry pressed i | (pressed, i) <- inputs] ++ [FrameEntry at n stripes]
+    , step (trackerTime at) stripes (foldl (flip applyInput) t (map snd inputs))
+    )
+
+-- | Track a frame live (see 'liveFrame'), recording it.
 trackLive :: Recorder -> [(Word64, Input)] -> Word64 -> Word8 -> [Stripe] -> Tracker -> IO (Tracker, Outcome, [Event])
 trackLive rec inputs at n stripes t = do
-    mapM_ (\(pressed, i) -> record rec (InputEntry pressed i)) inputs
-    record rec (FrameEntry at n stripes)
-    pure (step (trackerTime at) stripes (foldl (flip applyInput) t (map snd inputs)))
+    let (entries, tracked) = liveFrame inputs at n stripes t
+    mapM_ (record rec) entries
+    pure tracked
 
 -- * Replaying
 
