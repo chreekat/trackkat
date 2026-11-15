@@ -2,9 +2,10 @@
 -- as tirprobe records one replays to the very same outcomes, events and
 -- poses, and the recordings of real problems in 'recordingRegressions'
 -- replay as they should.
-module Test.Recording (simulations) where
+module Test.Recording (simulations, properties) where
 
 import qualified Data.ByteString as B
+import Data.ByteString.Builder (toLazyByteString)
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BL
 import Data.Either (isLeft)
@@ -14,7 +15,10 @@ import System.Directory (getTemporaryDirectory, removePathForcibly)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup, withResource)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase)
+import Test.Tasty.QuickCheck
 
+import Test.Frame (genStripe)
+import Test.Gen (genConfig)
 import Test.Simulation (clipBent, headSeen)
 import TrackKat.Calibration
 import TrackKat.Config
@@ -167,3 +171,109 @@ recordedSession =
 sessionEntries :: (Word64, Word8, [Stripe], [(Word64, Input)], Maybe String) -> [Entry]
 sessionEntries (at, n, stripes, inputs, corrupt) =
     [CorruptEntry at why | Just why <- [corrupt]] ++ [InputEntry pressed i | (pressed, i) <- inputs] ++ [FrameEntry at n stripes]
+
+-- | Properties of recordings as text, and of replaying them.
+properties :: TestTree
+properties =
+    testGroup
+        "Recording"
+        [ testProperty "a recording is read back as written" $
+            forAllShrink genRecording shrinkRecording $ \r ->
+                case parseRecording (written r) of
+                    Left err -> counterexample err False
+                    Right back ->
+                        let (start, start') = (recStart r, recStart back)
+                         in conjoin
+                                [ startNotes start' === startNotes start
+                                , camera start' === camera start
+                                , startSettings start' === startSettings start
+                                , startClock start' === startClock start
+                                , recEntries back === recEntries r
+                                , written back === written r
+                                ]
+        , testProperty "a recording cut short after its first entry is read up to its last whole line" $
+            forAllShrink genRecording shrinkRecording $ \r ->
+                let whole = written r
+                    start = BL.length (toLazyByteString (renderStart (recStart r)))
+                    first = BL.length (toLazyByteString (foldMap (renderEntry (recStart r)) (take 1 (recEntries r))))
+                 in forAll (choose (start + first, BL.length whole)) $ \cut ->
+                        let kept = BL.take cut whole
+                            wholeLines = length (BL.elemIndices 10 (BL.drop start kept))
+                            cutShort = cut > start && BL.last kept /= 10
+                         in case parseRecording kept of
+                                Left err -> counterexample err False
+                                Right back ->
+                                    take wholeLines (recEntries back) === take wholeLines (recEntries r)
+                                        .&&. [why | Unreadable _ why <- drop wholeLines (recEntries back)] === ["cut short" | cutShort]
+                                        .&&. length (recEntries back) === wholeLines + (if cutShort then 1 else 0)
+        , testProperty "a session replays from its recording to what it came to live" $
+            forAllShrink genSession shrinkSession $ \session ->
+                case startTracker sessionStart of
+                    Left err -> counterexample err False
+                    Right t0 ->
+                        let (entries, live) = tracked t0 session
+                         in case replay =<< parseRecording (written (Recording sessionStart entries)) of
+                                Left err -> counterexample err False
+                                Right replayed -> [stepped t o evs | Replayed _ (Just (t, o, evs)) <- replayed] === live
+        ]
+  where
+    camera start = let k = startIntrinsics start in (focal k, cx k, cy k)
+    tracked _ [] = ([], [])
+    tracked t ((inputs, at, n, stripes) : rest) =
+        let (entries, (t', o, evs)) = liveFrame inputs at n stripes t
+            (more, came) = tracked t' rest
+         in (entries ++ more, stepped t' o evs : came)
+
+-- | A recording's text.
+written :: Recording -> BL.ByteString
+written r = toLazyByteString (renderStart (recStart r) <> foldMap (renderEntry (recStart r)) (recEntries r))
+
+-- | A recording of anything: notes, any camera, settings a settings file
+-- can say, and frames, presses, marks and corrupt packets at times around
+-- the clock's.
+genRecording :: Gen Recording
+genRecording = do
+    notes <- listOf text
+    k <- Intrinsics <$> arbitrary <*> arbitrary <*> arbitrary
+    settings <- settingValues . renderConfig <$> genConfig
+    calibration <- elements [FreshCalibration, SavedCalibration (renderCalibration defaultCalibration)]
+    clock <- chooseBoundedIntegral (0, maxBound `div` 2)
+    let time = (clock +) <$> chooseBoundedIntegral (0, 3600 * 1000000000)
+        entry =
+            oneof
+                [ FrameEntry <$> time <*> arbitrary <*> scale (`div` 10) (listOf genStripe)
+                , InputEntry <$> time <*> elements [Press Recenter, Press Calibrate]
+                , InputEntry <$> time <*> (Mark <$> arbitrary)
+                , CorruptEntry <$> time <*> text
+                ]
+    Recording (Start notes k settings calibration clock) <$> scale (`div` 4) (listOf entry)
+  where
+    text = unwords <$> scale (`div` 10) (listOf (elements ["tirprobe", "0.1.142+3f9c2e1", "--record", "Zoë's", "bad", "header", "checksum", "#", "="]))
+
+-- | Recordings of fewer entries and notes, with the default camera.
+shrinkRecording :: Recording -> [Recording]
+shrinkRecording (Recording start entries) =
+    [Recording start entries' | entries' <- shrinkList (const []) entries]
+        ++ [Recording start{startNotes = notes} entries | notes <- shrinkList (const []) (startNotes start)]
+        ++ [Recording start{startIntrinsics = defaultIntrinsics} entries | camera /= (focal defaultIntrinsics, cx defaultIntrinsics, cy defaultIntrinsics)]
+  where
+    camera = let k = startIntrinsics start in (focal k, cx k, cy k)
+
+-- | A few frames of a head glancing about, with what the user did before
+-- each: the presses and marks, when the frame was seen, its counter and
+-- its stripes.
+genSession :: Gen [([(Word64, Input)], Word64, Word8, [Stripe])]
+genSession = do
+    count <- chooseInt (0, 12)
+    turns <- vectorOf count ((,) <$> choose (-3, 3) <*> choose (-2, 2))
+    inputs <- vectorOf count (frequency [(4, pure []), (1, listOf1 (elements [Press Recenter, Press Calibrate, Mark 1]))])
+    let headings = drop 1 (scanl (\(y, p) (dy, dp) -> (y + dy, p + dp)) (0, 0) turns)
+    pure
+        [ ([(at - 1000, input) | input <- pressed], at, fromIntegral i, renderDiscs (pointDiscs defaultIntrinsics clipBent (1, 1, 1) (headSeen (-23) y p 0)))
+        | (i, (y, p), pressed) <- zip3 [0 :: Int ..] headings inputs
+        , let at = sessionClock + fromIntegral i * 8333333
+        ]
+
+-- | Sessions that end sooner.
+shrinkSession :: [a] -> [[a]]
+shrinkSession session = [take k session | k <- [0 .. length session - 1]]
