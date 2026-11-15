@@ -11,6 +11,7 @@ module TrackKat.Number (
 
 import Control.Monad (guard)
 import Data.Char (digitToInt, intToDigit, isDigit)
+import Data.List (dropWhileEnd, unsnoc)
 import Data.Ratio ((%))
 import Numeric (floatToDigits)
 import Text.Printf (printf)
@@ -90,5 +91,7 @@ renderNatural n
 renderNumber :: Double -> String
 renderNumber x =
     let fixed = printf "%.4f" x :: String
-        trimmed = reverse (dropWhile (== '0') (reverse fixed))
-     in if last trimmed == '.' then init trimmed else trimmed
+        trimmed = dropWhileEnd (== '0') fixed
+     in case unsnoc trimmed of
+            Just (whole, '.') -> whole
+            _ -> trimmed
