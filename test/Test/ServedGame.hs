@@ -5,7 +5,8 @@ module Test.ServedGame (tests) where
 import Control.Monad (forM_)
 import Data.Either (isLeft)
 import Data.Maybe (isNothing)
-import Test.Tasty (TestTree)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.QuickCheck
 
 import Test.Check
 import TrackKat.ServedGame
@@ -41,3 +42,40 @@ tests = group "ServedGame" $ do
             (isNothing . stillServed dcs (ProcessRunning Nothing))
             [Nothing, Just 77]
             && isNothing (stillServed unknown (ProcessRunning (Just 1)) Nothing)
+    tree properties
+
+properties :: TestTree
+properties =
+    testGroup
+        "properties"
+        [ testProperty "a served game is read back as written" $
+            forAllShrink genServed shrinkServed $
+                \g -> parseServedGame (renderServedGame g) === Right g
+        , testProperty "a game is still served just when it runs as the same process" $
+            forAllShrink genServed shrinkServed $ \g -> forAll (elements [Nothing, servedStarted g, Just 1]) $ \started -> forAll (elements [Nothing, Just (servedProcess g), Just (servedProcess g + 1)]) $ \owner ->
+                let same = case (servedStarted g, started) of
+                        (Just was, Just now) -> was == now
+                        -- Windows not saying when either started, its window
+                        -- being its own tells.
+                        _ -> owner == Just (servedProcess g)
+                 in stillServed g (ProcessRunning started) owner === (if same then Just g else Nothing)
+                        .&&. stillServed g ProcessGone owner === Nothing
+        ]
+
+-- | A game with any process and window Windows could give it.
+genServed :: Gen ServedGame
+genServed =
+    ServedGame
+        <$> chooseInt (1, maxBound)
+        <*> oneof [pure Nothing, Just <$> arbitrary]
+        <*> arbitrary
+        <*> oneof [pure Nothing, Just <$> chooseInt (0, 65535)]
+        <*> elements [TrackingStarted, TrackingStopped]
+
+-- | Games of which less is known, and with smaller numbers.
+shrinkServed :: ServedGame -> [ServedGame]
+shrinkServed g =
+    [g{servedStarted = Nothing} | servedStarted g /= Nothing]
+        ++ [g{servedProfile = Nothing} | servedProfile g /= Nothing]
+        ++ [g{servedProcess = p} | p <- shrink (servedProcess g), p >= 1]
+        ++ [g{servedWindow = w} | w <- shrink (servedWindow g)]
