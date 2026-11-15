@@ -8,7 +8,7 @@ import Test.Tasty.QuickCheck
 
 import TrackKat.Belief (Belief (..), unknown)
 import TrackKat.CommandLine (Start (..))
-import TrackKat.Config (Binding)
+import TrackKat.Config (Binding, HeadView (..))
 import TrackKat.Controls (Hotkey)
 import TrackKat.Frame (Blob, Stripe (..), frameHeight, frameWidth)
 import TrackKat.Idle (Use (..))
@@ -16,6 +16,8 @@ import TrackKat.Linear (V3)
 import TrackKat.Match (Sight, Three)
 import TrackKat.Protocol (Command (..))
 import TrackKat.Response
+import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
+import TrackKat.Updater (Looking (..))
 
 import Test.Gen
 
@@ -121,3 +123,27 @@ instance Arbitrary Response where
             ]
       where
         straight = Points [(1, 1)]
+
+instance Arbitrary HeadView where
+    arbitrary = elements [VirtualView, PhysicalView, CameraView]
+    shrink = earlier [VirtualView, PhysicalView, CameraView]
+
+-- | A game with any process and window Windows could give it; simpler
+-- with less known of it, and smaller numbers.
+instance Arbitrary ServedGame where
+    arbitrary =
+        ServedGame
+            <$> chooseInt (1, maxBound)
+            <*> oneof [pure Nothing, Just <$> arbitrary]
+            <*> arbitrary
+            <*> oneof [pure Nothing, Just <$> chooseInt (0, 65535)]
+            <*> elements [TrackingStarted, TrackingStopped]
+    shrink g =
+        [g{servedStarted = Nothing} | servedStarted g /= Nothing]
+            ++ [g{servedProfile = Nothing} | servedProfile g /= Nothing]
+            ++ [g{servedProcess = p} | p <- shrink (servedProcess g), p >= 1]
+            ++ [g{servedWindow = w} | w <- shrink (servedWindow g)]
+
+instance Arbitrary Looking where
+    arbitrary = elements [Due, Asked]
+    shrink = earlier [Due, Asked]

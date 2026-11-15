@@ -10,6 +10,8 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Check
+import Test.Gen (earlier, forOneOf, shrinkFrom)
+import Test.Instances ()
 import TrackKat.ServedGame
 
 tests :: TestTree
@@ -50,10 +52,10 @@ properties =
     testGroup
         "properties"
         [ testProperty "a served game is read back as written" $
-            forAllShrink genServed shrinkServed $
-                \g -> parseServedGame (renderServedGame g) === Right g
+            \g ->
+                parseServedGame (renderServedGame g) === Right g
         , testProperty "a game is still served just when it runs as the same process" $
-            forAllShrink genServed shrinkServed $ \g -> forAll (elements [Nothing, servedStarted g, Just 1]) $ \started -> forAll (elements [Nothing, Just (servedProcess g), Just (servedProcess g + 1)]) $ \owner ->
+            \g -> forOneOf [Nothing, servedStarted g, Just 1] $ \started -> forOneOf [Nothing, Just (servedProcess g), Just (servedProcess g + 1)] $ \owner ->
                 let same = case (servedStarted g, started) of
                         (Just was, Just now) -> was == now
                         -- Windows not saying when either started, its window
@@ -62,7 +64,7 @@ properties =
                  in stillServed g (ProcessRunning started) owner === (if same then Just g else Nothing)
                         .&&. stillServed g ProcessGone owner === Nothing
         , testProperty "the file is touched just when the game served has changed: written to read back as the game, or deleted when there is none" $
-            forAllShrink genServed shrinkServed $ \g -> forAll (chooseInt (0, 5)) $ \seen -> forAll (chooseInt (0, 5)) $ \changes ->
+            \g (Count seen) (Count changes) ->
                 conjoin
                     [ case note seen changes game of
                         Nothing -> changes === seen
@@ -71,7 +73,7 @@ properties =
                     | game <- [Nothing, Just g]
                     ]
         , testProperty "a game served again is told by its name if it has one, its profile if not, and else its process" $
-            forAllShrink genServed shrinkServed $ \g -> forAll (elements [Nothing, Just "DCS World"]) $ \name ->
+            \g (Known name) ->
                 let line = describeServedAgain g name
                     told = case (servedProfile g, name) of
                         (Just i, Just n) -> n ++ " (game " ++ show i ++ ")"
@@ -80,20 +82,18 @@ properties =
                  in counterexample line (told `isInfixOf` line)
         ]
 
--- | A game with any process and window Windows could give it.
-genServed :: Gen ServedGame
-genServed =
-    ServedGame
-        <$> chooseInt (1, maxBound)
-        <*> oneof [pure Nothing, Just <$> arbitrary]
-        <*> arbitrary
-        <*> oneof [pure Nothing, Just <$> chooseInt (0, 65535)]
-        <*> elements [TrackingStarted, TrackingStopped]
+-- | How many times something has happened, up to five.
+newtype Count = Count Int
+    deriving (Show)
 
--- | Games of which less is known, and with smaller numbers.
-shrinkServed :: ServedGame -> [ServedGame]
-shrinkServed g =
-    [g{servedStarted = Nothing} | servedStarted g /= Nothing]
-        ++ [g{servedProfile = Nothing} | servedProfile g /= Nothing]
-        ++ [g{servedProcess = p} | p <- shrink (servedProcess g), p >= 1]
-        ++ [g{servedWindow = w} | w <- shrink (servedWindow g)]
+instance Arbitrary Count where
+    arbitrary = Count <$> chooseInt (0, 5)
+    shrink (Count n) = Count <$> shrinkFrom 0 n
+
+-- | The name a game goes by, if trackkat knows one.
+newtype Known = Known (Maybe String)
+    deriving (Show)
+
+instance Arbitrary Known where
+    arbitrary = Known <$> elements [Nothing, Just "DCS World"]
+    shrink (Known name) = Known <$> earlier [Nothing, Just "DCS World"] name
