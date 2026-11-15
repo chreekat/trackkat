@@ -8,6 +8,8 @@ module TrackKat.Term (
     possible,
     impossible,
     isImpossible,
+    LogOdds (..),
+    over,
 
     -- * Terms
     Name (..),
@@ -118,6 +120,26 @@ isImpossible (Score x) = x == never
 
 never :: Double
 never = -1 / 0
+
+-- | How much likelier one thing is than another, in nats: what the one
+-- scores less what the other does, so nothing for as likely, more for
+-- likelier and less for less likely.
+--
+-- For scores @a@, @b@ and @c@ that aren't impossible, to within rounding:
+--
+-- > oddsNats (a `over` a) == 0
+-- > oddsNats (a `over` b) == negate (oddsNats (b `over` a))
+-- > oddsNats (a `over` c) == oddsNats (a `over` b) + oddsNats (b `over` c)
+newtype LogOdds = LogOdds {oddsNats :: Double}
+    deriving (Eq, Ord)
+
+instance Show LogOdds where
+    showsPrec d (LogOdds x) = showsPrec d x
+
+-- | How much likelier what scores the first is than what scores the
+-- second.
+over :: Score -> Score -> LogOdds
+over (Score a) (Score b) = LogOdds (a - b)
 
 -- | What a term is called: briefly, as beside a figure in a developer's
 -- output, and plainly, as what is wrong when it rejects, in a user's

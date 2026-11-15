@@ -10,7 +10,7 @@ import Test.Tasty.QuickCheck
 import Test.Gen
 import Test.Instances ()
 import Test.Simulation (headset)
-import TrackKat.Belief (Belief (..), unknown)
+import TrackKat.Belief (Belief (..), chance, unknown)
 import TrackKat.Branch (Clarity (..))
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Config
@@ -21,6 +21,7 @@ import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
 import TrackKat.Protocol (Command (..))
 import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
+import TrackKat.Term (LogOdds (..), Score (..), impossible, possible)
 import TrackKat.Tracker.Outcome (Way (..))
 import TrackKat.Updater (Looking (..))
 import TrackKat.World (clockAt, seconds)
@@ -85,6 +86,9 @@ tests =
             and [line >= 0, line < frameHeight, start >= 0, points >= 1, start + points <= frameWidth, sumX >= 0, sumX <= 0xFFFFF, brightness >= 0, brightness <= 0x7FFF]
         , shrinksWell "a belief" unknown $ \(Belief tt tm mt mm) ->
             tt > 0 && all (>= 0) [tm, mt, mm] && abs (tt + tm + mt + mm - 1) < 1e-9
+        , shrinksWell "a chance" (chance 0) (\p -> p >= chance 0 && p <= chance 1)
+        , shrinksWell "log odds" (LogOdds 0) (\(LogOdds x) -> abs x <= 30)
+        , shrinksWell "a score" possible (\scored -> scored == impossible || (scored <= possible && scored >= Score (-60)))
         , shrinksWell "how trackkat was started" ByHand (const True)
         , shrinksWell "whether trackkat is used" Used (const True)
         , shrinksWell "a multiplier" (Multiplier 1 0 yawRange) multiplier

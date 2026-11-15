@@ -7,7 +7,7 @@ module Test.Instances () where
 
 import Test.Tasty.QuickCheck
 
-import TrackKat.Belief (Belief)
+import TrackKat.Belief (Belief, Chance, chance, inChance)
 import TrackKat.Branch (Clarity (..))
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Config (Binding, HeadView (..))
@@ -18,6 +18,7 @@ import TrackKat.Match (Sight, Three)
 import TrackKat.Protocol (Command (..))
 import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
+import TrackKat.Term (LogOdds (..), Score (..), impossible, possible)
 import TrackKat.Tracker.Outcome (Way (..))
 import TrackKat.Updater (Looking (..))
 import TrackKat.World (Instant, Seconds, clockAt, inClockSeconds, inSeconds, seconds)
@@ -90,6 +91,24 @@ instance Arbitrary Stripe where
 instance Arbitrary Belief where
     arbitrary = shares <$> genWeights
     shrink = shrinkBelief
+
+-- | Any chance, from none to certain; simplest none.
+instance Arbitrary Chance where
+    arbitrary = chance <$> choose (0, 1)
+    shrink p = chance <$> shrinkWithin (0, 1) 0 (inChance p)
+
+-- | Up to all but certain either way; simplest nothing either way.
+instance Arbitrary LogOdds where
+    arbitrary = LogOdds <$> choose (-30, 30)
+    shrink (LogOdds x) = LogOdds <$> shrinkWithin (-30, 30) 0 x
+
+-- | Nothing against, down to sixty nats against, and now and then
+-- impossible; simplest nothing against.
+instance Arbitrary Score where
+    arbitrary = frequency [(9, Score <$> choose (-60, 0)), (1, pure impossible)]
+    shrink s
+        | s == impossible = [possible]
+        | otherwise = Score <$> shrinkWithin (-60, 0) 0 (nats s)
 
 instance Arbitrary Start where
     arbitrary = elements [ByHand, ByGame, AtLogin]
