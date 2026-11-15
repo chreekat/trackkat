@@ -12,6 +12,7 @@ import qualified Test.Config
 import qualified Test.Controls
 import qualified Test.Following
 import qualified Test.Frame
+import qualified Test.Gesture
 import qualified Test.Icons
 import qualified Test.Idle
 import qualified Test.Level
@@ -72,6 +73,7 @@ main = do
                 , Test.Release.tests
                 , Test.ServedGame.tests
                 , Test.CommandLine.tests
+                , Test.Gesture.tests
                 , Test.Controls.tests
                 , Test.Session.tests
                 , Test.Updater.tests
