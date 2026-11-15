@@ -50,14 +50,12 @@ module TrackKat.Tracker (
     step,
 ) where
 
-import Data.Either (isRight, lefts, rights)
 import Data.Foldable (toList)
-import Data.List (partition, sortOn)
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust)
 
 import TrackKat.Branch
 import TrackKat.Calibration
-import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
+import TrackKat.Frame (Blob, Stripe)
 import TrackKat.Lights hiding (News (..))
 import qualified TrackKat.Lights as Lights
 import TrackKat.Linear (M33, mulMM, norm, transpose)
@@ -66,129 +64,19 @@ import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Term
 import TrackKat.Tracker.Absence
+import TrackKat.Tracker.Blobs hiding (roles)
+import qualified TrackKat.Tracker.Blobs as Blobs
+import TrackKat.Tracker.Choose
 import TrackKat.Tracker.Judge
+import TrackKat.Tracker.Layout (findAfresh)
 import TrackKat.Tracker.Outcome
+import TrackKat.Tracker.Sighting
+import TrackKat.Tracker.Sizes
+import TrackKat.Tracker.Trail
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
     deriving (Eq, Show)
-
--- Note [Following or finding afresh]
--- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
--- With a pose from a moment ago, a frame's blobs can be taken for the clip
--- in two ways: by following, each reflector matched to a blob near where
--- that pose predicts it ('follow'); or by layout alone, the big blobs in
--- view taken for the clip as when there is no pose to go on ('findHere').
--- Following used to be the only way tried for as long as the pose
--- predicted ('predictionSeconds'), so that a jump following wouldn't
--- make, as after a frame followed to a wrong pose, cost up to half a
--- second out of sight before the clip was looked for afresh; and a pose
--- followed onto the wrong blobs stayed there while its gates let it. Now
--- they are hypotheses about the same frame, scored alike, and the best is
--- taken.
---
--- What they are scored by, in nats (see "TrackKat.Term"):
---
---  * the blobs' own evidence ('blobsSay'): how far each blob taken for a
---    reflector is from the size its reflector has usually been
---    ('usualSize', as a match's terms for sizes score a size), a reflector
---    unseen (what a match's term for it costs), and how far the reflectors
---    are from where the pose puts them ('misfit', under the world's
---    'centroidNoise');
---
---  * where the pose is, given the last. For a pose that continues the
---    last, how likely a head turned and moved so far in the time
---    ('continuing': gaussians of the spreads of a head's speed, the
---    world's 'headTurnSpeed' and 'headMoveSpeed', over that time). For a
---    pose that doesn't, how likely a head is there with nothing known of
---    where it was ('anywhere': anywhere a head can be, turned from the
---    centre by the world's 'headTurnSpread', within 'headReachAside' to
---    either side and in the camera's range).
---
--- These are commensurable because each is the log of a probability density
--- over the same things: the blobs' places and sizes, given the pose, and
--- the pose's six freedoms, given the last pose or given nothing. A density
--- that says the pose is within a few degrees and mm is far higher at its
--- peak than one that says only that it is somewhere a head can be, by the
--- ratio of the volumes they spread over; 'afreshCost' is the log of that
--- ratio, some 22 nats a frame after the last pose and less the longer
--- after, and it is all the advantage following has. There is no bonus for
--- following besides: the two are taken as equally likely beforehand. A
--- match's term for the reflectors' places is left out of the score, being
--- the same continuity measured in the image before the pose is solved.
---
--- So following wins whenever both take the same blobs, and a pose found
--- by layout wins when following has to take a blob of the wrong size, or
--- leave a reflector unseen, or jump, to an extent that costs more than
--- the pose found does. The hard gates still veto either: 'followable' for
--- a followed pose, 'clipLike' for one found by layout.
---
--- A pose found by layout that is within the jump following allows
--- ('jumpable') continues the last all the same: it is the clip refound
--- ('Refound'), scored by the better of 'continuing' and 'anywhere', and
--- everything that goes by continuity carries on as if it had been
--- followed: the belief about the mirror image and its window of turning
--- (see "TrackKat.Branch"), the time tracked that lets lights be learnt,
--- and what learns from poses. Only one that isn't ('FoundAfresh') starts
--- them over, as finding the clip afresh always has: either pose may then
--- be the mirror image.
---
--- When following is rejected, a pose found by layout that continues the
--- last is taken. One that doesn't has a third hypothesis to beat
--- ('stillThere'): that the clip is still where the last pose predicts it,
--- and the frame doesn't show it rightly. That scores what a match's term
--- for a reflector unseen costs, for each reflector with no blob near where
--- it is predicted. So blobs like the clip somewhere else altogether, none
--- where the reflectors were, are taken at once, at 22 nats against 54;
--- but two reflectors still in their places and a stray, as a reflector
--- fades for a moment, are not: the clip is likelier where it was, one
--- reflector out of sight, at 18 nats. This is the wait that following
--- alone amounted to, as a hypothesis with a score: it holds while the
--- pose predicts and the clip may show less ('showingSeconds'), it gives
--- way as finding afresh gets cheaper with the time since the pose, a few
--- frames for a head that has really jumped, and the frame is lost
--- meanwhile, as it was, with what was passed over told ('Held').
---
--- A pose left for one found afresh elsewhere isn't forgotten at once
--- ('LeftBehind'). Blobs that look like the clip somewhere else for a
--- frame or two used to be frames out of sight, with the clip followed
--- again from where it was when they passed. Now, if none of the
--- reflectors is still in its place, they are tracked; but if the clip is
--- then found by layout where the pose left behind still predicts it
--- ('Resumed', scored as continuing that pose), that pose's continuity is
--- taken up again as if those frames had been out of sight: a brief wrong
--- sight doesn't cost what was known of the mirror image.
---
--- What the wait protected is kept otherwise:
---
---  * A pose still predicts for 'predictionSeconds' out of sight, and a
---    frame where no hypothesis makes out the clip is lost with following's
---    reason as before, so a brief occlusion or merge is followed through
---    when the reflectors show again.
---
---  * The clip showing two reflectors, or one behind another
---    ('showingSeconds'), is followed for as long as it was. A reflector
---    unseen costs 18 nats, less than finding afresh a frame on, so such a
---    pose is outscored only once it also jumps; and what would be found
---    instead, a stray taken for the third reflector, pays for its size.
---
---  * Blobs masked as still lights are never taken for the clip while a
---    pose predicts: only blobs in view are tried by layout, exactly three
---    big ones or the best scored three of a few. Masked ones are tried,
---    as before, only with no pose to go on.
---
--- Finding by layout costs a solve or several, so it isn't tried on every
--- frame: only when following is rejected, or scores below 'weakScore';
--- and then not of the very three blobs following took, which is the same
--- hypothesis, nor of three whose sizes alone score no better than
--- following did.
---
--- What the scores can't tell: a stray the size of a reflector, taken for
--- it. A blob's size is its only evidence of what it is, the sizes learnt
--- follow what is tracked within seconds ('sizeMemory', and the latest at
--- once), and each frame is scored by itself, with no memory of how well
--- the frames before fitted. So a pose followed onto such a stray is left
--- only when a gate rejects it, as before.
 
 -- | A requested calibration of level in progress.
 data Sweep
@@ -197,21 +85,6 @@ data Sweep
         Double
         -- | rotations relative to the reference, newest first
         [M33]
-
--- | The last pose tracked.
-data Recent = Recent
-    { recentPose :: !Pose
-    , recentTime :: !Double
-    -- ^ in seconds on the clock given to 'step'
-    , recentAllSeen :: !Double
-    -- ^ when all three reflectors last showed (see 'showing')
-    , recentSince :: !Double
-    -- ^ since when the clip has been tracked in every frame
-    }
-
--- | A pose that was left for one found afresh elsewhere, and what was
--- believed of it being the head's or the mirror image.
-data LeftBehind = LeftBehind !Recent !Branch
 
 data Tracker = Tracker
     { trIntrinsics :: !Intrinsics
@@ -277,16 +150,6 @@ trackerLights = lightAreas . trLights
 trackerWindows :: Tracker -> [(String, Tally)]
 trackerWindows t = [("pivot", learnerWindows (trLearner t)), ("clip shape", shapeWindows (trShape t)), ("mirror image", branchWindows (trBranch t))]
 
--- | What a blob was taken for.
-data BlobRole
-    = -- | one of the clip's reflectors, or part of one
-      ReflectorBlob
-    | -- | something else, ignored
-      StrayBlob
-    | -- | part of a still light, masked
-      MaskedBlob
-    deriving (Eq, Show)
-
 -- | Learn and mask still lights, or not, from the next frame; turned off,
 -- what was learnt is forgotten.
 setMasking :: Masking -> Tracker -> Tracker
@@ -306,114 +169,10 @@ setModel m t = request Recenter t{trModel = m, trRecent = Nothing, trLeft = Noth
 calibrationSeconds :: Double
 calibrationSeconds = 5
 
--- | How a match shows the reflectors: all three; one perhaps behind
--- another, sharing a blob no bigger than that one alone (see
--- 'bigEnoughForTwo'), or perhaps out of sight; or one out of sight.
-data Showing = AllShowing | OneBehind | OneOut
-    deriving (Eq)
-
--- | How the given sights show the reflectors, given their sizes and the
--- distance in metres.
-showing :: Three Size -> Double -> Three (Maybe Sight) -> Showing
-showing sizes z sights = case sequenceA sights of
-    Nothing -> OneOut
-    Just three -> case [(sightPixels s, sizeLatest size / (z * z)) | (size, s) <- toList ((,) <$> sizes <*> three), sightKind s == Merged] of
-        [(a, ea), (b, eb)] | not (bigEnoughForTwo (a + b) ea eb) -> OneBehind
-        _ -> AllShowing
-
--- | For how long, in seconds since all three last showed, the clip is
--- tracked showing less: two reflectors leave the pose free to turn about
--- the line through them, and one taken to be behind another, as when the
--- head rolls far, may be out of sight instead.
-showingSeconds :: Showing -> Double
-showingSeconds AllShowing = 1 / 0
-showingSeconds OneBehind = 2.5
-showingSeconds OneOut = 1
-
--- | Blobs smaller or larger than this many pixels are not reflectors, when
--- finding the clip afresh. A reflector lighting 250 pixels at 950 mm
--- lights about 3600 as near as 'nearest'.
-minBlobPixels, maxBlobPixels :: Int
-minBlobPixels = 15
-maxBlobPixels = 5000
-
--- | The smallest blob taken for a reflector predicted nearby: one fading
--- from view, or part of one.
-minFaintPixels :: Int
-minFaintPixels = 6
-
--- | The blobs in a frame that could be reflectors, heaviest first.
-findBlobs :: [Stripe] -> [Blob]
-findBlobs = stripesToBlobs minFaintPixels maxBlobPixels
-
--- | For how long, in seconds, a pose predicts where the reflectors are. After
--- longer out of sight, the clip is found only afresh, with nothing said of
--- where it was.
-predictionSeconds :: Double
-predictionSeconds = 0.5
-
 -- | For how long, in seconds, the clip must have been tracked in every
 -- frame for still lights to be learnt clear of it.
 confirmSeconds :: Double
 confirmSeconds = 0.5
-
--- | The score below which a followed pose is doubted, and the clip looked
--- for by layout in the same frame too (see Note [Following or finding
--- afresh]): what a head turning and moving at twice the spreads of its
--- speed scores, beyond which, as spreads are stated, little happens.
-weakScore :: Score
-weakScore = Score (negate (2 * (twice * twice / 2)))
-  where
-    twice = 2 :: Double
-
--- | A blob as big as a reflector, when finding the clip afresh, is at
--- least this fraction (so many parts in so many) of the biggest blob in
--- view: other reflections are often tiny beside the reflectors.
-besideBiggest :: (Int, Int)
-besideBiggest = (3, 25)
-
--- | Up to how many of the heaviest big blobs, when there are more than
--- three, are searched for the only three laid out like the clip; and up
--- to how many of the heaviest blobs in masked areas are tried in place of
--- big blobs missing.
-clipSearch, maskedSearch :: Int
-clipSearch = 5
-maskedSearch = 4
-
--- | Up to how many matches as good as the best are tried when the best
--- is an impossible jump.
-jumpRetries :: Int
-jumpRetries = 5
-
--- | Seconds over which a reflector's usual size is forgotten.
-sizeMemory :: Double
-sizeMemory = 10
-
--- | What a frame showed, when the clip was made out.
-data Sighting
-    = Sighting
-        Chosen
-        Pose
-        -- | RMS reprojection error, pixels
-        Double
-        (Three (Maybe Sight))
-        -- | blobs that weren't reflectors
-        Int
-        -- | blobs ignored as part of a still light
-        Int
-        -- | what each term that accepted the pose found
-        [Finding]
-
--- | The clip found by the layout of the big blobs, with a pose still
--- predicting: what it scores, how its pose stands to that pose, the
--- sighting it makes given what became of following, and what its jump was
--- judged to be against what following allows.
-data Layout = Layout
-    { layoutScore :: Score
-    , layoutWay :: Way
-    , layoutSighting :: Fate -> Sighting
-    , layoutJump :: [Finding]
-    }
 
 -- | Handle one frame's stripes, seen at the given time in seconds. Pending
 -- requests wait for a frame where the clip is tracked.
@@ -428,7 +187,7 @@ step now stripes t =
                 learntMask = activeMask [] learntLights
                 (lights, unlearnt)
                     | null newly = (learntLights, [])
-                    | otherwise = case findAfresh (learntMask, partition (inMask learntMask) blobs) of
+                    | otherwise = case findAfresh known (sortBlobs learntMask blobs) of
                         Right (_, restored) -> unlearn newly (map at restored) learntLights
                         Left _ -> (learntLights, [])
                 news = [e | e <- learntNews, not (isUnlearnt e)]
@@ -445,7 +204,7 @@ step now stripes t =
                 , Lost (length visible) (length masked) why held
                 , news
                 )
-        Right (Sighting chosen@(Chosen way _) seenPose fit sights unused hidden judged) ->
+        Right (chosen@(Chosen way _), Sighting seenPose fit sights unused hidden judged) ->
             let allSeen = all isJust sights
                 -- A pose that continues the last carries on what goes by
                 -- continuity; one found afresh starts it over (see Note
@@ -540,36 +299,21 @@ step now stripes t =
     k = trIntrinsics t
     m = trModel t
     blobs = findBlobs stripes
+    Trail following left = stillPredicting now (Trail (trRecent t) (trLeft t))
     -- Blobs in a still light's area are ignored, but for any where the
     -- clip is predicted to be.
-    following = case trRecent t of
-        Just r | now - recentTime r <= predictionSeconds -> Just r
-        _ -> Nothing
-    left = case trLeft t of
-        Just l@(LeftBehind r _) | now - recentTime r <= predictionSeconds -> Just l
-        _ -> Nothing
     mask = case trMasking t of
         NoMasking -> noMask
         MaskLights -> activeMask (maybe [] (\r -> toList (seenAt k m (recentPose r) <$> reflectors)) following) (trLights t)
-    (masked, visible) = partition (inMask mask) blobs
+    shown = sortBlobs mask blobs
+    masked = shownMasked shown
+    visible = shownVisible shown
     -- Learning still lights, given what the frame showed of the clip: the
     -- lights learnt, and the events saying what changed.
     learnt view = case trMasking t of
         NoMasking -> (trLights t, [])
         MaskLights -> map toEvent <$> learnLights now view blobs (trLights t)
-    -- Each blob's role, given where the reflectors were seen: a blob near
-    -- one, for its size, is one, or a piece of one.
-    roles seen = foldr (\(_, r) rest -> r `seq` rest) assigned assigned
-      where
-        assigned = [(b, role b) | b <- blobs]
-        role b
-            | any (\s -> distance2 (sightAt s) (at b) <= reflectorReach b ^ (2 :: Int)) seen = ReflectorBlob
-            | inMask mask b = MaskedBlob
-            | otherwise = StrayBlob
-    -- How near a reflector's place, in pixels, a blob is its own: three,
-    -- and the blob's diameter.
-    reflectorReach b = 3 + 2 * sqrt (fromIntegral (blobPoints b) / pi)
-    distance2 (u, v) (x, y) = (u - x) ^ (2 :: Int) + (v - y) ^ (2 :: Int)
+    roles seen = Blobs.roles mask seen blobs
     toEvent (Lights.Learnt p why) = LightIgnored p why
     toEvent (Lights.Forgotten p) = LightForgotten p
     toEvent (Lights.Moved p how) = LightMoved p how
@@ -580,243 +324,10 @@ step now stripes t =
         let biggestSeen = maximum (0 : [sightPixels s | Just s <- toList sights])
          in [(seenAt k m pose which, 15 + 2 * sqrt (biggestSeen / pi)) | which <- toList reflectors]
     pivot = appliedPivot (trLearner t)
-    reach = Reach pivot (trReference t)
-    sighting = maybe (either (\why -> Left (why, Nothing)) (Right . fst) (findAfresh (mask, (masked, visible)))) followOrFind following
-    -- The better of following the given pose and finding the clip by
-    -- layout, the second tried only when the first is rejected or weak
-    -- (see Note [Following or finding afresh]). A tie is following's.
-    followOrFind r = case follow r of
-        Right (followScore, followed@(Sighting _ pose fit sights unused hidden judged))
-            | followScore >= weakScore -> Right followed
-            | otherwise ->
-                let keeping fate jump = Right (Sighting (Chosen Followed (Just (Tried fate jump))) pose fit sights unused hidden judged)
-                 in case findHere r (Just (followScore, sights)) of
-                        Nothing -> Right followed
-                        Just (Left reason) -> keeping (Failed (Why Afresh reason)) []
-                        Just (Right found)
-                            | layoutScore found > followScore -> Right (layoutSighting found (Outscored (layoutScore found) followScore))
-                            | otherwise -> keeping (Outscored followScore (layoutScore found)) (layoutJump found)
-        Left why -> case findHere r Nothing of
-            Just (Right found)
-                | layoutWay found == Refound || layoutScore found > held -> Right (layoutSighting found (Failed why))
-                | otherwise -> Left (why, Just (Held (layoutScore found) missing held))
-              where
-                (missing, held) = stillThere r
-            _ -> Left (why, Nothing)
-    -- The clip still where the given pose predicts it, though the frame
-    -- doesn't show it so (see Note [Following or finding afresh]): how
-    -- many of its reflectors have no blob near where they are predicted,
-    -- and what that scores, each of them out of sight; impossible once
-    -- the clip has shown less than all three for longer than it may.
-    stillThere r
-        | now - recentAllSeen r > showingSeconds OneOut = (missing, impossible)
-        | otherwise = (missing, Score (fromIntegral missing * nats unseenScore))
-      where
-        -- Reflectors with a blob near their place, but no more of them
-        -- than there are such blobs: one blob isn't two reflectors seen.
-        places = toList (seenAt k m (recentPose r) <$> reflectors)
-        near q b = distance2 q (at b) <= reflectorReach b ^ (2 :: Int)
-        missing = 3 - min (length [() | q <- places, any (near q) visible]) (length [() | b <- visible, any (`near` b) places])
-    -- The clip by the layout of the big blobs in view, with the given
-    -- pose still predicting, or why the blobs aren't the clip. Nothing if
-    -- the blobs don't allow trying: there aren't three big ones, or none
-    -- is worth trying against the score and sights given, which are
-    -- following's. Masked blobs aren't tried.
-    --
-    -- Of more than three big blobs, each three of the heaviest few that
-    -- would be taken for the clip is a hypothesis, and the best scored is
-    -- the one told: with a pose to go on, the sizes the reflectors had and
-    -- where the clip was say which three, where finding afresh without
-    -- one wants just one such three ('onlyClipLike').
-    findHere r taken = case (lefts tried, sortOn (negate . nats . layoutScore) (rights tried)) of
-        (_, best : _) -> Just (Right best)
-        (reason : _, []) -> Just (Left reason)
-        ([], []) -> Nothing
-      where
-        big = bigAmong visible
-        threes = case compare (length big) 3 of
-            EQ -> [big]
-            GT | any ((> 0) . sizeUsual) (trSizes t) -> choose 3 (take clipSearch big)
-            _ -> []
-        tried = [foundHere r three | three <- threes, maybe True (worthTrying three) taken]
-        -- Not the three blobs following took, which is the same
-        -- hypothesis; nor three whose sizes alone, at the distance the
-        -- clip was, score no better than following did, since where they
-        -- put the clip can only cost them more.
-        worthTrying three (followed, sights) =
-            not (sightsOf three sights) && case identify m at three of
-                Just (l, rt, top) -> score (usualSize (trSizes t)) (recentPose r, whole <$> Three l rt top) > followed
-                Nothing -> False
-    -- Three blobs as the clip, with the given pose still predicting, as
-    -- 'findHere' tells it.
-    foundHere r three = do
-        (pose, fit, (l, rt, top), judged) <- asClip three
-        let dt = now - recentTime r
-            sights = whole <$> Three l rt top
-            -- The pose as moved from another, so many seconds before: if
-            -- that isn't an impossible jump, as continuing it or as
-            -- anywhere, whichever makes it likelier.
-            from was since =
-                let (turn, move) = poseChange pivot (recentPose was) pose
-                    moved = Moved pose fit turn move
-                    likelier = if score (continuing since) moved >= score (anywhere reach dt) moved then continuing since else anywhere reach dt
-                 in (accepts (jumpable since) moved, about (const moved) likelier, findings (jumpable since) moved)
-            (way, prior, jump) = case (from r dt, (\(LeftBehind was _) -> from was (now - recentTime was)) <$> left) of
-                ((True, continued, jumped), _) -> (Refound, continued, jumped)
-                (_, Just (True, continued, jumped)) -> (Resumed, continued, jumped)
-                ((False, _, jumped), _) -> (FoundAfresh, anywhere reach dt, jumped)
-            placed = Moved pose fit 0 0
-            likely = blobsSay (trSizes t) pose sights <> prior
-        Right
-            Layout
-                { layoutScore = score likely placed
-                , layoutWay = way
-                , layoutSighting = \fate -> Sighting (Chosen way (Just (Tried fate jump))) pose fit sights (length visible - 3) (length masked) (judged ++ findings likely placed)
-                , layoutJump = jump
-                }
-    -- Whether the blobs are just those the sights take for the reflectors,
-    -- each one of its own.
-    sightsOf :: [Blob] -> Three (Maybe Sight) -> Bool
-    sightsOf three sights = and [or [sightKind s == Whole && sightAt s == at b | Just s <- toList sights] | b <- three]
-    whole b = Just (Sight (at b) (fromIntegral (blobPoints b)) Whole)
-    -- The pixels the biggest reflector, of the given sizes, lights where
-    -- the head was recentered.
-    usualAt sizes = case (maximum (sizeUsual <$> sizes), trReference t) of
-        (biggest, Just ref) | biggest > 0 -> Just (biggest / metres ref ^ (2 :: Int))
-        _ -> Nothing
-    -- Of more than three big blobs, the only three of the heaviest few
-    -- that would be taken for the clip, if just three would: the clip
-    -- beside something else. Not before the clip has been seen: nothing
-    -- then tells it from a fire and its flames laid out like it.
-    onlyClipLike bs
-        | any ((> 0) . sizeUsual) (trSizes t)
-        , length (bigAmong bs) > 3 = case filter (isRight . asClip) (choose 3 (take clipSearch (bigAmong bs))) of
-            [three] -> Just three
-            _ -> Nothing
-        | otherwise = Nothing
-    -- Big enough to be a reflector, of the given blobs: of a fair size, and
-    -- not tiny beside the biggest blob, as other reflections often are.
-    bigAmong bs = let biggest = maximum (0 : map blobPoints bs) in filter (bigBeside biggest) bs
-    bigBeside biggest b = blobPoints b >= minBlobPixels && blobPoints b * snd besideBiggest >= biggest * fst besideBiggest
-    -- The pose of the clip, if the given blobs are its three reflectors,
-    -- laid out as the clip is, at a pose a head can be at, with what the
-    -- terms that say so found; or why they aren't.
-    asClip three = case identify m at three of
-        Nothing -> Left NoPoseFits
-        Just (l, r, top) -> case solvePose k m (recentPose <$> trRecent t) (at l, at r, at top) of
-            Nothing -> Left NoPoseFits
-            Just (pose, fit) ->
-                let found = Found pose (Three l r top)
-                 in if accepts (clipLike reach (trSizes t)) found
-                        then Right (pose, fit, (l, r, top), findings (clipLike reach (trSizes t)) found)
-                        else Left (Unfit (rejections (clipLike reach (trSizes t)) found))
-    -- With nothing to predict from, three big blobs by their layout,
-    -- solved from where the clip was last seen if anywhere, given a mask
-    -- and the blobs it masks and doesn't; and the masked blobs taken as
-    -- reflectors. With fewer than three big blobs unmasked, the heaviest
-    -- in each of a few masked areas are tried too, those that make the
-    -- three most alike in size first: a clip held still can be learnt as
-    -- lights (see Note [Still lights] in TrackKat.Lights). With more, the
-    -- only three that would be taken for the clip, if just three would.
-    --
-    -- When none is found, the reason is the three big blobs' own, if
-    -- there were just three; or else that there weren't.
-    findAfresh (areas, (hidden, shown)) = case rights attempts of
-        found : _ -> Right found
-        [] -> Left . Why Afresh $ case (rejections threeBig (length bigShown), lefts attempts) of
-            ([], reason : _) -> reason
-            (count, _) -> Unfit count
-      where
-        biggest = maximum (0 : map blobPoints shown)
-        bigShown = bigAmong shown
-        -- Three blobs to try, and those of them masked.
-        choices = case compare (length bigShown) 3 of
-            EQ -> [(bigShown, [])]
-            LT -> [(bigShown ++ extra, extra) | extra <- sortOn alike (choose (3 - length bigShown) (take maskedSearch (filter (bigBeside biggest) (heaviestIn areas hidden))))]
-            GT -> [(three, []) | Just three <- [onlyClipLike shown]]
-        alike extra = let ps = map blobPoints (bigShown ++ extra) in fromIntegral (maximum ps) / fromIntegral (max 1 (minimum ps)) :: Double
-        attempts = map attempt choices
-        attempt (three, extra) = do
-            (pose, fit, (l, r, top), judged) <- asClip three
-            Right (Sighting (Chosen FoundAfresh Nothing) pose fit (Three (whole l) (whole r) (whole top)) (length shown + length extra - 3) (length hidden - length extra) judged, extra)
-    -- Finding the clip afresh wants just three big blobs: with fewer, or
-    -- more, it is found only as 'findAfresh' says.
-    threeBig :: Term Int
-    threeBig =
-        within
-            ( Name "big blobs" "fewer than three lights big enough to be reflectors are in view"
-            , Name "big blobs" "more than three lights are in view, and no three of them stand out as the clip"
-            )
-            ""
-            (3, 3)
-            fromIntegral
-    -- The best match to the prediction, unless its pose is an impossible
-    -- jump; then, of the next few that see as many reflectors, the one whose
-    -- pose is nearest. (Fewer reflectors can always be fitted by a pose
-    -- near the last, so they would hide a real jump.)
-    --
-    -- When none is followed, the reason is the best match's; or, if there
-    -- is no match to try, that the best there would be shows too little of
-    -- the clip for too long, if there is one.
-    follow r =
-        let dt = now - recentTime r
-            allMatches = matches k m (recentPose r) (trSizes t) visible
-            candidates = filter (accepts stillShowing) allMatches
-            -- The clip is followed showing less than all three reflectors
-            -- only for so long since all three last showed.
-            stillShowing =
-                gate
-                    (Name "partly seen" "a reflector has been out of sight for too long")
-                    (\c -> now - recentAllSeen r <= allowed c)
-                    (\c -> Measure (now - recentAllSeen r) AtMost (allowed c) "s")
-            allowed c = showingSeconds (showing (trSizes t) (metres (recentPose r)) (matchSights c))
-            attempt c = case solveNear k m pivot (recentPose r) (observations (metres (recentPose r)) c) of
-                Nothing -> Left NoPoseFits
-                Just (pose, fit) ->
-                    let (turn, move) = poseChange pivot (recentPose r) pose
-                        jump = max (turn / maxTurn dt) (move / maxMove dt)
-                        moved = Moved pose fit turn move
-                        likely = blobsSay (trSizes t) pose (matchSights c)
-                     in if accepts (followable reach dt) moved
-                            then
-                                Right
-                                    ( jump
-                                    ,
-                                        ( Score (fromIntegral (3 - seenCount c) * nats unseenScore + nats (score (likely <> continuing dt) moved))
-                                        , Sighting (Chosen Followed Nothing) pose fit (matchSights c) (matchUnused c) (length masked) (matchJudged c ++ findings (followable reach dt <> likely <> continuing dt) moved)
-                                        )
-                                    )
-                            else Left (Unfit (rejections (followable reach dt) moved))
-         in case candidates of
-                [] -> Left . Why Following $ case allMatches of
-                    c : _ -> Unfit (rejections stillShowing c)
-                    [] -> NothingMatches
-                c : cs -> case attempt c of
-                    Right (_, s) -> Right s
-                    Left reason ->
-                        let alike = [a | a <- cs, seenCount a == seenCount c]
-                         in case sortOn fst (rights (map attempt (take jumpRetries alike))) of
-                                (_, s) : _ -> Right s
-                                [] -> Left (Why Following reason)
-    seenCount c = length (catMaybes (toList (matchSights c)))
-    observations z c = catMaybes (toList (observe z <$> reflectors <*> trSizes t <*> matchSights c))
-    -- A dim reflector, smaller than usual, counts for less: part of it may
-    -- be too dim to see, moving its centroid. One sharing a blob counts for
-    -- half, its place being an estimate.
-    observe z which size = fmap $ \s ->
-        let usual = sizeUsual size / (z * z)
-            dim = if usual > 0 then min 1 (sightPixels s / usual) else 1
-            shared = if sightKind s == Merged then 0.5 else 1
-         in Observation which (dim * shared) (sightAt s)
-    -- Reflectors' sizes, at 1 m, after a frame at the given distance. One
-    -- sharing a blob with another has its share guessed, not seen.
-    resize z size seen =
-        let since = maybe 0 (\r -> now - recentTime r) (trRecent t)
-            usual = sizeUsual size * exp (negate since / sizeMemory)
-         in case seen of
-                Just s | sightKind s /= Merged -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
-                _ -> size{sizeUsual = usual}
-    at b = (blobX b, blobY b)
+    known = Known k m (Reach pivot (trReference t)) (trSizes t) (recentPose <$> trRecent t)
+    sighting = makeOut known now (Trail following left) shown
+    usualAt sizes = biggestAt sizes (trReference t)
+    resize = resized (maybe 0 (\r -> now - recentTime r) (trRecent t))
     handle pose (acc, evs) Recenter = (acc{trReference = Just pose, trBranch = recentered (trBranch acc), trLeft = Nothing}, Recentered : evs)
     handle _ (acc, evs) Calibrate =
         (acc{trSweep = Just (Sweep (now + calibrationSeconds) [])}, CalibrationStarted : evs)
@@ -830,9 +341,3 @@ step now stripes t =
                 Just l ->
                     let acc' = acc{trSweep = Nothing, trLearner = calibrateLevel l (trLearner acc)}
                      in (acc', [Calibrated (trackerCalibration acc')])
-
--- | The ways to choose so many of a list, in order.
-choose :: Int -> [a] -> [[a]]
-choose 0 _ = [[]]
-choose _ [] = []
-choose n (x : xs) = map (x :) (choose (n - 1) xs) ++ choose n xs

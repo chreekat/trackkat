@@ -39,8 +39,15 @@ library
     TrackKat.Term
     TrackKat.Tracker
     TrackKat.Tracker.Absence
+    TrackKat.Tracker.Blobs
+    TrackKat.Tracker.Choose
+    TrackKat.Tracker.Follow
     TrackKat.Tracker.Judge
+    TrackKat.Tracker.Layout
     TrackKat.Tracker.Outcome
+    TrackKat.Tracker.Sighting
+    TrackKat.Tracker.Sizes
+    TrackKat.Tracker.Trail
     TrackKat.Visibility
     TrackKat.USB
     TrackKat.World
