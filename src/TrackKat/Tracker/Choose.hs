@@ -161,11 +161,11 @@ data Hypotheses a = Hypotheses
 -- was come by; or, if nothing, following's reason, with any pose found by
 -- layout that was passed over (see Note [Following or finding afresh]).
 --
--- Following is taken unasked while it scores at least 'weakScore'. Below
--- that the better scored of it and the layout is taken, a tie being
--- following's. With following rejected, a layout that continues the last
--- pose is taken, and any other only if it scores better than the clip
--- being still where it was.
+-- Following is taken, and nothing else looked at, while it scores at
+-- least 'weakScore'. Below that the better scored of it and the layout is
+-- taken, a tie being following's. With following rejected, a layout that
+-- continues the last pose is taken, and any other only if it scores
+-- better than the clip being still where it was.
 --
 -- Nothing is taken that a hypothesis didn't give: the frame is made of
 -- what following or the layout made of it, or of nothing.
