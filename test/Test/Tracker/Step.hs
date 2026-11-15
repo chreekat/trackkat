@@ -20,7 +20,7 @@ tests =
     testGroup
         "Step"
         [ testProperty "every blob of a frame is told with what it was taken for, and counted, the clip made out or not" $
-            forAllShrink genScene shrinkScene $ \scene ->
+            \scene ->
                 let stripes = renderDiscs (discs scene)
                     blobs = findBlobs stripes
                     (after, outcome, _) = step 0 stripes fresh
@@ -35,7 +35,7 @@ tests =
                                 , length [() | (_, StrayBlob) <- taken] + length [() | (_, MaskedBlob) <- taken] + reflectors === length blobs
                                 ]
         , testProperty "the first frame tracked recenters on its own pose, and a frame not tracked does nothing asked for" $
-            forAllShrink genScene shrinkScene $ \scene ->
+            \scene ->
                 case step 0 (renderDiscs (discs scene)) fresh of
                     (after, Tracked{outPose = HeadPose y p r x up z}, events) ->
                         conjoin
@@ -46,7 +46,7 @@ tests =
                     (after, Lost{}, events) ->
                         counterexample (show events) (null events) .&&. property (isNothing (trackerCentre after) && isNothing (trackerPose after))
         , testProperty "the clip alone in view, facing the camera within 20 degrees, is tracked from the first frame" $
-            forAllShrink (genClipApart 20 (400, 1500) headset) (shrinkClipApart headset) $ \placing ->
+            \(Apart20 placing) ->
                 case step 0 (renderDiscs (discs (Scene (Just placing) []))) fresh of
                     (_, Tracked{outSeen = seen, outChosen = chosen}, _) -> seen === Seen [] 0 0 0 .&&. chosen === Chosen FoundAfresh Nothing
                     (_, Lost{outWhy = why}, _) -> counterexample (explainWhy why) False
@@ -62,17 +62,15 @@ discs :: Scene -> [Disc]
 discs (Scene clip others) = maybe [] (pointDiscs defaultIntrinsics headset allLit . placed) clip ++ others
 
 -- | The clip seen whole, or not there, and a few other lights of up to a
--- reflector's size or so.
-genScene :: Gen Scene
-genScene = Scene <$> oneof [pure Nothing, Just <$> genClipApart 30 (400, 1500) headset] <*> others
-  where
-    others = do
-        n <- chooseInt (0, 4)
-        vectorOf n ((,) <$> ((,) <$> choose (20, fromIntegral frameWidth - 20) <*> choose (20, fromIntegral frameHeight - 20)) <*> choose (2, 14))
-
--- | Scenes with fewer lights, without the clip, and with it turned less.
-shrinkScene :: Scene -> [Scene]
-shrinkScene (Scene clip others) =
-    [Scene clip fewer | fewer <- shrinkList (const []) others]
-        ++ [Scene Nothing others | isJust clip]
-        ++ [Scene (Just simpler) others | Just placing <- [clip], simpler <- shrinkClipApart headset placing]
+-- reflector's size or so. Simpler with fewer lights, without the clip, and
+-- with it turned less.
+instance Arbitrary Scene where
+    arbitrary = Scene <$> oneof [pure Nothing, Just <$> genClipApart 30 (400, 1500) headset] <*> others
+      where
+        others = do
+            n <- chooseInt (0, 4)
+            vectorOf n ((,) <$> ((,) <$> choose (20, fromIntegral frameWidth - 20) <*> choose (20, fromIntegral frameHeight - 20)) <*> choose (2, 14))
+    shrink (Scene clip others) =
+        [Scene clip fewer | fewer <- shrinkList (const []) others]
+            ++ [Scene Nothing others | isJust clip]
+            ++ [Scene (Just simpler) others | Just placing <- [clip], simpler <- shrinkClipApart headset placing]
