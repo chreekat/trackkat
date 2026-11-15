@@ -1,5 +1,5 @@
 -- | Estimating the true shape of the clip's triangle from how the head
--- moves, to report, experimentally; nothing applies it.
+-- moves, to report; nothing applies it.
 --
 -- See Note [Clip shape from movement].
 module TrackKat.Shape (
@@ -455,7 +455,7 @@ describeShape :: ShapeEstimate -> String
 describeShape est = case difference est of
     Different ->
         printf
-            "Clip shape estimate (experimental): %s mm, from %s of turning, keeping %.0f mm left to right (movement shows the shape, not the size); configured %s. Try clip = %s if tracking seems off."
+            "Clip shape estimate: %s mm, from %s of turning, keeping %.0f mm left to right (movement shows the shape, not the size); configured %s. Try clip = %s if tracking seems off."
             (renderDistances (estimatedModel est))
             (renderMinutes (estimateMinutes est))
             lr
@@ -463,7 +463,7 @@ describeShape est = case difference est of
             (renderDistances (estimatedModel est))
     AsConfigured ->
         printf
-            "Clip shape estimate (experimental): %s mm, from %s of turning: as configured."
+            "Clip shape estimate: %s mm, from %s of turning: as configured."
             (renderDistances (estimatedModel est))
             (renderMinutes (estimateMinutes est))
   where
@@ -472,8 +472,8 @@ describeShape est = case difference est of
 -- | The estimate as the window's calibration area shows it, on one line.
 describeShapeBriefly :: ShapeEstimate -> String
 describeShapeBriefly est = case difference est of
-    Different -> printf "Clip shape (experimental): %s mm, not the %s set." (renderDistances (estimatedModel est)) (renderDistances (configuredModel est))
-    AsConfigured -> printf "Clip shape (experimental): %s mm, as set." (renderDistances (configuredModel est))
+    Different -> printf "Clip shape: %s mm, not the %s set." (renderDistances (estimatedModel est)) (renderDistances (configuredModel est))
+    AsConfigured -> printf "Clip shape: %s mm, as set." (renderDistances (configuredModel est))
 
 -- | How the estimate stands, sure or not, for a replay's end.
 describeShapeSoFar :: ShapeLearner -> String
@@ -482,7 +482,7 @@ describeShapeSoFar sl = case shapeEstimate sl of
         | not (isInfinite (estimateSpread est)) ->
             let (lr, lt, rt) = wornDistances (estimatedModel est)
              in printf
-                    "Clip shape estimate (experimental): %.1f %.1f %.1f mm, give or take %.1f, from %.1f minutes of turning (%s; configured %s, its left to right kept)."
+                    "Clip shape estimate: %.1f %.1f %.1f mm, give or take %.1f, from %.1f minutes of turning (%s; configured %s, its left to right kept)."
                     lr
                     lt
                     rt
@@ -494,4 +494,4 @@ describeShapeSoFar sl = case shapeEstimate sl of
                         (Sure, AsConfigured) -> "as configured"
                     )
                     (renderDistances (configuredModel est))
-    _ -> "Clip shape estimate (experimental): too little turning to tell."
+    _ -> "Clip shape estimate: too little turning to tell."

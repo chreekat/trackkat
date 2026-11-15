@@ -2455,7 +2455,7 @@ static void show_log(void)
 static const wchar_t *const head_view_tips[VIEWS] = {
     L"Click to switch views: virtual, physical, camera. Virtual: your head as games see it, turned and moved as "
     L"the game's view will be; the blue line shows where it looks. In the corner, what the camera sees.",
-    L"Click to switch views: virtual, physical, camera. Physical (experimental): your head as the camera measures "
+    L"Click to switch views: virtual, physical, camera. Physical: your head as the camera measures "
     L"it, dotted yellow, turning about your neck pivot, the grey dot. Once the level and neck pivot are learnt, "
     L"the clip where it sits on your head: each reflector blue while seen, hollow while not. In the corner, what "
     L"the camera sees.",

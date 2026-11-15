@@ -157,7 +157,7 @@ one you left it on as `head view` in `trackkat.conf`. **Virtual** shows
 your head as games see it. **Physical** shows, dotted yellow, your own head
 as the camera measures it, turning about your neck pivot (the grey dot);
 once both are learnt, with the clip where the learnt pivot puts it, a
-reflector out of sight drawn hollow and named below. This is experimental.
+reflector out of sight drawn hollow and named below.
 **Camera** shows the camera's whole picture, each blob at its size and
 shape.
 
@@ -190,7 +190,7 @@ while it doesn't see the reflectors clearly. A
 calibration learnt from mirror images, whose neck pivot is in front of the
 clip, is forgotten when trackkat starts, with a line in the log saying so.
 
-### The clip's shape (experimental)
+### The clip's shape
 
 No single frame shows the shape of the clip's triangle: any triangle fits
 any three points in the image. How your head moves does: turning about your
@@ -203,7 +203,7 @@ glancing about, once it is sure, it logs a line, and shows it under the
 calibration:
 
 ```
-Clip shape estimate (experimental): 70 99 108 mm, from 2 minutes of turning, keeping 70 mm left to right (movement shows the shape, not the size); configured 70 110 110. Try clip = 70 99 108 if tracking seems off.
+Clip shape estimate: 70 99 108 mm, from 2 minutes of turning, keeping 70 mm left to right (movement shows the shape, not the size); configured 70 110 110. Try clip = 70 99 108 if tracking seems off.
 ```
 
 or, when it is within 2 mm of `clip` in `trackkat.conf`, says so. In
