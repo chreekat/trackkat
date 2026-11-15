@@ -9,11 +9,15 @@ module TrackKat.ServedGame (
     parseServedGame,
     GameProcess (..),
     stillServed,
+    describeServedAgain,
+    Note (..),
+    note,
 ) where
 
 import Control.Monad (guard)
 import Data.Char (isSpace)
 import Data.Word (Word64)
+import Text.Printf (printf)
 
 import TrackKat.Number (parseNatural, renderNatural)
 
@@ -102,3 +106,29 @@ stillServed g process windowOwner = case (process, servedStarted g) of
     (ProcessGone, _) -> Nothing
     (ProcessRunning (Just now), Just before) -> if now == before then Just g else Nothing
     (ProcessRunning _, _) -> if windowOwner == Just (servedProcess g) then Just g else Nothing
+
+-- | The log's line for a game served again, given the game's name, if its
+-- profile has one known.
+describeServedAgain :: ServedGame -> Maybe String -> String
+describeServedAgain g name = "Serving " ++ game ++ " again, which was running before trackkat restarted."
+  where
+    game = case (servedProfile g, name) of
+        (Just i, Just n) -> printf "%s (game %d)" n i
+        (Just i, Nothing) -> "game " ++ show i
+        (Nothing, _) -> "the game in process " ++ show (servedProcess g)
+
+-- | What to do to the file that remembers the game served.
+data Note
+    = -- | replace it whole with this text
+      Write String
+    | -- | delete it
+      Delete
+    deriving (Eq, Show)
+
+-- | What to do to the file, if anything, given how many times the game
+-- served had changed when the file was last brought up to date, how many
+-- times it has now, and the game served now, if any.
+note :: Int -> Int -> Maybe ServedGame -> Maybe Note
+note seen changes game
+    | changes == seen = Nothing
+    | otherwise = Just (maybe Delete (Write . renderServedGame) game)

@@ -267,13 +267,7 @@ servedBefore path = do
 
 -- | The log's line for a game served again.
 servedAgain :: ServedGame -> IO String
-servedAgain g = do
-    name <- maybe (pure Nothing) scrambledGameName (servedProfile g)
-    let game = case (servedProfile g, name) of
-            (Just i, Just n) -> printf "%s (game %d)" n i
-            (Just i, Nothing) -> "game " ++ show i
-            (Nothing, _) -> "the game in process " ++ show (servedProcess g)
-    pure ("Serving " ++ game ++ " again, which was running before trackkat restarted.")
+servedAgain g = describeServedAgain g <$> maybe (pure Nothing) scrambledGameName (servedProfile g)
 
 -- | Keep the file naming the game served through NaturalPoint's NPClient
 -- up to date, deleting it while there is none, for 'servedBefore'. It is
@@ -284,11 +278,11 @@ rememberServedGame path = go 0
     go seen = do
         threadDelay 50000
         (changes, game) <- trackIRServed
-        when (changes /= seen) $
-            save game `catch` \e -> say ("Can't note the game served: " ++ displayException (e :: IOException))
+        forM_ (note seen changes game) $ \todo ->
+            keep todo `catch` \e -> say ("Can't note the game served: " ++ displayException (e :: IOException))
         go changes
-    save Nothing = removePathForcibly path
-    save (Just g) = writeFile new (renderServedGame g) >> renameFile new path
+    keep Delete = removePathForcibly path
+    keep (Write text) = writeFile new text >> renameFile new path
     new = path ++ ".new"
 
 -- | Print a line, and add it to the log in trackkat's window.
