@@ -119,6 +119,51 @@ In the window, the TRIM switch lights blue while a trim is in place, with
 its yaw and pitch, and PAUSE lights amber while paused. Each switch's keys
 and buttons are listed under it, one to a line, to edit or add to.
 
+## Aim
+
+The curves turn the view much further than your head, so that you can look
+behind you without looking away from the screen: too far to lay a gunsight
+on something by head, as the Apache's gunner does. Aim is for that. From the
+moment you begin aiming, the view turns from where it then is by how far
+your head turns from where it then is, half as far again by default, and
+smoothed more steadily. Look roughly at the target, aim, and finish with
+small, natural movements of your head.
+
+The view doesn't move as aiming begins. When it ends, the view glides back
+over a fifth of a second to where your head would otherwise have it.
+Leaning isn't changed by aiming, and trim applies as ever. Recentering ends
+aiming; pausing holds the view through it.
+
+Bind a key or button to `aim` with `hold` after it to aim just while it is
+held down, or without to turn aiming on, then off. The AIM switch in the
+window does the same, and lights blue while aiming; the log says when it
+begins and ends. Aiming's curves and smoothing are the `aim yaw`, `aim
+pitch`, `aim roll`, `aim smoothing`, `aim steadiness` and `aim
+responsiveness` settings in `trackkat.conf`: a curve takes how far your head
+has turned since aiming began to how far the view turns.
+
+## One button, several things
+
+A key or button can be pressed three ways, and bound to something for each,
+to save buttons on a HOTAS: on its own, a press; with `hold` after it, held
+down for 0.3 seconds; with `double`, pressed twice within 0.3 seconds.
+
+```
+recenter = F12, Throttle - HOTAS Warthog button 4 double
+trim = Throttle - HOTAS Warthog button 4
+aim = Throttle - HOTAS Warthog button 4 hold
+```
+
+In the window, type `hold` or `double` after a key or button in its list.
+
+A key bound only as a press acts the moment it goes down, as it always has.
+One that also has a hold or a double waits until the press can be nothing
+else: until it comes up, if it has a hold, and until 0.3 seconds have gone
+by with no second press, if it has a double. Recenter, pause and trim on a
+hold act once, when the 0.3 seconds are up; aim on a hold lasts until the
+button comes up. A key bound with modifiers, such as `Ctrl+F9 hold`, goes
+down with just those held, and comes up when the key itself does.
+
 ## Calibration
 
 trackkat learns two things from how you move your head, and keeps them in

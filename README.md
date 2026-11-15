@@ -55,35 +55,38 @@ tooltip saying what it does.
 3. Each axis: your head, what games see after the curves, and a bar.
 4. Rest the mouse on anything for help.
 5. Camera, clip and games (by name): green is good.
-6. **Recenter**: where you face now becomes straight ahead; clears trim.
+6. **Recenter**: where you face now becomes straight ahead; clears trim and ends aiming.
 7. **Pause**: games see your head held still until you press it again. Lit amber while paused.
 8. **Trim**: the view now, where it looks and where it has moved to, becomes forward, until you recenter. Lit blue while trimmed, with where.
-9. Latency and other figures, for bug reports.
-10. Keys and buttons for each switch above, one to a line; here a HOTAS button too. Click a list to edit it.
-11. **Add…**: press a key, joystick button, or middle or side mouse button to add it.
-12. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
-13. **Curves as text**, for curves of any shape.
-14. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
-15. Smoothing: steadiness against jitter, responsiveness against lag.
-16. **Lean follows the view**, or the screen.
-17. **Ignore still lights**: a lamp or a fire behind you doesn't stop trackkat finding the clip; see [still lights](docs/details.md#still-lights).
-18. What trackkat has learnt about your camera and neck.
-19. A cover: lift it for **Calibrate now** (after moving the camera, turn your head left and right for five seconds) and **Clear calibration** (start afresh).
-20. The log's latest line; **Copy log** for bug reports.
-21. **Open log**: the whole log, and trackkat's version, in a window of its own.
-22. **Start with Windows**, in the tray: the way to use anti-cheat mode without starting trackkat by hand.
-23. **Keep up to date**: an installed trackkat fetches new versions in the background.
-24. **Anti-cheat mode**, for games such as Arma Reforger that refuse trackkat's NPClient.
-25. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
+9. **Aim**: the view turns gently from where it is, to lay a gunsight on something by head, until you press it again. Lit blue while aiming.
+10. Latency and other figures, for bug reports.
+11. Keys and buttons for each switch above, one to a line; here a HOTAS button that trims when pressed, aims while held and recenters when pressed twice. Click a list to edit it.
+12. **Add…**: press a key, joystick button, or middle or side mouse button to add it.
+13. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
+14. **Curves as text**, for curves of any shape.
+15. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
+16. Smoothing: steadiness against jitter, responsiveness against lag.
+17. **Lean follows the view**, or the screen.
+18. **Ignore still lights**: a lamp or a fire behind you doesn't stop trackkat finding the clip; see [still lights](docs/details.md#still-lights).
+19. What trackkat has learnt about your camera and neck.
+20. A cover: lift it for **Calibrate now** (after moving the camera, turn your head left and right for five seconds) and **Clear calibration** (start afresh).
+21. The log's latest line; **Copy log** for bug reports.
+22. **Open log**: the whole log, and trackkat's version, in a window of its own.
+23. **Start with Windows**, in the tray: the way to use anti-cheat mode without starting trackkat by hand.
+24. **Keep up to date**: an installed trackkat fetches new versions in the background.
+25. **Anti-cheat mode**, for games such as Arma Reforger that refuse trackkat's NPClient.
+26. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
 
 ## Keys
 
 - **F12** recenters, from anywhere, as does a game's own recenter binding.
 - **F9** pauses.
-- **Trim** has no key until you give it one.
+- **Trim** and **Aim** have no key until you give them one.
 
 Any of them can be other keys, joystick or HOTAS buttons, or the middle or
-side mouse buttons.
+side mouse buttons. One button can do several things: write `hold` after it
+for what it does when held down, and `double` for when it is pressed twice;
+see [one button, several things](docs/details.md#one-button-several-things).
 
 ## Settings
 
@@ -114,7 +117,7 @@ Either way they apply at once, while you play.
 
   ![trackdemo looking around its cockpit, driven by a scripted pose](docs/trackdemo.gif)
 
-More on installing and updating, trim, calibration, the tray icon and when
+More on installing and updating, trim, aim, calibration, the tray icon and when
 trackkat quits by itself: [docs/details.md](docs/details.md).
 
 ## Building
