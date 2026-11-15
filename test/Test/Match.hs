@@ -36,7 +36,7 @@ properties =
     testGroup
         "properties"
         [ testProperty "the clip seen just where it is predicted is the best match, each reflector a blob of its own, at no cost" $
-            forAllShrink genSeenClip shrinkSeenClip $ \scene -> forAll (shuffle (blobsOf scene{sceneOff = []})) $ \blobs ->
+            \scene -> forAnyOrder (blobsOf scene{sceneOff = []}) $ \blobs ->
                 case matches defaultIntrinsics clipBent (scenePose scene) (pure noSize) blobs of
                     [] -> counterexample "no match" False
                     best : _ ->
@@ -48,23 +48,23 @@ properties =
                                 , matchUnused best === length (sceneStrays scene)
                                 ]
         , testProperty "blobs match the same in whatever order they come" $
-            forAllShrink genSeenClip shrinkSeenClip $ \scene -> forAll (shuffle (blobsOf scene)) $ \shuffled ->
+            \scene -> forAnyOrder (blobsOf scene) $ \shuffled ->
                 let found = matches defaultIntrinsics clipBent (scenePose scene) (pure noSize)
                     costs = sort . map matchCost . found
                  in length (costs shuffled) === length (costs (blobsOf scene)) .&&. conjoin (zipWith (close 1e-9) (costs shuffled) (costs (blobsOf scene)))
         , testProperty "matches come best first, each seeing two reflectors or more in blobs there are" $
-            forAllShrink genSeenClip shrinkSeenClip $ \scene ->
+            \scene ->
                 let found = matches defaultIntrinsics clipBent (scenePose scene) (pure noSize) (blobsOf scene)
                  in map matchCost found === sort (map matchCost found)
                         .&&. property (all (\m -> length (catMaybes (toList (matchSights m))) >= 2 && matchUnused m >= 0 && matchUnused m <= length (blobsOf scene) - 2) found)
         , testProperty "a match's score is what its findings come to, and its cost twice that, in squared pixels" $
-            forAllShrink genSeenClip shrinkSeenClip $ \scene ->
+            \scene ->
                 conjoin
                     [ close 1e-9 (sum (map (nats . findingScore) (matchJudged m))) (nats (matchScore m)) .&&. nats (matchScore m) === negate (matchCost m) / 2
                     | m <- matches defaultIntrinsics clipBent (scenePose scene) (pure noSize) (blobsOf scene)
                     ]
         , testProperty "a blob of the size expected, or of no known size, is as likely as can be, and less so the more it differs either way" $
-            forAll (choose (1, 1000)) $ \expected -> forAll (choose (1, 10)) $ \less -> forAll (choose (1, 10)) $ \more ->
+            \(Expected expected) (Times less) (Times more) ->
                 let times k = nats (sizeScore expected (k * expected))
                  in conjoin
                         [ sizeScore expected expected === Term.possible
@@ -101,21 +101,35 @@ blobsOf scene =
 
 -- | A clip seen whole with its reflectors well apart in the picture, each
 -- blob within 3 pixels of where its reflector is, and up to four strays
--- well away from them.
-genSeenClip :: Gen SeenClip
-genSeenClip = do
-    placing <- genSeen 40 trackedRange clipBent `suchThat` (wellApart 40 . predicted . scene [])
-    off <- vectorOf 3 ((,) <$> choose (-3, 3) <*> choose (-3, 3))
-    sizes <- vectorOf 3 (chooseInt (30, 300))
-    count <- chooseInt (0, 4)
-    strays <- vectorOf count (((,) <$> ((,) <$> choose (0, 640) <*> choose (0, 480)) <*> chooseInt (30, 300)) `suchThat` (\(at, _) -> all ((>= 60) . distance at) (predicted (scene [] placing))))
-    pure (SeenClip placing off sizes strays)
-  where
-    scene strays placing = SeenClip placing [] [] strays
-    wellApart pixels places = and [distance a b >= pixels | (i, a) <- zip [0 :: Int ..] places, (j, b) <- zip [0 ..] places, i < j]
+-- well away from them. Simpler with fewer strays, and blobs just where
+-- their reflectors are.
+instance Arbitrary SeenClip where
+    arbitrary = do
+        placing <- genSeen 40 trackedRange clipBent `suchThat` (wellApart 40 . predicted . scene [])
+        off <- vectorOf 3 ((,) <$> choose (-3, 3) <*> choose (-3, 3))
+        sizes <- vectorOf 3 (chooseInt (30, 300))
+        count <- chooseInt (0, 4)
+        strays <- vectorOf count (((,) <$> ((,) <$> choose (0, 640) <*> choose (0, 480)) <*> chooseInt (30, 300)) `suchThat` (\(at, _) -> all ((>= 60) . distance at) (predicted (scene [] placing))))
+        pure (SeenClip placing off sizes strays)
+      where
+        scene strays placing = SeenClip placing [] [] strays
+        wellApart pixels places = and [distance a b >= pixels | (i, a) <- zip [0 :: Int ..] places, (j, b) <- zip [0 ..] places, i < j]
+    shrink scene =
+        [scene{sceneStrays = strays} | strays <- shrinkList (const []) (sceneStrays scene)]
+            ++ [scene{sceneOff = []} | not (null (sceneOff scene))]
 
--- | Scenes with fewer strays, and blobs just where their reflectors are.
-shrinkSeenClip :: SeenClip -> [SeenClip]
-shrinkSeenClip scene =
-    [scene{sceneStrays = strays} | strays <- shrinkList (const []) (sceneStrays scene)]
-        ++ [scene{sceneOff = []} | not (null (sceneOff scene))]
+-- | How many pixels a blob is expected to have, up to a thousand.
+newtype Expected = Expected Double
+    deriving (Show)
+
+instance Arbitrary Expected where
+    arbitrary = Expected <$> choose (1, 1000)
+    shrink (Expected pixels) = Expected <$> shrinkWithin (1, 1000) 1 pixels
+
+-- | How many times as big, from as big to ten times.
+newtype Times = Times Double
+    deriving (Show)
+
+instance Arbitrary Times where
+    arbitrary = Times <$> choose (1, 10)
+    shrink (Times k) = Times <$> shrinkWithin (1, 10) 1 k
