@@ -132,7 +132,10 @@ takes the rest. To run one alone, or the tests whose names have a word:
 
 `TRACKKAT_SHOW=1 cabal test --test-show-details=direct` also shows the
 figures each simulation came to, and `TRACKKAT_ACCEPT=1 cabal test` rewrites
-`trackkat.conf.example` from the defaults.
+`trackkat.conf.example` from the defaults. Properties are tried with new
+random cases each run; one that fails says how to try its case again, as
+`TASTY_QUICKCHECK_REPLAY='(SMGen 1 3,0)' cabal test`, and
+`TASTY_QUICKCHECK_TESTS=100000` tries each with that many.
 
 ## Credits
 

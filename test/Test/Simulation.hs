@@ -250,7 +250,7 @@ subjectClip :: Subject -> Clip
 subjectClip (Subject _ m look) = Clip m look (wornPitched (-23))
 
 -- | The clips the key simulations run with: the user's, and others that
--- differ from it in the ways clips do. (The tests above use points.)
+-- differ from it in the ways clips do. (Other simulations use points.)
 userTabs, unbentTabs, scaleneTabs :: Subject
 userTabs = Subject "the user's clip, 70 110 110 on tabs, its top tab bent" (clipModel (clip defaultConfig)) AsTape
 unbentTabs = Subject "a clip 70 116 116 on tabs, its post and top tab unbent" (tabbed 0 70 116 116) AsTape
