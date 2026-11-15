@@ -18,6 +18,7 @@ import TrackKat.Match (Kind (..), Sight (..))
 import TrackKat.Pose
 import TrackKat.Synth
 import TrackKat.Tracker
+import TrackKat.World (clockAt, inSeconds)
 
 simulations :: TestTree
 simulations = group "Lights" $ do
@@ -234,24 +235,24 @@ tests =
         "Lights"
         [ testProperty "a blob that stays put is learnt as a light there once it has, and forgotten once it has gone" $
             \(Spot (place, size)) (Rate rate) (Wobble wobble) ->
-                let lit = [(fromIntegral i / rate, [blobAt (nudged place dx dy) size]) | (i, dx, dy) <- zip3 [0 .. ceiling ((learnSeconds + 0.2) * rate) :: Int] (cycle wobble) (drop 3 (cycle wobble))]
-                    gone = [(learnSeconds + 0.3 + fromIntegral i / 4, []) | i <- [0 .. ceiling (4 * forgetSeconds) + 4 :: Int]]
+                let lit = [(fromIntegral i / rate, [blobAt (nudged place dx dy) size]) | (i, dx, dy) <- zip3 [0 .. ceiling ((inSeconds learnSeconds + 0.2) * rate) :: Int] (cycle wobble) (drop 3 (cycle wobble))]
+                    gone = [(inSeconds learnSeconds + 0.3 + fromIntegral i / 4, []) | i <- [0 .. ceiling (4 * inSeconds forgetSeconds) + 4 :: Int]]
                     (learnt, told) = watched noLights lit
                     (left, toldAfter) = watched learnt gone
                  in counterexample (show (told, lightAreas learnt, toldAfter)) $
                         case (told, lightAreas learnt, toldAfter) of
                             ([(when, Learnt at (Learning still _ NoReflectorSeen))], [(centre, radius)], [(whenGone, Forgotten was)]) ->
                                 conjoin
-                                    [ property (when >= learnSeconds && still >= learnSeconds)
+                                    [ property (when >= inSeconds learnSeconds && still >= inSeconds learnSeconds)
                                     , property (centre == at && was == at && distance at place <= stillPixels)
                                     , property (radius >= stillPixels + marginPixels && radius <= reachPixels + marginPixels)
-                                    , property (whenGone > when + forgetSeconds)
+                                    , property (whenGone > when + inSeconds forgetSeconds)
                                     , lightAreas left === []
                                     ]
                             _ -> property False
         , testProperty "nothing is learnt in less time than a light must stay put" $
             \scene ->
-                let early = takeWhile ((< learnSeconds) . fst) (sceneFrames scene)
+                let early = takeWhile ((< inSeconds learnSeconds) . fst) (sceneFrames scene)
                  in lightAreas (fst (watched noLights early)) === [] .&&. snd (watched noLights early) === []
         , testProperty "lights are told as they come and go, their areas within bounds and never smaller" $
             \scene ->
@@ -359,7 +360,7 @@ blobAt (x, y) size = Blob x y size (200 * size) spread spread 0
 watched :: Lights -> [(Double, [Blob])] -> (Lights, [(Double, News)])
 watched ls frames = (ls', concat told)
   where
-    (ls', told) = mapAccumL (\l (t, blobs) -> let (l', news) = learnLights t unseen blobs l in (l', map ((,) t) news)) ls frames
+    (ls', told) = mapAccumL (\l (t, blobs) -> let (l', news) = learnLights (clockAt t) unseen blobs l in (l', map ((,) t) news)) ls frames
 
 -- | Frames of blobs at their times, and the clip, if it is tracked in all
 -- of them, its reflectors' blobs among the frames'.
@@ -376,7 +377,7 @@ instance Show Scene where
 steps :: Scene -> [(Double, [((Double, Double), Double)], [((Double, Double), Double)], [News])]
 steps scene = snd (mapAccumL step' noLights (sceneFrames scene))
   where
-    step' ls (t, blobs) = let (ls', news) = learnLights t (fromMaybe unseen (sceneClip scene)) blobs ls in (ls', (t, lightAreas ls, lightAreas ls', news))
+    step' ls (t, blobs) = let (ls', news) = learnLights (clockAt t) (fromMaybe unseen (sceneClip scene)) blobs ls in (ls', (t, lightAreas ls, lightAreas ls', news))
 
 -- | A few lamps, each lit in most frames, with a fragment beside it in
 -- some, and strays that come and go; perhaps the clip, tracked throughout;

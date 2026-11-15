@@ -23,7 +23,7 @@ import qualified TrackKat.Lights as Lights
 import TrackKat.Match (Sight (..), Three, reflectors)
 import TrackKat.Pose (Intrinsics, Model, Pose, seenAt)
 import TrackKat.Tracker.Outcome (Event (..))
-import TrackKat.World (Instant, Seconds, inClockSeconds, seconds, (.-.))
+import TrackKat.World (Instant, Seconds, seconds, (.-.))
 
 -- | Whether still lights are learnt and masked, and those learnt.
 data Still = Still
@@ -77,7 +77,7 @@ clipView k m confirmed pose sights usual = case confirmed of
 learnSeen :: Instant -> View -> [Blob] -> Still -> (Lights, [Event])
 learnSeen now view blobs (Still masking lights) = case masking of
     NoMasking -> (lights, [])
-    MaskLights -> map toEvent <$> learnLights (inClockSeconds now) view blobs lights
+    MaskLights -> map toEvent <$> learnLights now view blobs lights
   where
     toEvent (Lights.Learnt p why) = LightIgnored p why
     toEvent (Lights.Forgotten p) = LightForgotten p

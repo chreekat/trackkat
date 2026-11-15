@@ -37,6 +37,7 @@ import Data.Ord (comparing)
 import TrackKat.Frame (Blob (..))
 import TrackKat.Match (Kind (..), Sight (..))
 import TrackKat.Term
+import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, (.-.))
 import qualified TrackKat.World as World
 
 -- | Whether still lights are learnt and masked.
@@ -134,17 +135,17 @@ reachPixels = 25
 marginPixels :: Double
 marginPixels = 5
 
--- | Seconds a light must stay put to be learnt, how long it may vanish
+-- | How long a light must stay put to be learnt, how long it may vanish
 -- meanwhile, and after how long unseen it is forgotten.
-learnSeconds, gapSeconds, forgetSeconds :: Double
-learnSeconds = 3
-gapSeconds = 0.25
-forgetSeconds = 45
+learnSeconds, gapSeconds, forgetSeconds :: Seconds
+learnSeconds = seconds 3
+gapSeconds = seconds 0.25
+forgetSeconds = seconds 45
 
--- | For how long, in seconds, where the reflectors were last seen is kept
--- clear of learning.
-clipMemorySeconds :: Double
-clipMemorySeconds = 10
+-- | For how long where the reflectors were last seen is kept clear of
+-- learning.
+clipMemorySeconds :: Seconds
+clipMemorySeconds = seconds 10
 
 -- | How much bigger than the biggest reflector seen lately a blob can be,
 -- and still look like a reflector: a reflector grows as the head comes
@@ -152,15 +153,15 @@ clipMemorySeconds = 10
 reflectorLikeFactor :: Double
 reflectorLikeFactor = World.sameSizeFactor World.world
 
--- | Seconds over which the size of the biggest reflector seen fades.
-sizeMemorySeconds :: Double
-sizeMemorySeconds = 600
+-- | The time over which the size of the biggest reflector seen fades.
+sizeMemorySeconds :: Seconds
+sizeMemorySeconds = seconds 600
 
 -- | Seconds a blob that looks like a reflector must stay put to be learnt
 -- as a light, while the clip isn't tracked elsewhere: the world's
 -- 'World.headStillFor'.
-stillHeadSeconds :: Double
-stillHeadSeconds = World.inSeconds (World.headStillFor World.world)
+stillHeadSeconds :: Seconds
+stillHeadSeconds = World.headStillFor World.world
 
 -- | How much bigger or smaller than a light a reflector tracked in its
 -- area can be, and be taken for it: the world's 'World.sameSizeFactor'.
@@ -180,8 +181,8 @@ data Candidate = Candidate
     -- ^ sightings of its core, whose centroids sum to the above
     , cPixels :: !Double
     -- ^ their pixels, summed
-    , cFirst :: !Double
-    , cLast :: !Double
+    , cFirst :: !Instant
+    , cLast :: !Instant
     -- ^ when its core was first and last seen
     , cSpread :: !Double
     -- ^ the farthest, in pixels, a core's or fragment's centroid has been
@@ -197,7 +198,7 @@ data Region = Region
     , rRadius :: !Double
     , rPixels :: !Double
     -- ^ its core's usual size
-    , rLast :: !Double
+    , rLast :: !Instant
     -- ^ when something was last seen in it
     , rHeld :: !(Maybe Int)
     -- ^ which reflector, numbered as in 'viewSights', was taken for it
@@ -208,23 +209,23 @@ data Region = Region
 data Lights = Lights
     { lCandidates :: ![Candidate]
     , lRegions :: ![Region]
-    , lClip :: !(Maybe (Double, [((Double, Double), Double)]))
+    , lClip :: !(Maybe (Instant, [((Double, Double), Double)]))
     -- ^ when and where the reflectors were last seen
-    , lBiggest :: !(Maybe (Double, Double))
+    , lBiggest :: !(Maybe (Instant, Double))
     -- ^ when the biggest reflector lately was seen, and its pixels
     , lUsual :: !(Maybe Double)
     -- ^ the pixels the biggest reflector lights where the head was
     -- recentered, as last tracked
-    , lSights :: !(Double, [Maybe (Double, Double)])
+    , lSights :: !(Instant, [Maybe (Double, Double)])
     -- ^ when the last frame was, and where each reflector was tracked in
     -- it
-    , lFound :: !(Maybe Double)
+    , lFound :: !(Maybe Instant)
     -- ^ since when the clip has been tracked in every frame
     }
 
 -- | Nothing learnt, watched or remembered.
 noLights :: Lights
-noLights = Lights [] [] Nothing Nothing Nothing (0, []) Nothing
+noLights = Lights [] [] Nothing Nothing Nothing (clockAt 0, []) Nothing
 
 -- | A light learnt, and why; or forgotten, at its place in the image, as
 -- having gone; or as having moved, and how it showed that.
@@ -280,9 +281,9 @@ data View = View
 unseen :: View
 unseen = View [] [] Nothing
 
--- | Learn from a frame's blobs, seen at the given time in seconds, given
--- what it showed of the clip.
-learnLights :: Double -> View -> [Blob] -> Lights -> (Lights, [News])
+-- | Learn from a frame's blobs, seen at the given time, given what it
+-- showed of the clip.
+learnLights :: Instant -> View -> [Blob] -> Lights -> (Lights, [News])
 learnLights now (View sights reflectors usual) blobs ls =
     ( Lights (whole (filter (\c -> not (any (covers (cAt c)) (learnt ++ stayed))) waiting)) (whole (learnt ++ stayed)) clip biggest remembered (now, whole (map (fmap sightAt) sights)) found
     , [Learnt (cAt c) (learning c) | c <- ready] ++ map (Forgotten . rAt) gone ++ map (\r -> Moved (rAt r) CarriedOff) moved ++ map (\r -> Moved (rAt r) LeftWhenFound) went
@@ -291,29 +292,29 @@ learnLights now (View sights reflectors usual) blobs ls =
     whole xs = foldr seq () xs `seq` xs
     clip = if null reflectors then lClip ls else Just (now, reflectors)
     area = case clip of
-        Just (t, discs) | now - t <= clipMemorySeconds -> discs
+        Just (t, discs) | now .-. t <= clipMemorySeconds -> discs
         _ -> []
     eligible = [b | b <- blobs, not (any (\(p, r) -> distance (at b) p <= r) area)]
     (regions, rest) = foldl' refresh (lRegions ls, []) eligible
-    (kept, gone) = partition (\r -> now - rLast r <= forgetSeconds) regions
+    (kept, gone) = partition (\r -> now .-. rLast r <= forgetSeconds) regions
     (held, moved) = partition (not . carriedOff) (map holder kept)
     (stayed, went) = partition (not . leftWhenFound) held
     watched =
         [ c
         | c <- foldl' watch (lCandidates ls) (reverse rest)
-        , now - cLast c <= gapSeconds
+        , now .-. cLast c <= gapSeconds
         , not (any (\(p, r) -> distance (cAt c) p <= r) area)
         ]
     (ready, waiting) = partition (accepts learnable) watched
     -- Whether a blob watched is a light to learn: it has stayed put long
     -- enough, and something shows it isn't the clip held still.
     learnable =
-        atLeast (Name "still" "it hasn't stayed put long enough") "s" learnSeconds stillFor
+        atLeast (Name "still" "it hasn't stayed put long enough") "s" (inSeconds learnSeconds) (inSeconds . stillFor)
             <> gate
                 (Name "not the clip" "it may be one of the clip's reflectors, held still")
                 (isJust . notTheClip)
-                (\c -> Measure (stillFor c) AtLeast stillHeadSeconds "s")
-    stillFor c = now - cFirst c
+                (\c -> Measure (inSeconds (stillFor c)) AtLeast (inSeconds stillHeadSeconds) "s")
+    stillFor c = now .-. cFirst c
     -- What shows a blob isn't the clip held still, if anything does.
     notTheClip c
         | not (reflectorLike c) = Just $ case fading ++ toList remembered of
@@ -322,7 +323,7 @@ learnLights now (View sights reflectors usual) blobs ls =
         | stillFor c >= stillHeadSeconds = Just StillLongerThanHeads
         | allTracked = Just ClipElsewhere
         | otherwise = Nothing
-    learning c = Learning (stillFor c) (cPixels c / cCount c) (fromMaybe StillLongerThanHeads (notTheClip c))
+    learning c = Learning (inSeconds (stillFor c)) (cPixels c / cCount c) (fromMaybe StillLongerThanHeads (notTheClip c))
     learnt = [Region (cAt c) (min (reachPixels + marginPixels) (max stillPixels (cSpread c) + marginPixels)) (cPixels c / cCount c) now Nothing | c <- ready]
     covers p r = distance p (rAt r) <= rRadius r
     -- The clip tracked long enough to learn clear of, all three reflectors
@@ -330,7 +331,7 @@ learnLights now (View sights reflectors usual) blobs ls =
     allTracked = not (null reflectors) && length (catMaybes sights) == 3
     -- The biggest reflector seen lately, its size fading with time, and
     -- the blobs that look like one.
-    fading = [b * exp (negate (now - t) / sizeMemorySeconds) | Just (t, b) <- [lBiggest ls]]
+    fading = [b * exp (negate (inSeconds (now .-. t)) / inSeconds sizeMemorySeconds) | Just (t, b) <- [lBiggest ls]]
     biggest = case [sightPixels s | not (null reflectors), Just s <- sights, sightKind s /= Merged] of
         [] -> lBiggest ls
         seen -> let b = maximum (seen ++ fading) in b `seq` Just (now, b)
@@ -351,7 +352,7 @@ learnLights now (View sights reflectors usual) blobs ls =
     -- size, that didn't come in from outside it; and is carried off by
     -- that reflector tracked outside it.
     previously = case lSights ls of
-        (t, ps) | now - t <= gapSeconds -> ps
+        (t, ps) | now .-. t <= gapSeconds -> ps
         _ -> []
     holder r = case rHeld r of
         Just _ -> r
