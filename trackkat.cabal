@@ -38,6 +38,7 @@ library
     TrackKat.Release
     TrackKat.Response
     TrackKat.ServedGame
+    TrackKat.Session
     TrackKat.Shape
     TrackKat.Stats
     TrackKat.Term
@@ -150,6 +151,7 @@ test-suite tests
     Test.Recording
     Test.Release
     Test.Response
+    Test.Session
     Test.ServedGame
     Test.Shape
     Test.Simulation

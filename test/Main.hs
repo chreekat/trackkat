@@ -26,6 +26,7 @@ import qualified Test.Recording
 import qualified Test.Release
 import qualified Test.Response
 import qualified Test.ServedGame
+import qualified Test.Session
 import qualified Test.Shape
 import qualified Test.Stats
 import qualified Test.Term
@@ -68,6 +69,7 @@ main = do
                 , Test.ServedGame.tests
                 , Test.CommandLine.tests
                 , Test.Controls.tests
+                , Test.Session.tests
                 , Test.Icons.tests
                 ]
             , testGroup
