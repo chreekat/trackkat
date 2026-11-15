@@ -44,7 +44,8 @@ module Test.Gen (
     turnedAbout,
     SeenWhole (..),
 
-    -- * Beliefs
+    -- * Scores and beliefs
+    Likely (..),
     genWeights,
     shares,
     shrinkBelief,
@@ -100,6 +101,7 @@ import TrackKat.Number
 import TrackKat.Pose
 import TrackKat.Response
 import TrackKat.Synth (allLit, pointDiscs, renderDiscs)
+import TrackKat.Term (Score (..))
 import TrackKat.Tracker.Blobs (findBlobs)
 import TrackKat.World (Seconds, World (..), inMillimetres, inSeconds, seconds, world)
 
@@ -343,7 +345,16 @@ turnedAbout pivot turn pose@(Pose r _) = Pose turned (poseAt pose pivot ^-^ mulM
   where
     turned = turn `mulMM` r
 
--- * Beliefs
+-- * Scores and beliefs
+
+-- | What something scores that can be: from nothing against it, down to
+-- sixty nats against.
+newtype Likely = Likely Score
+    deriving (Eq, Show)
+
+instance Arbitrary Likely where
+    arbitrary = Likely . Score <$> choose (-60, 0)
+    shrink (Likely scored) = Likely . Score <$> shrinkWithin (-60, 0) 0 (nats scored)
 
 -- | Four weights, of which the first isn't nothing.
 genWeights :: Gen Belief

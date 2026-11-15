@@ -5,7 +5,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Check
-import Test.Gen (shrinkTo)
+import Test.Gen (Likely (..), close, shrinkTo)
 import TrackKat.Term (Bound (..), Finding (..), Measure (..), Name (..), Score (..), Term, Verdict (..))
 import qualified TrackKat.Term as Term
 
@@ -107,6 +107,15 @@ properties =
                         , Term.tallyRejected counted === length rejected
                         , lookup "taken" (Term.tallyCounts counted) === (if length rejected == length verdicts then Nothing else Just (length verdicts - length rejected))
                         , Term.tallyLast counted === concat (take 1 rejected)
+                        ]
+        , testProperty "how much likelier one score is than another is nothing for itself, the opposite the other way round, and by way of a third the two together" $
+            \(Likely a) (Likely b) (Likely c) ->
+                let odds x y = Term.oddsNats (x `Term.over` y)
+                 in conjoin
+                        [ odds a a === 0
+                        , odds a b === negate (odds b a)
+                        , close 1e-9 (odds a c) (odds a b + odds b c)
+                        , property ((odds a b >= 0) == (a >= b))
                         ]
         ]
 
