@@ -31,6 +31,7 @@ import qualified Test.Shape
 import qualified Test.Stats
 import qualified Test.Term
 import qualified Test.Tracker
+import qualified Test.Updater
 import qualified Test.Visibility
 import qualified Test.World
 
@@ -70,6 +71,7 @@ main = do
                 , Test.CommandLine.tests
                 , Test.Controls.tests
                 , Test.Session.tests
+                , Test.Updater.tests
                 , Test.Icons.tests
                 ]
             , testGroup

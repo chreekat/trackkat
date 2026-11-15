@@ -10,7 +10,7 @@ import Control.Concurrent.Async (ExceptionInLinkedThread (..), cancel, link, wit
 import Control.Concurrent.MVar
 import Control.Exception (Handler (..), IOException, bracket_, catch, catches, displayException, try)
 import Control.Monad (foldM, forM_, forever, unless, void, when, (<=<))
-import Data.Functor (($>), (<&>))
+import Data.Functor (($>))
 import Data.IORef
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
@@ -41,6 +41,8 @@ import TrackKat.Session
 import TrackKat.Stats
 import TrackKat.Tracker (Outcome (..))
 import qualified TrackKat.USB as USB
+import TrackKat.Updater (Looking (..), answered, begun, dueLook, newUpdater, offerNotice)
+import qualified TrackKat.Updater as Updater
 import TrackKat.Windows
 
 -- | This build's version; none for a development build.
@@ -177,29 +179,7 @@ refreshOffer :: Paths -> Placement -> IORef Offer -> IO ()
 refreshOffer paths place ref = do
     o <- offer version place <$> installedVersions paths
     before <- atomicModifyIORef' ref (\b -> (o, b))
-    unless (o == before) $ showOffer $ case o of
-        NoOffer -> Nothing
-        OfferInstall v ->
-            Just
-                Notice
-                    { noticeText = "trackkat " ++ versionFolder v ++ " is running from " ++ exeDir paths ++ ". Install it to start it from the Start menu and keep it up to date."
-                    , noticeButton = "Install trackkat"
-                    , noticeTray = Nothing
-                    }
-        OfferInstalled v ->
-            Just
-                Notice
-                    { noticeText = "trackkat " ++ versionFolder v ++ " is installed; this copy, in " ++ exeDir paths ++ ", isn't."
-                    , noticeButton = "Use installed trackkat"
-                    , noticeTray = Nothing
-                    }
-        OfferUpdate v ->
-            Just
-                Notice
-                    { noticeText = versionFolder v ++ " is ready. It starts next time trackkat does."
-                    , noticeButton = "Restart to update"
-                    , noticeTray = Just ("Restart to update to " ++ versionFolder v)
-                    }
+    unless (o == before) $ showOffer (offerNotice (exeDir paths) o)
 
 -- | Take up what the window offers: install this copy, or switch to an
 -- installed one, handing over to it. True if trackkat should now quit.
@@ -220,10 +200,6 @@ takeOffer paths start ref =
             Right () -> say ("Switching to " ++ exe ++ ".") $> True
             Left e -> say ("Can't start " ++ exe ++ " (error " ++ show e ++ ").") $> False
 
--- | How often an installed trackkat looks for a newer version, in seconds.
-updateEvery :: Double
-updateEvery = 4 * 3600
-
 -- | The version of this copy, if it updates itself: an installed release.
 -- Portable copies and development builds don't.
 selfUpdating :: Placement -> Maybe Version
@@ -231,106 +207,45 @@ selfUpdating place = case (place, version) of
     (Installed _, Just self) -> Just self
     _ -> Nothing
 
--- | Why trackkat looks for a newer version.
-data Looking
-    = -- | 'updateEvery' has passed, and updates are on
-      Due
-    | -- | the user clicked Check for updates
-      Asked
-
--- | Whether the log has said a look for a newer version failed, since one
--- last worked.
-data FailureLogged = FailureLogged | NoFailureLogged
-
--- | Whether a look for a newer version reached GitHub at all.
-data Reach = Reached | Unreached
-
 -- | Keep an installed trackkat tidy and up to date: delete older versions
--- once games have let go of them, and look for a newer one now and then,
--- unless updates are off, and whenever the user asks with 'shCheckAsked'.
--- Portable copies and development builds do neither. Only this thread
--- looks, so two looks never run at once.
+-- once games have let go of them, and look for a newer one when 'dueLook'
+-- says, and whenever the user asks with 'shCheckAsked'. Portable copies and
+-- development builds do neither. Only this thread looks, so two looks
+-- never run at once.
 maintain :: Placement -> Shell -> IORef Offer -> IO ()
-maintain place sh ref = forM_ (selfUpdating place) $ \self -> go self Nothing NoFailureLogged
+maintain place sh ref = forM_ (selfUpdating place) $ \self -> go self newUpdater
   where
-    go self checked logged = do
+    go self u = do
         _ <- cleanUp say paths place
         now <- getMonotonicTime
-        wanted <- (== UpdatesOn) . updates . sSettings <$> readIORef (shSession sh)
-        (checked', logged') <-
-            if wanted && maybe True (\t -> now - t >= updateEvery) checked
-                then
-                    look self Due logged <&> \case
-                        -- Not yet online, as just after waking from sleep:
-                        -- again on the next round, in ten minutes.
-                        (Reached, logged') -> (Just now, logged')
-                        (Unreached, logged') -> (Just (now - updateEvery), logged')
-                else pure (checked, logged)
+        wanted <- updates . sSettings <$> readIORef (shSession sh)
+        u' <- maybe (pure u) (\why -> look self why now u) (dueLook wanted now u)
         -- Read, not taken, so a click the timeout cuts off is still there
         -- next time round; emptied once a look has answered it, along with
         -- any clicks while it looked.
         timeout (10 * 60 * 1000000) (readMVar (shCheckAsked sh)) >>= \case
-            Nothing -> go self checked' logged'
+            Nothing -> go self u'
             Just () -> do
-                (_, logged'') <- look self Asked logged'
+                u'' <- look self Asked now u'
                 _ <- tryTakeMVar (shCheckAsked sh)
-                looked <- getMonotonicTime
-                go self (Just looked) logged''
-    look self why logged = bracket_ (showUpdateCheck CheckRunning) (showUpdateCheck CheckIdle) $ do
-        case why of
-            Asked -> say "Looking for a newer trackkat."
-            Due -> pure ()
+                go self u''
+    -- Look, at the round begun at the time given, and say what was found.
+    look self why began u = bracket_ (showUpdateCheck CheckRunning) (showUpdateCheck CheckIdle) $ do
+        mapM_ act (begun why)
         found <- checkForUpdate paths self
         refreshOffer paths place ref
         waiting <- readIORef ref
-        -- The strip across the top of the window says what was found,
-        -- briefly; the log has the whole story.
-        let answer = showUpdateStatus
-        case (found, waiting) of
-            -- Offline, or behind a proxy that won't let it through: the log
-            -- says so when asked, and otherwise once until a look works, so
-            -- a lasting failure shows; the terminal, if any, every time.
-            -- Offline, as just after waking from sleep, is no news unless
-            -- asked: the next round tries again.
-            (Left (Offline err), _) -> do
-                let line = "Can't reach GitHub to look for a newer trackkat; is the network up? (" ++ err ++ ")"
-                case why of
-                    Due -> consoleLine line
-                    Asked -> say line >> answer (UpdateNote "No network; try later.")
-                pure (Unreached, logged)
-            (Left failure, _) -> do
-                -- Offline is answered above.
-                let (line, short) = case failure of
-                        Unavailable err ->
-                            ( "No update information on GitHub just now (a new build may be being published); try again in a few minutes. (" ++ err ++ ")"
-                            , "Nothing on GitHub now; try later."
-                            )
-                        LookFailed err -> ("Can't look for a newer trackkat: " ++ err, "Can't check now: see the log.")
-                case (why, logged) of
-                    (Due, FailureLogged) -> consoleLine line
-                    _ -> say line
-                answer (UpdateNote short)
-                pure (Reached, FailureLogged)
-            (Right (Just v), _) -> do
-                say (ready v)
-                answer (UpdateNote (readyShort v))
-                pure (Reached, NoFailureLogged)
-            -- Fetched by an earlier look, and waiting for a restart.
-            (Right Nothing, OfferUpdate v) -> do
-                case why of
-                    Asked -> say (ready v)
-                    Due -> pure ()
-                answer (UpdateNote (readyShort v))
-                pure (Reached, NoFailureLogged)
-            (Right Nothing, _) -> do
-                case why of
-                    Asked -> say ("trackkat is up to date (" ++ versionFolder self ++ ").")
-                    Due -> pure ()
-                answer (UpToDate ("Up to date (" ++ versionFolder self ++ ")."))
-                pure (Reached, NoFailureLogged)
+        -- The wait for the next look runs from when the round began, or,
+        -- for a look asked for, from its answer.
+        from <- case why of
+            Due -> pure began
+            Asked -> getMonotonicTime
+        let (u', effects) = answered self why from found waiting u
+        mapM_ act effects
+        pure u'
+    act (Updater.Log line) = logLine line
+    act (Updater.ShowStatus found) = showUpdateStatus found
     paths = shPaths sh
-    ready v = "trackkat " ++ describeVersion v ++ " is ready: restart to update, or it starts next time."
-    readyShort v = versionFolder v ++ " is ready."
 
 -- | Report the games that start head tracking through NaturalPoint's
 -- NPClient.
