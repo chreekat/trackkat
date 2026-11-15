@@ -10,7 +10,6 @@ import TrackKat.Belief (Belief (..), unknown)
 import TrackKat.Branch (Clarity (..))
 import TrackKat.CommandLine (Start (..))
 import TrackKat.Config (Binding, HeadView (..))
-import TrackKat.Controls (Hotkey)
 import TrackKat.Frame (Blob, Stripe (..), frameHeight, frameWidth)
 import TrackKat.Idle (Use (..))
 import TrackKat.Linear (V3)
@@ -45,10 +44,6 @@ instance Arbitrary Sight where
 instance Arbitrary Binding where
     arbitrary = genBinding
     shrink = shrinkBinding
-
-instance Arbitrary Hotkey where
-    arbitrary = arbitraryBoundedEnum
-    shrink = shrinkBoundedEnum
 
 -- | Commands with smaller bytes, and with fewer.
 instance Arbitrary Command where
