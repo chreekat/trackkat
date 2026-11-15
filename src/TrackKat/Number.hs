@@ -5,6 +5,7 @@ module TrackKat.Number (
     parseExact,
     renderExact,
     parseNatural,
+    parseCount,
     renderNatural,
 ) where
 
@@ -71,6 +72,13 @@ parseNatural :: String -> Maybe Integer
 parseNatural str = do
     guard (not (null str) && all isDigit str)
     pure (foldl (\acc d -> acc * 10 + toInteger (digitToInt d)) 0 str)
+
+-- | The whole number, zero or more and no more than an 'Int' holds, that
+-- one or more decimal digits spell.
+parseCount :: String -> Maybe Int
+parseCount str = case parseNatural str of
+    Just n | n <= toInteger (maxBound :: Int) -> Just (fromInteger n)
+    _ -> Nothing
 
 -- | A whole number, zero or more, in decimal digits.
 renderNatural :: Integer -> String

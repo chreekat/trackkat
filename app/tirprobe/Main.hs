@@ -21,7 +21,6 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.IO
 import Text.Printf (printf)
-import Text.Read (readMaybe)
 
 import TrackKat.Build (buildVersion)
 import TrackKat.Calibration
@@ -31,7 +30,7 @@ import TrackKat.Frame
 #if defined(mingw32_HOST_OS)
 import TrackKat.Install (configFile, findPaths)
 #endif
-import TrackKat.Number (parseNumber, renderNumber)
+import TrackKat.Number (parseCount, parseNumber, renderNumber)
 import TrackKat.Pose
 import TrackKat.Recording
 import TrackKat.Shape
@@ -118,7 +117,7 @@ parseArgs ("--record" : path : r) o = parseArgs r o{optRecord = Just path}
 parseArgs ("--replay" : path : r) o = parseArgs r o{optReplay = Just path}
 parseArgs ("--every-frame" : r) o = parseArgs r o{optEveryFrame = True}
 parseArgs ("--explain" : r) o = parseArgs r o{optExplain = True}
-parseArgs ("--focal" : n : r) o | Just v <- readMaybe n, v > 0 = parseArgs r o{optFocal = v}
+parseArgs ("--focal" : n : r) o | Just v <- parseNumber n, v > 0 = parseArgs r o{optFocal = v}
 parseArgs ("--clip" : spec : r) o
     | [Just lr, Just lt, Just rt] <- map parseNumber (splitOn ',' spec)
     , Just cl <- clipShape lr lt rt =
@@ -126,8 +125,8 @@ parseArgs ("--clip" : spec : r) o
     | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
 parseArgs ("--no-mask" : r) o = parseArgs r o{optMasking = Just NoMasking}
 parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLed = False}}
-parseArgs ("--threshold" : n : r) o | Just v <- readMaybe n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
-parseArgs ("--ir" : n : r) o | Just v <- readMaybe n = parseArgs r o{optSettings = (optSettings o){irBrightness = v}}
+parseArgs ("--threshold" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
+parseArgs ("--ir" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){irBrightness = v}}
 parseArgs (a : _) _ = Left ("unrecognised argument: " ++ a)
 
 main :: IO ()
