@@ -16,6 +16,7 @@ import TrackKat.Pose
 import TrackKat.Response
 import TrackKat.Synth
 import TrackKat.Tracker
+import TrackKat.World (clockAt)
 
 simulations :: TestTree
 simulations =
@@ -54,7 +55,7 @@ liveWhileTracking frameAt = liveWhileStepping track (newTracker defaultIntrinsic
   where
     track i t = do
         let (time, stripes) = frameAt i
-            (t', o, evs) = step time stripes t
+            (t', o, evs) = step (clockAt time) stripes t
         _ <- evaluate (length (show o) + length evs)
         pure t'
 

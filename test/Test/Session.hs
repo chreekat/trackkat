@@ -22,6 +22,7 @@ import TrackKat.Response
 import TrackKat.Session
 import TrackKat.Synth (rotYXZ, squareStripes)
 import TrackKat.Tracker (Outcome (..), trackerCalibration)
+import TrackKat.World (clockAt)
 
 tests :: TestTree
 tests =
@@ -262,7 +263,7 @@ events = snd . mapAccumL event (0 :: Int, 0 :: Int)
         Ask ToClear -> ((frames, recenters), ClearCalibrationAsked)
         Save config -> ((frames, recenters), SettingsSaved "text" config)
         Corrupt -> ((frames, recenters), PacketCorrupt "too short")
-    at frames = fromIntegral frames / 120
+    at frames = clockAt (fromIntegral frames / 120)
     clipAt pose = concatMap (squareStripes . project defaultIntrinsics pose) [mLeft model, mRight model, mTop model]
     model = clipModel (clip defaultConfig)
 

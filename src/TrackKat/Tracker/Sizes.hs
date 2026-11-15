@@ -18,20 +18,21 @@ import Data.Foldable (toList)
 import TrackKat.Match
 import TrackKat.Pose (Pose)
 import TrackKat.Tracker.Judge (metres)
+import TrackKat.World (Seconds, inSeconds, seconds)
 
--- | Seconds over which a reflector's usual size is forgotten.
-sizeMemory :: Double
-sizeMemory = 10
+-- | The time over which a reflector's usual size is forgotten.
+sizeMemory :: Seconds
+sizeMemory = seconds 10
 
--- | A reflector's size after a frame so many seconds after the last one
+-- | A reflector's size after a frame so long after the last one
 -- tracked, with the clip the given metres away, given how the reflector
 -- showed: its latest size is what a blob of its own shows, and its usual
 -- size no less than that, fading meanwhile. One sharing a blob with
 -- another has its share guessed, not seen, so only fades, as one unseen
 -- does.
-resized :: Double -> Double -> Size -> Maybe Sight -> Size
+resized :: Seconds -> Double -> Size -> Maybe Sight -> Size
 resized since z size seen =
-    let usual = sizeUsual size * exp (negate since / sizeMemory)
+    let usual = sizeUsual size * exp (negate (inSeconds since) / inSeconds sizeMemory)
      in case seen of
             Just s | sightKind s /= Merged -> let atOneMetre = sightPixels s * z * z in Size atOneMetre (max atOneMetre usual)
             _ -> size{sizeUsual = usual}
@@ -63,11 +64,11 @@ showing sizes z sights = case sequenceA sights of
         [(a, ea), (b, eb)] | not (bigEnoughForTwo (a + b) ea eb) -> OneBehind
         _ -> AllShowing
 
--- | For how long, in seconds since all three last showed, the clip is
--- tracked showing less: two reflectors leave the pose free to turn about
+-- | For how long since all three last showed the clip is tracked showing
+-- less: two reflectors leave the pose free to turn about
 -- the line through them, and one taken to be behind another, as when the
 -- head rolls far, may be out of sight instead.
-showingSeconds :: Showing -> Double
-showingSeconds AllShowing = 1 / 0
-showingSeconds OneBehind = 2.5
-showingSeconds OneOut = 1
+showingSeconds :: Showing -> Seconds
+showingSeconds AllShowing = seconds (1 / 0)
+showingSeconds OneBehind = seconds 2.5
+showingSeconds OneOut = seconds 1

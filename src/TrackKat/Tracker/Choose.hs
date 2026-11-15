@@ -16,6 +16,7 @@ import TrackKat.Tracker.Layout
 import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Trail
+import TrackKat.World (Instant)
 
 -- Note [Following or finding afresh]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -192,7 +193,7 @@ followOrFind hypotheses = case followed hypotheses of
 -- poses that still predict then: by the better of following and finding
 -- by layout if one does ('followOrFind'), and by layout alone if none does
 -- ('findAfresh').
-makeOut :: Known -> Double -> Trail -> Shown -> Either (Why, Maybe Held) (Chosen, Sighting)
+makeOut :: Known -> Instant -> Trail -> Shown -> Either (Why, Maybe Held) (Chosen, Sighting)
 makeOut known now (Trail following left) shown = case following of
     Nothing -> either (\why -> Left (why, Nothing)) (\(found, _) -> Right (Chosen FoundAfresh Nothing, found)) (findAfresh known shown)
     Just r ->

@@ -20,6 +20,7 @@ import TrackKat.Match
 import TrackKat.Pose
 import TrackKat.Tracker.Blobs (at, distance2)
 import TrackKat.Tracker.Judge (metres)
+import TrackKat.World (Instant, inClockSeconds)
 
 -- | Where the head was recentered, and whether the poses tracked and
 -- recentered on are the head's.
@@ -63,12 +64,12 @@ data Told = Told
 -- reflector seen as given, against what is believed going into it, the
 -- head turning about the given point of the clip's axes; and switch for
 -- its mirror image whichever of the pose and the centre is surely that.
-tellApart :: Intrinsics -> Model -> V3 -> Double -> Clarity -> Pose -> Three (Maybe Sight) -> Centre -> Told
+tellApart :: Intrinsics -> Model -> V3 -> Instant -> Clarity -> Pose -> Three (Maybe Sight) -> Centre -> Told
 tellApart k m pivot now clear seenPose sights (Centre centre believed) =
     Told pose (Centre reference (corrected fix seenPose watched)) fix (branchEvidence watched)
   where
     others = if all isJust sights then Just (alternatives k m seenPose) else Nothing
-    watched = watch now pivot centre clear seenPose others believed
+    watched = watch (inClockSeconds now) pivot centre clear seenPose others believed
     (pose, fix) = case (correction watched, followedMirror watched) of
         (c, Just other) | c `elem` [MirrorTracked, MirrorBoth] -> (other, c)
         (MirrorReference, _) -> (seenPose, MirrorReference)

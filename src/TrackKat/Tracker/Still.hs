@@ -23,6 +23,7 @@ import qualified TrackKat.Lights as Lights
 import TrackKat.Match (Sight (..), Three, reflectors)
 import TrackKat.Pose (Intrinsics, Model, Pose, seenAt)
 import TrackKat.Tracker.Outcome (Event (..))
+import TrackKat.World (Instant, Seconds, inClockSeconds, seconds, (.-.))
 
 -- | Whether still lights are learnt and masked, and those learnt.
 data Still = Still
@@ -42,15 +43,15 @@ maskFor (Still masking lights) predicted = case masking of
 data Standing = Confirmed | Unconfirmed
     deriving (Eq, Show)
 
--- | For how long, in seconds, the clip must have been tracked in every
--- frame for still lights to be learnt clear of it.
-confirmSeconds :: Double
-confirmSeconds = 0.5
+-- | For how long the clip must have been tracked in every frame for still
+-- lights to be learnt clear of it.
+confirmSeconds :: Seconds
+confirmSeconds = seconds 0.5
 
 -- | The clip's standing at a time, tracked in every frame since another.
-standing :: Double -> Double -> Standing
+standing :: Instant -> Instant -> Standing
 standing now since
-    | now - since >= confirmSeconds = Confirmed
+    | now .-. since >= confirmSeconds = Confirmed
     | otherwise = Unconfirmed
 
 -- | What a frame showed of the clip, tracked at a pose with each
@@ -73,10 +74,10 @@ clipView k m confirmed pose sights usual = case confirmed of
 -- | Learn still lights from a frame's blobs, seen at the given time,
 -- given what it showed of the clip: the lights learnt, and the events
 -- saying what changed. Nothing is learnt, or told, with masking off.
-learnSeen :: Double -> View -> [Blob] -> Still -> (Lights, [Event])
+learnSeen :: Instant -> View -> [Blob] -> Still -> (Lights, [Event])
 learnSeen now view blobs (Still masking lights) = case masking of
     NoMasking -> (lights, [])
-    MaskLights -> map toEvent <$> learnLights now view blobs lights
+    MaskLights -> map toEvent <$> learnLights (inClockSeconds now) view blobs lights
   where
     toEvent (Lights.Learnt p why) = LightIgnored p why
     toEvent (Lights.Forgotten p) = LightForgotten p
@@ -87,7 +88,7 @@ learnSeen now view blobs (Still masking lights) = case masking of
 -- are the clip, held still: they are forgotten unannounced. What says so
 -- is given: the places of the masked blobs the clip would be found in,
 -- given what would be masked.
-learnUnseen :: Double -> [Blob] -> (Mask -> [(Double, Double)]) -> Still -> (Lights, [Event])
+learnUnseen :: Instant -> [Blob] -> (Mask -> [(Double, Double)]) -> Still -> (Lights, [Event])
 learnUnseen now blobs clipIn still = (lights, [e | e <- learntNews, not (isUnlearnt e)])
   where
     (learntLights, learntNews) = learnSeen now unseen blobs still

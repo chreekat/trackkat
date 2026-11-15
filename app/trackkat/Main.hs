@@ -45,6 +45,7 @@ import qualified TrackKat.USB as USB
 import TrackKat.Updater (Looking (..), answered, begun, dueLook, newUpdater, offerNotice)
 import qualified TrackKat.Updater as Updater
 import TrackKat.Windows
+import TrackKat.World (clockAt)
 
 -- | This build's version; none for a development build.
 version :: Maybe Version
@@ -578,7 +579,7 @@ track sh cam = do
             now <- getMonotonicTime
             keys <- takeHotkeys
             advance sh . ControlsPolled keys =<< recenterCount
-            (s, effects) <- transition sh (FrameArrived now stripes)
+            (s, effects) <- transition sh (FrameArrived (clockAt now) stripes)
             -- When games were sent the frame's pose.
             published <- foldM (\at e -> perform sh e >> case e of Publish _ -> Just <$> getMonotonicTime; _ -> pure at) Nothing effects
             let timed = maybe id (\at -> sawFrame (at - arrived) (maybe 0 (arrived -) (cLastArrival c)) (length stripes)) published (cWindow c)

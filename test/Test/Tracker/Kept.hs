@@ -27,6 +27,7 @@ import TrackKat.Tracker.Learners
 import TrackKat.Tracker.Mirror
 import TrackKat.Tracker.Outcome
 import TrackKat.Tracker.Still
+import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, (.+^), (.-.))
 
 tests :: TestTree
 tests = testGroup "Kept" [still, mirror, learners, absent]
@@ -58,7 +59,7 @@ still =
                         , property (all (inMask mask) masked && not (any (inMask mask) visible))
                         ]
         , testProperty "with masking off, nothing is masked, learnt or told" $
-            \(Blobs blobs) (Now now) ->
+            \(Blobs blobs) now ->
                 let off = lampLit{stillMasking = NoMasking}
                     (lights, news) = learnUnseen now blobs unwanted off
                  in conjoin
@@ -68,12 +69,12 @@ still =
                         ]
         , testProperty "nothing is learnt from one frame, and what would say the clip is in a light isn't asked" $
             \(Blobs blobs) ->
-                let (lights, news) = learnUnseen 0 blobs unwanted (Still MaskLights noLights)
+                let (lights, news) = learnUnseen (clockAt 0) blobs unwanted (Still MaskLights noLights)
                  in lightAreas lights === [] .&&. length news === 0
         , testProperty "the clip is confirmed once tracked for long enough, and stays so" $
-            \(For for) (Fraction longer) ->
-                standing for 0 === (if for >= confirmSeconds then Confirmed else Unconfirmed)
-                    .&&. property (standing for 0 /= Confirmed || standing (for + longer) 0 == Confirmed)
+            \since (For for) (Fraction longer) ->
+                standing (since .+^ for) since === (if for >= confirmSeconds then Confirmed else Unconfirmed)
+                    .&&. property (standing (since .+^ for) since /= Confirmed || standing (since .+^ for .+^ seconds longer) since == Confirmed)
         , testProperty "lights are learnt clear of the clip only once it is confirmed: around each reflector, by 15 pixels or more" $
             \(SeenSquarely placing) (ReflectorSights seen) ->
                 let view confirmed = clipView defaultIntrinsics headset confirmed (placed placing) (Just <$> seen) (Just 300)
@@ -119,7 +120,7 @@ mirror =
             \(SeenWhole placing) (SeenWhole centre) clear ->
                 let Pose r t = placed placing
                     Pose cr ct = placed centre
-                    told = tellApart defaultIntrinsics headset pivot 1 clear (placed placing) (pure (Just (Sight (0, 0) 100 Whole))) (Centre (Just (placed centre)) (newBranch headset))
+                    told = tellApart defaultIntrinsics headset pivot (clockAt 1) clear (placed placing) (pure (Just (Sight (0, 0) 100 Whole))) (Centre (Just (placed centre)) (newBranch headset))
                  in conjoin
                         [ toldCorrection told === MirrorNeither
                         , (poseR (toldPose told), poseT (toldPose told)) === (r, t)
@@ -139,15 +140,15 @@ learners =
                     frame (i, after) =
                         ( if i `elem` lost then lostSightOf else id
                         , if i `elem` corrected then startOver else id
-                        , asked + after
+                        , asked .+^ seconds after
                         )
                     watched = snd (mapAccumL (\l (lose, correct, now) -> sweepOn now facing facing (correct (lose l))) (startSweep asked (newLearners headset defaultCalibration)) (map frame (zip [0 :: Int ..] times)))
-                    ended = [length events | (after, events) <- zip times watched, asked + after >= asked + calibrationSeconds]
-                    before = [length events | (after, events) <- zip times watched, asked + after < asked + calibrationSeconds]
+                    ended = [length events | (after, events) <- zip times watched, asked .+^ seconds after >= asked .+^ calibrationSeconds]
+                    before = [length events | (after, events) <- zip times watched, asked .+^ seconds after < asked .+^ calibrationSeconds]
                  in counterexample (show (times, map length watched)) $
                         all (== 0) before && take 1 ended == [1 | not (null ended)] && all (== 0) (drop 1 ended)
         , testProperty "with no calibration asked for, poses are taken in with nothing said of one" $
-            \(Clock now) ->
+            \now ->
                 length (snd (sweepOn now facing facing (newLearners headset defaultCalibration))) === 0
         ]
 
@@ -159,7 +160,7 @@ absent =
         "Absence"
         [ testProperty "the clip out of sight is told only after a second of it, with three lights or more in view, and never twice in ten seconds" $
             \(Spells spells) ->
-                let frames = zip [0, 0.25 ..] (concat [replicate n spell | (n, spell) <- spells])
+                let frames = zip (map clockAt [0, 0.25 ..]) (concat [replicate n spell | (n, spell) <- spells])
                     step (since, a) (now, spell) =
                         let (a', said) = absence now (outcome spell) a
                             since' = case spell of
@@ -170,8 +171,8 @@ absent =
                  in conjoin
                         [ property (and [lights >= 3 | (_, OutOfSight lights _, _, _) <- told])
                         , property (null [() | (_, InSight, _, _) <- told])
-                        , property (and [now - began > 1 | (now, _, Just began, _) <- told])
-                        , property (and [later - sooner >= 10 | ((sooner, _, _, _), (later, _, _, _)) <- zip told (drop 1 told)])
+                        , property (and [now .-. began > seconds 1 | (now, _, Just began, _) <- told])
+                        , property (and [later .-. sooner >= seconds 10 | ((sooner, _, _, _), (later, _, _, _)) <- zip told (drop 1 told)])
                         ]
         ]
 
@@ -214,7 +215,7 @@ lampLit :: Still
 lampLit = foldl' seen (Still MaskLights noLights) [0 .. 480 :: Int]
   where
     lamp = Blob (fst lampAt) (snd lampAt) 2000 200000 160 160 0
-    seen s i = s{stillLights = fst (learnUnseen (fromIntegral i / 120) [lamp] (const []) s)}
+    seen s i = s{stillLights = fst (learnUnseen (clockAt (fromIntegral i / 120)) [lamp] (const []) s)}
 
 -- | A place within so many pixels of the lamp, each way.
 genBy :: Double -> Gen (Double, Double)
@@ -259,29 +260,13 @@ instance Arbitrary Blobs where
         Blobs <$> vectorOf n (oneof [genBlob 400, genBlob 5000, (\b -> b{blobX = fst lampAt + blobX b / 100, blobY = snd lampAt + blobY b / 100}) <$> genBlob 400])
     shrink (Blobs blobs) = Blobs <$> shrinkList shrinkBlob blobs
 
--- | The time, in seconds, up to ten.
-newtype Now = Now Double
-    deriving (Show)
-
-instance Arbitrary Now where
-    arbitrary = Now <$> choose (0, 10)
-    shrink (Now x) = Now <$> shrinkWithin (0, 10) 0 x
-
--- | The time, in seconds, up to a hundred.
-newtype Clock = Clock Double
-    deriving (Show)
-
-instance Arbitrary Clock where
-    arbitrary = Clock <$> choose (0, 100)
-    shrink (Clock x) = Clock <$> shrinkWithin (0, 100) 0 x
-
 -- | Seconds the clip has been tracked for, up to two.
-newtype For = For Double
+newtype For = For Seconds
     deriving (Show)
 
 instance Arbitrary For where
-    arbitrary = For <$> choose (0, 2)
-    shrink (For x) = For <$> shrinkWithin (0, 2) 0 x
+    arbitrary = For . seconds <$> choose (0, 2)
+    shrink (For x) = For . seconds <$> shrinkWithin (0, 2) 0 (inSeconds x)
 
 -- | A pose as 'SeenWhole' has one, turned up to 30 degrees.
 newtype SeenSquarely = SeenSquarely Placing
@@ -305,18 +290,18 @@ instance Arbitrary Shared where
 -- before which the clip was lost, and before which its pose was
 -- corrected. Simplest asked for at the start, with no frames; simpler
 -- with fewer frames, and with fewer of those lost or corrected.
-data Sweep = Sweep Double [Double] [Int] [Int]
+data Sweep = Sweep Instant [Double] [Int] [Int]
     deriving (Show)
 
 instance Arbitrary Sweep where
     arbitrary = do
-        asked <- choose (0, 10)
-        gaps <- listOf (choose (0, 2 * calibrationSeconds))
+        asked <- clockAt <$> choose (0, 10)
+        gaps <- listOf (choose (0, 2 * inSeconds calibrationSeconds))
         Sweep asked gaps <$> sublistOf [0 .. length gaps] <*> sublistOf [0 .. length gaps]
     shrink =
         shrinkParts
             [ \(Sweep asked gaps lost corrected) -> [Sweep asked fewer (filter (<= length fewer) lost) (filter (<= length fewer) corrected) | fewer <- [[] | length gaps > 1] ++ [init gaps | not (null gaps)]]
             , \(Sweep asked gaps lost corrected) -> [Sweep asked gaps lost' corrected | lost' <- shrinkList (const []) lost]
             , \(Sweep asked gaps lost corrected) -> [Sweep asked gaps lost corrected' | corrected' <- shrinkList (const []) corrected]
-            , \(Sweep asked gaps lost corrected) -> [Sweep 0 gaps lost corrected | asked /= 0]
+            , \(Sweep asked gaps lost corrected) -> [Sweep (clockAt 0) gaps lost corrected | asked /= clockAt 0]
             ]

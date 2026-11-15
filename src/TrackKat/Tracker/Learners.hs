@@ -20,12 +20,13 @@ import TrackKat.Linear (M33, V3, mulMM, transpose)
 import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Tracker.Outcome (Event (..))
+import TrackKat.World (Instant, Seconds, inClockSeconds, seconds, (.+^))
 
 -- | A requested calibration of level in progress.
 data Sweep
     = Sweep
-        -- | deadline, in seconds on the tracker's clock
-        Double
+        -- | when it has watched for long enough
+        Instant
         -- | rotations relative to the reference, newest first
         [M33]
 
@@ -57,25 +58,25 @@ startOver learners = (lostSightOf learners){learnersSweep = fmap (\(Sweep deadli
 -- | Learn from a pose tracked at the given time, the head turning about
 -- the given point of the clip's axes: what was learnt, and what of it is
 -- worth telling.
-learnFrom :: Intrinsics -> Double -> V3 -> Pose -> Learners -> (Learners, [Refinement], Maybe ShapeEstimate)
+learnFrom :: Intrinsics -> Instant -> V3 -> Pose -> Learners -> (Learners, [Refinement], Maybe ShapeEstimate)
 learnFrom k now pivot pose learners = (learners{learnersPivot = learner, learnersShape = shapes}, refinements, shapeNews)
   where
-    (learner, refinements) = learn now pose (learnersPivot learners)
-    (shapes, shapeNews) = watchShape k now pivot pose (learnersShape learners)
+    (learner, refinements) = learn (inClockSeconds now) pose (learnersPivot learners)
+    (shapes, shapeNews) = watchShape k (inClockSeconds now) pivot pose (learnersShape learners)
 
--- | Seconds of head turning to calibrate level from.
-calibrationSeconds :: Double
-calibrationSeconds = 5
+-- | How long a head's turning is watched to calibrate level from.
+calibrationSeconds :: Seconds
+calibrationSeconds = seconds 5
 
 -- | Start calibrating level, at the given time.
-startSweep :: Double -> Learners -> Learners
-startSweep now learners = learners{learnersSweep = Just (Sweep (now + calibrationSeconds) [])}
+startSweep :: Instant -> Learners -> Learners
+startSweep now learners = learners{learnersSweep = Just (Sweep (now .+^ calibrationSeconds) [])}
 
 -- | Take a pose tracked at the given time, and the pose recentered on,
 -- into a calibration of level in progress, if one is; once it has
 -- watched for long enough, the level is calibrated from the turning seen
 -- and applied at once, or it has failed.
-sweepOn :: Double -> Pose -> Pose -> Learners -> (Learners, [Event])
+sweepOn :: Instant -> Pose -> Pose -> Learners -> (Learners, [Event])
 sweepOn now pose ref learners = case learnersSweep learners of
     Nothing -> (learners, [])
     Just (Sweep deadline rots)
