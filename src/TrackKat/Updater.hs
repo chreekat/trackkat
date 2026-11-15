@@ -21,26 +21,18 @@ import TrackKat.Release
 
 -- Note [What looking for updates promises]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
--- * Unasked, trackkat looks only while updates are on, and not within
-
---   'updateEvery' of a look that reached GitHub, or of one the user asked
---   for, whatever that one found.
+--  * Unasked, trackkat looks only while updates are on, and not within
+--    'updateEvery' of a look that reached GitHub, or of one the user asked
+--    for, whatever that one found.
 --
-
--- * A look that finds no network is tried again the next time one could be
-
---   due, and unasked tells the user nothing: no line in the window's log,
---   and nothing in its strip.
+--  * A look that finds no network is tried again the next time one could be
+--    due, and unasked tells the user nothing: no line in the window's log,
+--    and nothing in its strip.
 --
-
--- * A look the user asked for always answers, in the log and in the strip.
-
+--  * A look the user asked for always answers, in the log and in the strip.
 --
-
--- * A failure that lasts is logged for the user once, by the first unasked
-
---   look to meet it, until a look works; the terminal has it every time.
+--  * A failure that lasts is logged for the user once, by the first unasked
+--    look to meet it, until a look works; the terminal has it every time.
 --
 -- "Test.Updater" states these as properties.
 
