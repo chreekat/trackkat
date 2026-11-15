@@ -6,6 +6,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
 import Test.Gen
+import Test.Instances ()
 import TrackKat.Config
 import TrackKat.Controls
 import TrackKat.Log
@@ -15,7 +16,7 @@ tests =
     testGroup
         "Controls"
         [ testProperty "each hotkey has the bindings the settings give it, and the log's line names every one" $
-            forAllShrink genConfig shrinkConfig $ \c ->
+            \(Sayable c) ->
                 concatMap (hotkeyBindings c) [minBound .. maxBound] === recenterBindings c ++ pauseBindings c ++ trimBindings c
                     .&&. conjoin
                         [ counterexample (describeBindings c) (renderBinding b `isInfixOf` describeBindings c)
@@ -23,7 +24,7 @@ tests =
                         , b <- hotkeyBindings c k
                         ]
         , testProperty "a joystick coming or going is logged for the user, and nothing else" $
-            forAllShrink genButton shrinkBinding $ \button -> forAll genTimes $ \(asked, now) ->
+            \(Button button) (Naming (asked, now)) ->
                 let (naming, _) = nameButtons asked
                  in conjoin
                         [ case joystickEffects naming now event of
@@ -33,7 +34,7 @@ tests =
                         , event <- [Connected j, Disconnected j]
                         ]
         , testProperty "a button pressed is always offered to the window, and named in the log just for a minute from when naming began" $
-            forAllShrink genButton shrinkBinding $ \button -> forAll genTimes $ \(asked, now) ->
+            \(Button button) (Naming (asked, now)) ->
                 let (naming, _) = nameButtons asked
                     named = [line | JoystickLog (ForUser line) <- effects]
                     effects = concat [joystickEffects naming now (Pressed j n) | JoystickButton j n <- [button]]
@@ -43,16 +44,24 @@ tests =
         ]
 
 -- | A joystick's button.
-genButton :: Gen Binding
-genButton = genBinding `suchThat` isButton
-  where
-    isButton JoystickButton{} = True
-    isButton Key{} = False
+newtype Button = Button Binding
+    deriving (Show)
+
+instance Arbitrary Button where
+    arbitrary = Button <$> arbitrary `suchThat` isButton
+      where
+        isButton JoystickButton{} = True
+        isButton Key{} = False
+    shrink (Button button) = Button <$> shrink button
 
 -- | When buttons began to be named, and a time from two minutes before
--- that to two after, in seconds.
-genTimes :: Gen (Double, Double)
-genTimes = do
-    asked <- choose (0, 1e6)
-    since <- oneof [choose (-120, 120), elements [59.999, 60, 60.001]]
-    pure (asked, asked + since)
+-- that to two after, in seconds. Simpler named from the first second.
+newtype Naming = Naming (Double, Double)
+    deriving (Show)
+
+instance Arbitrary Naming where
+    arbitrary = do
+        asked <- choose (0, 1e6)
+        since <- oneof [choose (-120, 120), elements [59.999, 60, 60.001]]
+        pure (Naming (asked, asked + since))
+    shrink (Naming (asked, now)) = [Naming (0, now - asked) | asked /= 0]
