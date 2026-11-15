@@ -13,6 +13,7 @@ import qualified Test.Controls
 import qualified Test.Following
 import qualified Test.Frame
 import qualified Test.Icons
+import qualified Test.Idle
 import qualified Test.Level
 import qualified Test.Lights
 import qualified Test.Linear
@@ -72,6 +73,7 @@ main = do
                 , Test.Controls.tests
                 , Test.Session.tests
                 , Test.Updater.tests
+                , Test.Idle.tests
                 , Test.Icons.tests
                 ]
             , testGroup

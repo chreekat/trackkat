@@ -27,6 +27,7 @@ library
     TrackKat.Display
     TrackKat.Frame
     TrackKat.GamePose
+    TrackKat.Idle
     TrackKat.Lights
     TrackKat.Linear
     TrackKat.Log
@@ -140,6 +141,7 @@ test-suite tests
     Test.Frame
     Test.Gen
     Test.Icons
+    Test.Idle
     Test.Level
     Test.Linear
     Test.Lights
