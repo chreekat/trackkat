@@ -3,6 +3,7 @@ module Main (main) where
 import System.IO (hSetEncoding, stdout, utf8)
 import Test.Tasty (defaultMain, testGroup)
 
+import qualified Test.Belief
 import qualified Test.Branch
 import qualified Test.Calibration
 import qualified Test.Clips
@@ -50,6 +51,7 @@ main = do
                 , Test.Pose.tests
                 , Test.Term.tests
                 , Test.Match.tests
+                , Test.Belief.tests
                 , Test.Tracker.tests
                 , Test.Calibration.tests
                 , Test.Visibility.tests
