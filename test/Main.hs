@@ -59,6 +59,7 @@ main = do
                 , Test.Response.tests
                 , Test.Number.tests
                 , Test.Config.tests
+                , Test.Recording.properties
                 , Test.Stats.tests
                 , Test.Release.tests
                 , Test.ServedGame.tests

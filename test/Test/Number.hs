@@ -26,6 +26,16 @@ tests =
                             , property (null decimals || last decimals /= '0')
                             , property (last text /= '.')
                             ]
+        , testProperty "a number written exactly is read back as the very same number" $ \x ->
+            parseExact (renderExact x) === Just x
+        , -- Earlier recordings' cameras were written so.
+          testProperty "a number written as show writes one is read as that number" $ \x ->
+            parseExact (show (x :: Double)) === Just x
+        , testProperty "a number of an everyday size is written exactly as show writes it" $
+            forAll (choose (0.1, 9999999)) $
+                \x -> renderExact x === show x .&&. renderExact (negate x) === show (negate x)
+        , testProperty "a whole number is read back as written, in digits alone" $ \(NonNegative n) ->
+            parseNatural (renderNatural n) === Just n .&&. property (all isDigit (renderNatural n))
         , testProperty "a number written, read and written again is written the same" $
             forAll (choose (-1e6, 1e6)) $ \x ->
                 fmap renderNumber (parseNumber (renderNumber x)) === Just (renderNumber x)

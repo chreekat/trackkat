@@ -1,5 +1,5 @@
 -- | The camera's byte stream cut into frames, and stripes made into blobs.
-module Test.Frame (tests) where
+module Test.Frame (tests, genStripe, shrinkStripe) where
 
 import Control.Monad (forM_)
 import Data.Bits (shiftR, xor, (.&.))
