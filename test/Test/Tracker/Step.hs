@@ -73,4 +73,4 @@ instance Arbitrary Scene where
     shrink (Scene clip others) =
         [Scene clip fewer | fewer <- shrinkList (const []) others]
             ++ [Scene Nothing others | isJust clip]
-            ++ [Scene (Just simpler) others | Just placing <- [clip], simpler <- shrinkClipApart headset placing]
+            ++ [Scene (Just simpler) others | Just placing <- [clip], simpler <- shrinkClipApart (400, 1500) headset placing]

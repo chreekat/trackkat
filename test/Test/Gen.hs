@@ -12,6 +12,8 @@ module Test.Gen (
     shrinkWithin,
     shrinkFrom,
     earlier,
+    shrinkTo,
+    shrinkParts,
     Fraction (..),
     FrameGap (..),
     forAnyOrder,
@@ -35,6 +37,7 @@ module Test.Gen (
     shrinkPlacing,
     trackedRange,
     genSeen,
+    squarelyAhead,
     shrinkSeen,
     inView,
     movedCamera,
@@ -44,15 +47,19 @@ module Test.Gen (
     -- * Beliefs
     genWeights,
     shares,
+    shrinkBelief,
 
     -- * What the camera shows
     InPicture (..),
+    shrinkPlace,
     clipBlobs,
     genClipApart,
+    reflectorsApart,
     shrinkClipApart,
     Apart20 (..),
     Apart30 (..),
     genBlob,
+    roundBlob,
     shrinkBlob,
     Stray (..),
     Strays (..),
@@ -83,7 +90,7 @@ import Data.Maybe (fromMaybe)
 import Test.Tasty.QuickCheck
 
 import Test.Simulation (headset)
-import TrackKat.Belief (Belief (..))
+import TrackKat.Belief (Belief (..), unknown)
 import TrackKat.Config
 import TrackKat.Frame (Blob (..), frameHeight, frameWidth)
 import TrackKat.Lights (Masking (..))
@@ -127,9 +134,40 @@ shrinkFrom least n = map (+ least) (shrink (n - least))
 earlier :: (Eq a) => [a] -> a -> [a]
 earlier every x = takeWhile (/= x) every
 
+-- Note [Simplest first]
+-- ~~~~~~~~~~~~~~~~~~~~~
+-- QuickCheck tries what a shrink gives in order, takes the first that still
+-- fails, and starts again from that. So every shrink here gives its
+-- domain's simplest value first, which most failures still fail at, and
+-- which ends the shrinking at once; then big steps (fewer members, a
+-- simpler kind of thing); then steps in one part. Each step is simpler by
+-- some measure that can't go on falling, so that shrinking ends; none is
+-- the value itself, or outside the domain. "Test.Shrink" checks as much of
+-- each domain shared here.
+--
+-- 'shrinkTo' is for a domain whose simplest value is known, and
+-- 'shrinkParts' for one made of parts, each with a shrink of its own that
+-- keeps to this.
+
+-- | Simpler values of a domain: its simplest, and then the steps given
+-- that are neither that nor the value itself. See Note [Simplest first].
+shrinkTo :: (Eq a) => a -> (a -> [a]) -> a -> [a]
+shrinkTo simplest steps x = [simplest | x /= simplest] ++ [step | step <- steps x, step /= simplest, step /= x]
+
+-- | Simpler values of something made of parts, given the ways to make it
+-- simpler in each part alone: every part at its simplest at once, and
+-- then each way's values. A way's first value is taken to be its part at
+-- its simplest. See Note [Simplest first].
+shrinkParts :: [a -> [a]] -> a -> [a]
+shrinkParts ways x = [foldl simplestBy x ways | length (filter (not . null . ($ x)) ways) > 1] ++ concatMap ($ x) ways
+  where
+    simplestBy y way = case way y of
+        simplest : _ -> simplest
+        [] -> y
+
 -- | A share of something, from none of it to all.
 newtype Fraction = Fraction Double
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Fraction where
     arbitrary = Fraction <$> choose (0, 1)
@@ -138,7 +176,7 @@ instance Arbitrary Fraction where
 -- | Seconds from one frame to the next that follows it: from a frame of
 -- the camera's fastest to half a second.
 newtype FrameGap = FrameGap Double
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary FrameGap where
     arbitrary = FrameGap <$> choose (1 / 120, 0.5)
@@ -167,9 +205,15 @@ genV3 size = V3 <$> component <*> component <*> component
   where
     component = choose (negate size, size)
 
--- | Vectors with a component zeroed or rounded to a whole number.
+-- | No vector at all, and vectors with a component zeroed or rounded to a
+-- whole number.
 shrinkV3 :: V3 -> [V3]
-shrinkV3 (V3 x y z) = [V3 x' y z | x' <- simpler x] ++ [V3 x y' z | y' <- simpler y] ++ [V3 x y z' | z' <- simpler z]
+shrinkV3 =
+    shrinkParts
+        [ \(V3 x y z) -> [V3 x' y z | x' <- simpler x]
+        , \(V3 x y z) -> [V3 x y' z | y' <- simpler y]
+        , \(V3 x y z) -> [V3 x y z' | z' <- simpler z]
+        ]
   where
     simpler c = [0 | c /= 0] ++ [whole | let whole = fromIntegral (truncate c :: Int), whole /= c, whole /= 0]
 
@@ -177,18 +221,19 @@ shrinkV3 (V3 x y z) = [V3 x' y z | x' <- simpler x] ++ [V3 x y' z | y' <- simple
 genDirection :: Gen V3
 genDirection = normalize <$> genV3 1 `suchThat` ((> 0.1) . norm)
 
--- | The axes, for a direction that isn't one.
+-- | The axes, the first of them simplest.
 shrinkDirection :: V3 -> [V3]
-shrinkDirection v = [axis | axis <- [V3 1 0 0, V3 0 1 0, V3 0 0 1], v `notElem` [V3 1 0 0, V3 0 1 0, V3 0 0 1]]
+shrinkDirection = earlier [V3 1 0 0, V3 0 1 0, V3 0 0 1]
 
 -- | A turn, as the vector along its axis as long as its angle in radians
 -- (see 'rodrigues'), of up to the given degrees.
 genTurn :: Double -> Gen V3
 genTurn most = (\axis angle -> (angle * pi / 180) *^ axis) <$> genDirection <*> choose (0, most)
 
--- | Turns about simpler axes, and by half as much and not at all.
+-- | No turn at all, and turns by half as much and about simpler axes by
+-- no more.
 shrinkTurn :: V3 -> [V3]
-shrinkTurn w = [V3 0 0 0 | norm w > 0] ++ [0.5 *^ w | norm w > 1e-3] ++ [w' | w' <- shrinkV3 w, norm w' <= norm w]
+shrinkTurn = shrinkTo (V3 0 0 0) (\w -> [0.5 *^ w | norm w > 1e-3] ++ [w' | w' <- shrinkV3 w, norm w' <= norm w])
 
 -- | The angle of a turn, in degrees.
 degreesOf :: V3 -> Double
@@ -196,7 +241,7 @@ degreesOf w = norm w * 180 / pi
 
 -- | Any turn, of up to half a turn (see 'genTurn').
 newtype Turn = Turn V3
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Turn where
     arbitrary = Turn <$> genTurn 180
@@ -207,7 +252,7 @@ instance Arbitrary Turn where
 -- | A pose as what to make it from: its turn, as 'genTurn' gives one, and
 -- where it puts the model's origin.
 data Placing = Placing V3 V3
-    deriving (Show)
+    deriving (Eq, Show)
 
 placed :: Placing -> Pose
 placed (Placing turn at) = Pose (rodrigues turn) at
@@ -217,9 +262,13 @@ placed (Placing turn at) = Pose (rodrigues turn) at
 genPlacing :: Double -> Gen Placing
 genPlacing size = Placing <$> genTurn 180 <*> genV3 size
 
--- | Motions that turn less and move less.
+-- | No motion at all, and motions that turn less and move less.
 shrinkPlacing :: Placing -> [Placing]
-shrinkPlacing (Placing turn at) = [Placing turn' at | turn' <- shrinkTurn turn] ++ [Placing turn at' | at' <- shrinkV3 at]
+shrinkPlacing =
+    shrinkParts
+        [ \(Placing turn at) -> [Placing turn' at | turn' <- shrinkTurn turn]
+        , \(Placing turn at) -> [Placing turn at' | at' <- shrinkV3 at]
+        ]
 
 -- | Up to two metres each way.
 instance Arbitrary Placing where
@@ -255,23 +304,29 @@ inView m placing = all shown [mLeft m, mRight m, mTop m]
             (u, v) = project defaultIntrinsics pose p
          in z > 0 && u >= 0 && u < fromIntegral frameWidth && v >= 0 && v < fromIntegral frameHeight
 
--- | Poses turned less, and straight ahead of the camera as far from it,
--- still seen whole.
-shrinkSeen :: Model -> Placing -> [Placing]
-shrinkSeen m (Placing turn at) =
-    filter (inView m) ([Placing turn' at | turn' <- shrinkTurn turn] ++ [Placing turn ahead | at /= ahead])
+-- | The simplest pose 'genSeen' gives of the given range: squarely facing
+-- the camera, straight ahead of it, a metre off or as near that as the
+-- range has.
+squarelyAhead :: (Double, Double) -> Placing
+squarelyAhead (nearest, farthest) = Placing (V3 0 0 0) (V3 0 0 (min farthest (max nearest 1000)))
+
+-- | Of the poses 'genSeen' gives of a range and a clip: the simplest (see
+-- 'squarelyAhead'), and poses straight ahead of the camera as far from it, and
+-- turned less, still seen whole.
+shrinkSeen :: (Double, Double) -> Model -> Placing -> [Placing]
+shrinkSeen range m = filter (inView m) . shrinkTo (squarelyAhead range) steps
   where
-    ahead = V3 0 0 (norm at)
+    steps (Placing turn at) = Placing turn (V3 0 0 (norm at)) : [Placing turn' at | turn' <- shrinkTurn turn]
 
 -- | A pose of the headset clip that the camera sees whole, within the
 -- range the clip is tracked in, turned up to 60 degrees from squarely
 -- facing the camera.
 newtype SeenWhole = SeenWhole Placing
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary SeenWhole where
     arbitrary = SeenWhole <$> genSeen 60 trackedRange headset
-    shrink (SeenWhole placing) = SeenWhole <$> shrinkSeen headset placing
+    shrink (SeenWhole placing) = SeenWhole <$> shrinkSeen trackedRange headset placing
 
 -- | A pose as a camera itself moved would see it: the motion after the
 -- pose.
@@ -299,18 +354,35 @@ shares b = Belief (bothTrue b / whole) (referenceMirrored b / whole) (trackedMir
   where
     whole = bothTrue b + referenceMirrored b + trackedMirrored b + bothMirrored b
 
+-- | Knowing nothing; then a belief that knows nothing of the reference,
+-- and one that knows nothing of the tracked pose, each saying of the
+-- other what the belief did; and one halfway to knowing nothing, each
+-- only if it is some way off the belief. They are shares of weights if
+-- the belief is, by more nearly equal weights.
+shrinkBelief :: Belief -> [Belief]
+shrinkBelief = shrinkTo unknown (\b -> filter (far b) [ofTracked b, ofReference b, halfway b])
+  where
+    ofTracked (Belief tt tm mt mm) = Belief ((tt + tm) / 2) ((tt + tm) / 2) ((mt + mm) / 2) ((mt + mm) / 2)
+    ofReference (Belief tt tm mt mm) = Belief ((tt + mt) / 2) ((tm + mm) / 2) ((tt + mt) / 2) ((tm + mm) / 2)
+    halfway (Belief tt tm mt mm) = Belief ((tt + 0.25) / 2) ((tm + 0.25) / 2) ((mt + 0.25) / 2) ((mm + 0.25) / 2)
+    far (Belief tt tm mt mm) (Belief tt' tm' mt' mm') = maximum (map abs [tt - tt', tm - tm', mt - mt', mm - mm']) > 0.01
+
 -- * What the camera shows
 
--- | Somewhere in the picture, in pixels; simpler at a whole number of
--- them.
+-- | Somewhere in the picture, in pixels; simplest at its corner, and
+-- simpler at a whole number of pixels.
 newtype InPicture = InPicture (Double, Double)
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary InPicture where
     arbitrary = InPicture <$> ((,) <$> choose (0, 640) <*> choose (0, 480))
-    shrink (InPicture (u, v)) = [InPicture (whole u, whole v) | whole u /= u || whole v /= v]
-      where
-        whole x = fromIntegral (truncate x :: Int)
+    shrink (InPicture place) = InPicture <$> shrinkPlace place
+
+-- | The picture's corner, and the whole number of pixels a place is at.
+shrinkPlace :: (Double, Double) -> [(Double, Double)]
+shrinkPlace = shrinkTo (0, 0) (\(u, v) -> [(whole u, whole v)])
+  where
+    whole x = fromIntegral (truncate x :: Int)
 
 -- | The blobs the camera shows of a clip at a pose, every reflector lit,
 -- heaviest first.
@@ -321,33 +393,35 @@ clipBlobs m placing = findBlobs (renderDiscs (pointDiscs defaultIntrinsics m all
 -- reflector as a blob of its own, whole: 40 pixels or more inside the
 -- picture's edges.
 genClipApart :: Double -> (Double, Double) -> Model -> Gen Placing
-genClipApart most range m = genSeen most range m `suchThat` apart m
+genClipApart most range m = genSeen most range m `suchThat` reflectorsApart m
 
 -- | Poses as 'shrinkSeen' gives them, each reflector still a blob of its
 -- own, whole.
-shrinkClipApart :: Model -> Placing -> [Placing]
-shrinkClipApart m = filter (apart m) . shrinkSeen m
+shrinkClipApart :: (Double, Double) -> Model -> Placing -> [Placing]
+shrinkClipApart range m = filter (reflectorsApart m) . shrinkSeen range m
 
 -- | A pose of the headset clip, from 400 mm to 1.5 m off and turned up to
 -- 20 degrees from squarely facing the camera, where the camera shows each
 -- reflector as a blob of its own, whole (see 'genClipApart').
 newtype Apart20 = Apart20 Placing
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Apart20 where
     arbitrary = Apart20 <$> genClipApart 20 (400, 1500) headset
-    shrink (Apart20 placing) = Apart20 <$> shrinkClipApart headset placing
+    shrink (Apart20 placing) = Apart20 <$> shrinkClipApart (400, 1500) headset placing
 
 -- | A pose as 'Apart20' has one, turned up to 30 degrees.
 newtype Apart30 = Apart30 Placing
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Apart30 where
     arbitrary = Apart30 <$> genClipApart 30 (400, 1500) headset
-    shrink (Apart30 placing) = Apart30 <$> shrinkClipApart headset placing
+    shrink (Apart30 placing) = Apart30 <$> shrinkClipApart (400, 1500) headset placing
 
-apart :: Model -> Placing -> Bool
-apart m placing = length blobs == 3 && all inside blobs
+-- | Whether the camera shows each reflector of a clip at a pose as a blob
+-- of its own, 40 pixels or more inside the picture's edges.
+reflectorsApart :: Model -> Placing -> Bool
+reflectorsApart m placing = length blobs == 3 && all inside blobs
   where
     blobs = clipBlobs m placing
     inside b = blobX b >= 40 && blobX b <= fromIntegral frameWidth - 40 && blobY b >= 40 && blobY b <= fromIntegral frameHeight - 40
@@ -367,17 +441,18 @@ roundBlob (u, v) points = Blob u v points (100 * points) spread spread 0
   where
     spread = fromIntegral points / (4 * pi)
 
--- | Blobs of fewer pixels, and at whole numbers of pixels.
+-- | The smallest round blob, at the picture's corner; and round blobs of
+-- fewer pixels, and at simpler places.
 shrinkBlob :: Blob -> [Blob]
-shrinkBlob b =
-    [roundBlob (blobX b, blobY b) points | points <- shrink (blobPoints b), points >= 6]
-        ++ [roundBlob (whole (blobX b), whole (blobY b)) (blobPoints b) | whole (blobX b) /= blobX b || whole (blobY b) /= blobY b]
-  where
-    whole x = fromIntegral (truncate x :: Int)
+shrinkBlob =
+    shrinkParts
+        [ \b -> [roundBlob (blobX b, blobY b) points | points <- shrinkFrom 6 (blobPoints b)]
+        , \b -> [roundBlob place (blobPoints b) | place <- shrinkPlace (blobX b, blobY b)]
+        ]
 
 -- | A blob that isn't the clip's, of up to 400 pixels.
 newtype Stray = Stray Blob
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Stray where
     arbitrary = Stray <$> genBlob 400
@@ -385,7 +460,7 @@ instance Arbitrary Stray where
 
 -- | A few of 'Stray'.
 newtype Strays = Strays [Blob]
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Strays where
     arbitrary = Strays <$> listOf (genBlob 400)
@@ -393,7 +468,7 @@ instance Arbitrary Strays where
 
 -- | A blob for each reflector, of up to 500 pixels.
 newtype ReflectorBlobs = ReflectorBlobs (Three Blob)
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary ReflectorBlobs where
     arbitrary = ReflectorBlobs <$> genThree (genBlob 500)
@@ -418,7 +493,7 @@ shrinkSizes sizes =
 -- | The sizes the reflectors have had, each seen at up to 3000 pixels at
 -- 1 m (see 'genSizes').
 newtype Sizes = Sizes (Three Size)
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Sizes where
     arbitrary = Sizes <$> genSizes 3000
@@ -433,16 +508,20 @@ genSight most = do
     v <- choose (0, fromIntegral frameHeight)
     Sight (u, v) <$> choose (6, most) <*> elements [Whole, Rejoined, Merged]
 
--- | A blob of its own, for one that isn't; and of a whole number of
--- pixels.
+-- | The smallest blob of its own, at the picture's corner; and a blob of
+-- its own, for one that isn't, of the fewest pixels and a whole number of
+-- them, and at simpler places.
 shrinkSight :: Sight -> [Sight]
-shrinkSight s =
-    [s{sightKind = Whole} | sightKind s /= Whole]
-        ++ [s{sightPixels = whole} | let whole = fromIntegral (truncate (sightPixels s) :: Int), whole /= sightPixels s, whole >= 6]
+shrinkSight =
+    shrinkParts
+        [ \s -> [s{sightKind = kind} | kind <- earlier [Whole, Rejoined, Merged] (sightKind s)]
+        , \s -> [s{sightPixels = pixels} | pixels <- shrinkWithin (6, sightPixels s) 6 (sightPixels s)]
+        , \s -> [s{sightAt = place} | place <- shrinkPlace (sightAt s)]
+        ]
 
 -- | How each reflector showed, of up to 500 pixels.
 newtype ReflectorSights = ReflectorSights (Three Sight)
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary ReflectorSights where
     arbitrary = ReflectorSights <$> genThree (genSight 500)
@@ -452,9 +531,14 @@ instance Arbitrary ReflectorSights where
 genThree :: Gen a -> Gen (Three a)
 genThree g = Three <$> g <*> g <*> g
 
--- | One of the three made simpler.
+-- | Each of the three at its simplest, and one of them made simpler.
 shrinkThree :: (a -> [a]) -> Three a -> [Three a]
-shrinkThree f (Three a b c) = [Three a' b c | a' <- f a] ++ [Three a b' c | b' <- f b] ++ [Three a b c' | c' <- f c]
+shrinkThree f =
+    shrinkParts
+        [ \(Three a b c) -> [Three a' b c | a' <- f a]
+        , \(Three a b c) -> [Three a b' c | b' <- f b]
+        , \(Three a b c) -> [Three a b c' | c' <- f c]
+        ]
 
 -- * Settings
 
@@ -464,9 +548,9 @@ shrinkThree f (Three a b c) = [Three a' b c | a' <- f a] ++ [Three a b' c | b' <
 genWritten :: (Int, Int) -> Gen Double
 genWritten range = written <$> chooseInt range
 
--- | The whole number a written number is nearest, if it isn't one.
+-- | Nothing, and the whole number a written number is nearest.
 shrinkWritten :: Double -> [Double]
-shrinkWritten x = [whole | let whole = fromIntegral (round x :: Int), whole /= x]
+shrinkWritten = shrinkTo 0 (\x -> [fromIntegral (round x :: Int)])
 
 written :: Int -> Double
 written tenThousandths = fromMaybe (error "written") (parseNumber (renderNumber (fromIntegral tenThousandths / 10000)))
@@ -477,9 +561,9 @@ genPoints = do
     steps <- scale (`div` 10) (listOf1 (choose (0.1, 50)))
     mapM (\input -> (,) input <$> choose (-200, 200)) (drop 1 (scanl (+) 0 steps))
 
--- | Curves of fewer points.
+-- | A straight line of one for one, and curves of fewer points.
 shrinkPoints :: [(Double, Double)] -> [[(Double, Double)]]
-shrinkPoints points = [kept | kept <- shrinkList (const []) points, not (null kept)]
+shrinkPoints = shrinkTo [(1, 1)] (filter (not . null) . shrinkList (const []))
 
 -- | A key or mouse button with modifiers, as trackkat's window gives one
 -- from Windows' codes, or a joystick's button.
@@ -489,14 +573,19 @@ genBinding = oneof [key, JoystickButton <$> (Joystick <$> joystickName <*> choos
     key = elements [b | mask <- [0 .. 15], code <- [0 .. 255], Just b <- [bindingFromCodes mask code]]
     joystickName = unwords <$> listOf1 (elements ["Throttle", "Joystick", "-", "HOTAS", "Warthog", "T.16000M", "VPC", "MT-50CM2", "(HID)", "button", "Zoë's", "3D", "2"])
 
--- | Bindings with fewer modifiers, a shorter joystick's name, and the
--- first joystick and button.
+-- | The first key, alone; then, of a key, it with no modifiers or fewer,
+-- and the first key with its modifiers; and, of a joystick's button, the
+-- first button of the first joystick of the simplest name, a shorter
+-- name, and the first joystick and button.
 shrinkBinding :: Binding -> [Binding]
-shrinkBinding (Key mods k) = [Key (filter (/= m) mods) k | m <- mods]
-shrinkBinding (JoystickButton (Joystick name index) button) =
-    [JoystickButton (Joystick (unwords shorter) index) button | shorter <- shrinkList (const []) (words name), not (null shorter)]
-        ++ [JoystickButton (Joystick name 1) button | index /= 1]
-        ++ [JoystickButton (Joystick name index) 1 | button /= 1]
+shrinkBinding = shrinkTo (Key [] "F1") steps
+  where
+    steps (Key mods k) = [Key [] k, Key mods "F1"] ++ [Key (filter (/= m) mods) k | m <- mods]
+    steps (JoystickButton (Joystick name index) button) =
+        [JoystickButton (Joystick "Throttle" 1) 1]
+            ++ [JoystickButton (Joystick (unwords shorter) index) button | shorter <- shrinkList (const []) (words name), not (null shorter)]
+            ++ [JoystickButton (Joystick name 1) button | index /= 1]
+            ++ [JoystickButton (Joystick name index) 1 | button /= 1]
 
 -- | Settings a settings file can say: numbers as it writes them, smoothing
 -- from its two knobs, each curve's points going up from above zero or a
@@ -538,38 +627,36 @@ genConfig = do
         lt <- genWritten (100000, 3000000)
         clipShape lr lt <$> genWritten (100000, 3000000)
 
--- | Settings with one more of them as the default has it, and with fewer
--- and simpler bindings.
+-- | The default settings with nothing bound; and settings with fewer and
+-- simpler bindings, and with one more of them as the default has it.
 shrinkConfig :: Config -> [Config]
-shrinkConfig c =
-    filter
-        (/= c)
-        [ c{response = r{smoothing = smoothing dr}}
-        , c{response = r{yawCurve = yawCurve dr}}
-        , c{response = r{pitchCurve = pitchCurve dr}}
-        , c{response = r{rollCurve = rollCurve dr}}
-        , c{response = r{xCurve = xCurve dr}}
-        , c{response = r{yCurve = yCurve dr}}
-        , c{response = r{zCurve = zCurve dr}}
-        , c{response = r{lean = lean dr}}
-        , c{clip = clip d}
-        , c{npclient = npclient d}
-        , c{updates = updates d}
-        , c{startup = startup d}
-        , c{lightMasking = lightMasking d}
-        , c{headView = headView d}
+shrinkConfig =
+    shrinkParts
+        [ \c -> [c{recenterBindings = bs} | bs <- shrinkList shrinkBinding (recenterBindings c)]
+        , \c -> [c{pauseBindings = bs} | bs <- shrinkList shrinkBinding (pauseBindings c)]
+        , \c -> [c{trimBindings = bs} | bs <- shrinkList shrinkBinding (trimBindings c)]
+        , asDefault (smoothing . response) (\c x -> c{response = (response c){smoothing = x}})
+        , asDefault (yawCurve . response) (\c x -> c{response = (response c){yawCurve = x}})
+        , asDefault (pitchCurve . response) (\c x -> c{response = (response c){pitchCurve = x}})
+        , asDefault (rollCurve . response) (\c x -> c{response = (response c){rollCurve = x}})
+        , asDefault (xCurve . response) (\c x -> c{response = (response c){xCurve = x}})
+        , asDefault (yCurve . response) (\c x -> c{response = (response c){yCurve = x}})
+        , asDefault (zCurve . response) (\c x -> c{response = (response c){zCurve = x}})
+        , asDefault (lean . response) (\c x -> c{response = (response c){lean = x}})
+        , asDefault clip (\c x -> c{clip = x})
+        , asDefault npclient (\c x -> c{npclient = x})
+        , asDefault updates (\c x -> c{updates = x})
+        , asDefault startup (\c x -> c{startup = x})
+        , asDefault lightMasking (\c x -> c{lightMasking = x})
+        , asDefault headView (\c x -> c{headView = x})
         ]
-        ++ [c{recenterBindings = bs} | bs <- shrinkList shrinkBinding (recenterBindings c)]
-        ++ [c{pauseBindings = bs} | bs <- shrinkList shrinkBinding (pauseBindings c)]
-        ++ [c{trimBindings = bs} | bs <- shrinkList shrinkBinding (trimBindings c)]
   where
-    d = defaultConfig
-    r = response c
-    dr = response d
+    asDefault :: (Eq b) => (Config -> b) -> (Config -> b -> Config) -> Config -> [Config]
+    asDefault part with c = [c `with` part defaultConfig | part c /= part defaultConfig]
 
 -- | Settings a settings file can say (see 'genConfig').
 newtype Sayable = Sayable Config
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Arbitrary Sayable where
     arbitrary = Sayable <$> genConfig

@@ -288,7 +288,7 @@ newtype SeenSquarely = SeenSquarely Placing
 
 instance Arbitrary SeenSquarely where
     arbitrary = SeenSquarely <$> genSeen 30 trackedRange headset
-    shrink (SeenSquarely placing) = SeenSquarely <$> shrinkSeen headset placing
+    shrink (SeenSquarely placing) = SeenSquarely <$> shrinkSeen trackedRange headset placing
 
 -- | How a reflector shows that isn't a blob of its own.
 newtype Shared = Shared Kind
