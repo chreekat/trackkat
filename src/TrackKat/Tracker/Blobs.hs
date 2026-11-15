@@ -86,7 +86,7 @@ bigAmong bs = let biggest = maximum (0 : map blobPoints bs) in filter (bigBeside
 bigBeside :: Int -> Blob -> Bool
 bigBeside biggest b = blobPoints b >= minBlobPixels && blobPoints b * snd besideBiggest >= biggest * fst besideBiggest
 
--- | The ways to picks so many of a list, in order.
+-- | The ways to pick so many of a list, in order.
 picks :: Int -> [a] -> [[a]]
 picks 0 _ = [[]]
 picks _ [] = []
