@@ -39,10 +39,9 @@ module TrackKat.World (
 -- ~~~~~~~~~~~~~~~~
 -- Tracking is a pile of judgements: is this pose somewhere a head can be,
 -- did the head just move faster than heads move, is this blob a reflector
--- or a lamp. Each needs a number, and the numbers grew module by module,
--- so that the same fact (how far a head turns, how much a blob's centre is
--- out) was stated several times, in different currencies and sometimes
--- with different values. docs/heuristics.md lists them all.
+-- or a lamp. Each needs a number, and several modules need the same fact
+-- (how far a head turns, how much a blob's centre is out).
+-- docs/heuristics.md lists every number.
 --
 -- 'World' states the primary facts once, with their units. A module's own
 -- constant that is the same fact is that field; one that is a multiple of
@@ -53,9 +52,8 @@ module TrackKat.World (
 --
 -- Units are phantom types on a plain number, 'Quantity', with nothing
 -- but what is needed to say a fact and take it apart again: the modules
--- compute in bare numbers as before, and unwrap a fact where they name
--- it. Nothing is computed here that could round differently from what the
--- modules computed before.
+-- compute in bare numbers, and unwrap a fact where they name it, so
+-- nothing is computed here that a module might round differently.
 --
 -- The world is a value, not a class or a parameter threaded through
 -- tracking: there is one, 'world'. When settings should come to change a
@@ -194,9 +192,7 @@ data World = World
     deriving (Show)
 
 -- | The world as trackkat takes it to be: a TrackIR 5 on a monitor, and
--- someone seated in front of it. Every value but a head's speed
--- ('headTurnSpeed', 'headMoveSpeed') is the one tracking used before the
--- facts were gathered here.
+-- someone seated in front of it.
 world :: World
 world =
     World

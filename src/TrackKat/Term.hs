@@ -57,9 +57,9 @@ import Numeric (showFFloat)
 
 -- Note [Terms]
 -- ~~~~~~~~~~~~
--- Tracking decides by many small judgements, and a wrong decision used to
--- say nothing of which one made it: a limit on how far a head moves would
--- veto three clear reflectors, and they showed as strays. A 'Term' is one
+-- Tracking decides by many small judgements, and a wrong decision has to
+-- say which one made it: a limit on how far a head moves that vetoes three
+-- clear reflectors would otherwise show them as strays. A 'Term' is one
 -- judgement of a hypothesis (a pose, a way of matching blobs, a blob that
 -- may be a light) with a name, and terms add up, so a decision is a sum of
 -- named terms that can be asked what each said ('explain') and whether
@@ -71,14 +71,14 @@ import Numeric (showFFloat)
 -- infinity. A soft term says how unlikely: 'gaussian' for something with
 -- a spread, 'cost' for a penalty already reckoned in nats, 'likelihood'
 -- for any log-likelihood. Sums of scores are then log-likelihoods too, and
--- differences of them log-odds, which is what TrackKat.Branch has always
--- weighed its evidence in.
+-- differences of them log-odds, which is what "TrackKat.Branch" weighs
+-- its evidence in.
 --
 -- The embedding is shallow: a term is the function that scores, and the
 -- function that tells its findings, and '<>' composes each. Scoring is
 -- the fast path, used on every frame: it allocates nothing of its own,
--- and stops at the first impossible term, as the chains of '&&' it stands
--- for did. Explaining is a separate, slower path that runs every term,
+-- and stops at the first impossible term, as a chain of '&&' would.
+-- Explaining is a separate, slower path that runs every term,
 -- for when someone asks or something is rejected.
 --
 -- Terms are built where the limits are known, often inside a function
@@ -90,12 +90,11 @@ import Numeric (showFFloat)
 -- mm"), and a plain phrase for the user, who is told only what is wrong
 -- ("too far to the side of where you recentered").
 --
--- Scores choose among hypotheses in one place so far: whether a frame's
--- blobs are the clip followed from the last pose or found by their layout
--- (see Note [Following or finding afresh] in "TrackKat.Tracker.Choose").
--- Elsewhere hypotheses are still accepted or rejected one at a time, by
--- gates; softening those into likelihoods is what comes next (see
--- docs/heuristics.md).
+-- Scores choose among hypotheses in one place: whether a frame's blobs
+-- are the clip followed from the last pose or found by their layout (see
+-- Note [Following or finding afresh] in "TrackKat.Tracker.Choose").
+-- Elsewhere hypotheses are accepted or rejected one at a time, by gates
+-- (docs/heuristics.md says which, and what softening them would take).
 
 -- | The log of a likelihood, in nats: at most 0 from a gate, and minus
 -- infinity for what can't be.
