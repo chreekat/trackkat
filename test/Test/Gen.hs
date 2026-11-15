@@ -42,6 +42,7 @@ module Test.Gen (
     shares,
 
     -- * What the camera shows
+    InPicture (..),
     clipBlobs,
     genClipApart,
     shrinkClipApart,
@@ -268,6 +269,17 @@ shares b = Belief (bothTrue b / whole) (referenceMirrored b / whole) (trackedMir
     whole = bothTrue b + referenceMirrored b + trackedMirrored b + bothMirrored b
 
 -- * What the camera shows
+
+-- | Somewhere in the picture, in pixels; simpler at a whole number of
+-- them.
+newtype InPicture = InPicture (Double, Double)
+    deriving (Show)
+
+instance Arbitrary InPicture where
+    arbitrary = InPicture <$> ((,) <$> choose (0, 640) <*> choose (0, 480))
+    shrink (InPicture (u, v)) = [InPicture (whole u, whole v) | whole u /= u || whole v /= v]
+      where
+        whole x = fromIntegral (truncate x :: Int)
 
 -- | The blobs the camera shows of a clip at a pose, every reflector lit,
 -- heaviest first.

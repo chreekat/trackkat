@@ -8,6 +8,7 @@ import Test.Tasty.QuickCheck
 
 import Test.Check
 import Test.Gen
+import Test.Instances ()
 import Test.Simulation (clipBent, deg, headset)
 import TrackKat.Config
 import TrackKat.Linear
@@ -108,31 +109,31 @@ properties =
     testGroup
         "properties"
         [ testProperty "a pose moves the model rigidly: its origin to where the pose is, distances kept" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \placing -> forAllShrink (genV3 300) shrinkV3 $ \a -> forAllShrink (genV3 300) shrinkV3 $ \b ->
+            \placing (Point a) (Point b) ->
                 let pose = placed placing
                  in poseAt pose (V3 0 0 0) === poseT pose .&&. close 1e-9 (norm (poseAt pose a ^-^ poseAt pose b)) (norm (a ^-^ b))
         , testProperty "where a point shows depends only on which way it is from the camera" $
-            forAllShrink (genSeen 0 trackedRange trackClip) (shrinkSeen trackClip) $ \(Placing _ at) -> forAll (choose (0.5, 2)) $ \nearer ->
+            \(SquareOn (Placing _ at)) (Nearer nearer) ->
                 let shown t = project defaultIntrinsics (Pose identity t) (V3 0 0 0)
                  in closePoint 1e-9 (shown (nearer *^ at)) (shown at)
         , testProperty "a point straight ahead shows at the picture's centre" $
-            forAll (choose (1, 3000)) $ \z ->
+            \(Ahead z) ->
                 project defaultIntrinsics (Pose identity (V3 0 0 z)) (V3 0 0 0) === (cx defaultIntrinsics, cy defaultIntrinsics)
         , testProperty "a pose is no way from itself, and as far from another as the other is from it" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \a -> forAllShrink (genPlacing 2000) shrinkPlacing $ \b -> forAllShrink (genV3 300) shrinkV3 $ \pivot ->
+            \a b (Point pivot) ->
                 poseChange pivot (placed a) (placed a) === (0, 0) .&&. poseChange pivot (placed a) (placed b) === poseChange pivot (placed b) (placed a)
         , testProperty "how far apart poses are doesn't depend on where the camera is" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \a -> forAllShrink (genPlacing 2000) shrinkPlacing $ \b -> forAllShrink (genPlacing 2000) shrinkPlacing $ \camera -> forAllShrink (genV3 300) shrinkV3 $ \pivot ->
+            \a b camera (Point pivot) ->
                 let moved = movedCamera (placed camera)
                  in closeChange (poseChange pivot (moved (placed a)) (moved (placed b))) (poseChange pivot (placed a) (placed b))
         , testProperty "by way of a third pose is no shorter" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \a -> forAllShrink (genPlacing 2000) shrinkPlacing $ \b -> forAllShrink (genPlacing 2000) shrinkPlacing $ \c -> forAllShrink (genV3 300) shrinkV3 $ \pivot ->
+            \a b c (Point pivot) ->
                 let (turn, move) = poseChange pivot (placed a) (placed c)
                     (turn1, move1) = poseChange pivot (placed a) (placed b)
                     (turn2, move2) = poseChange pivot (placed b) (placed c)
                  in property (turn <= turn1 + turn2 + 1e-5 && move <= move1 + move2 + 1e-9)
         , testProperty "turning about the pivot is turning alone, by the turn made" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \reference -> forAllShrink (genV3 300) shrinkV3 $ \pivot -> forAllShrink genAngles shrink $ \(y, p, r) ->
+            \reference (Point pivot) (Angles (y, p, r)) ->
                 let hp = relativePose cameraLevel pivot (placed reference) (turnedAbout pivot (rotYXZ y p r) (placed reference))
                  in conjoin
                         [ close 1e-7 (yaw hp) y
@@ -141,19 +142,19 @@ properties =
                         , closeV 1e-9 (V3 (tx hp) (ty hp) (tz hp)) (V3 0 0 0)
                         ]
         , testProperty "a head's pose from its reference turns and moves as far as the poses are apart" $
-            forAllShrink (genPlacing 2000) shrinkPlacing $ \a -> forAllShrink (genPlacing 2000) shrinkPlacing $ \b -> forAllShrink (genV3 300) shrinkV3 $ \pivot -> forAllShrink (genTurn 60) shrinkTurn $ \tipped ->
+            \a b (Point pivot) (Tipped tipped) ->
                 let up = mulMV (rodrigues tipped) (V3 0 (-1) 0)
                     hp = relativePose (levelFromUp up) pivot (placed a) (placed b)
                     (_, move) = poseChange pivot (placed a) (placed b)
                  in close 1e-9 (norm (V3 (tx hp) (ty hp) (tz hp))) move
                         .&&. closeM 1e-9 (rotYXZ (yaw hp) (pitch hp) (roll hp)) (levelTurn up `mulMM` poseR (placed b) `mulMM` transpose (poseR (placed a)) `mulMM` transpose (levelTurn up))
         , testProperty "level axes have the up they were made from, and tell the camera's tilt" $
-            forAll (choose (-60, 60)) $ \down -> forAll (choose (-60, 60)) $ \right ->
+            \(Tilt down) (Tilt right) ->
                 let up = mulMV (rotYXZ 0 0 right `mulMM` rotYXZ 0 down 0) (V3 0 (-1) 0)
                     (toldDown, toldRight) = cameraTilt (levelFromUp up)
                  in closeV 1e-12 (levelUp (levelFromUp up)) up .&&. close 1e-9 toldDown down .&&. close 1e-9 toldRight right
         , testProperty "a clip mounted one way, then another, is as mounted the other way at once, its shape kept" $
-            forAllShrink (genPlacing 300) shrinkPlacing $ \(Placing turn1 pivot1) -> forAllShrink (genPlacing 300) shrinkPlacing $ \(Placing turn2 pivot2) -> forAll genModel $ \m ->
+            \(Mount (Placing turn1 pivot1)) (Mount (Placing turn2 pivot2)) (AClip m) ->
                 let direct = mounted (Mounting (rodrigues turn2) pivot2) m
                     twice = mounted (Mounting (rodrigues turn2) pivot2) (mounted (Mounting (rodrigues turn1) pivot1) m)
                     (lr, lt, rt) = wornDistances m
@@ -166,7 +167,7 @@ properties =
                         , closeV 1e-12 (clipBack direct) (mulMV (rodrigues turn2) (V3 0 0 1))
                         ]
         , testProperty "a pose reflected is a pose, its reflectors mirrored across the line of sight about their centre" $
-            forAll genModel $ \m -> forAllShrink (genSeen 180 trackedRange m) (shrinkSeen m) $ \placing ->
+            \(ClipSeen m placing) ->
                 let pose = placed placing
                     mirrored = reflectedPose m pose
                     reflectors = [mLeft m, mRight m, mTop m]
@@ -181,13 +182,13 @@ properties =
                         ]
                             ++ [closeV 1e-9 (poseAt mirrored p ^-^ centre pose) (across (poseAt pose p ^-^ centre pose)) | p <- reflectors]
         , testProperty "a pose reflected twice is the pose" $
-            forAll genModel $ \m -> forAllShrink (genSeen 180 trackedRange m) (shrinkSeen m) $ \placing ->
+            \(ClipSeen m placing) ->
                 let pose = placed placing
                     back = reflectedPose m (reflectedPose m pose)
                  in closeM 1e-12 (poseR back) (poseR pose) .&&. closeV 1e-9 (poseT back) (poseT pose)
         , testProperty "which blob is which reflector doesn't depend on the order blobs come in" $
-            forAll genModel $ \m -> forAll (vectorOf 3 ((,) <$> choose (0, 640) <*> choose (0, 480))) $ \blobs -> forAll (shuffle blobs) $ \shuffled ->
-                identify m id shuffled === identify m (id :: (Double, Double) -> (Double, Double)) blobs
+            \(AClip m) (InPicture a) (InPicture b) (InPicture c) -> forAnyOrder [a, b, c] $ \shuffled ->
+                identify m id shuffled === identify m (id :: (Double, Double) -> (Double, Double)) [a, b, c]
         , -- Solving stops once a step gains less than a hundredth of a
           -- pixel, squared, so the pose it stops at shows the reflectors
           -- within that of where they were seen; how near the true pose
@@ -196,7 +197,7 @@ properties =
           -- worst. A degree and a mm tell it from any other pose that
           -- fits: the mirror image is tens of degrees away.
           testProperty "a clip seen from a pose near it is solved to that pose" $
-            forAll genModel $ \m -> forAllShrink (genSeen 25 trackedRange m) (shrinkSeen m) $ \placing -> forAllShrink genNudge shrinkPlacing $ \nudge ->
+            \(ClipFacing m placing) (Nudge nudge) ->
                 let truth = placed placing
                     seen = (project defaultIntrinsics truth (mLeft m), project defaultIntrinsics truth (mRight m), project defaultIntrinsics truth (mTop m))
                  in case solvePose defaultIntrinsics m (Just (nudged nudge truth)) seen of
@@ -205,7 +206,7 @@ properties =
                             let (turn, move) = poseChange (V3 0 0 0) truth solved
                              in counterexample (show (misfit, turn, move)) (misfit < 0.01 && turn < 1 && move < 1)
         , testProperty "a clip's reflectors are as far apart as it was made, the lower pair level about the middle" $
-            forAllShrink genSides shrinkSides $ \(lr, lt, rt) ->
+            \(Sides (lr, lt, rt)) ->
                 case clipShape lr lt rt of
                     Nothing -> counterexample "not a clip" False
                     Just made ->
@@ -218,7 +219,7 @@ properties =
                                 , mRight m === V3 (lr / 2) 0 0
                                 ]
         , testProperty "distances that don't make a triangle make no clip" $
-            forAllShrink genSides shrinkSides $ \(a, b, _) -> forAll (choose (1.001, 3)) $ \beyond ->
+            \(Sides (a, b, _)) (Beyond beyond) ->
                 clipShape a b (beyond * (a + b)) === Nothing .&&. clipShape (beyond * (a + b)) a b === Nothing .&&. clipShape a (beyond * (a + b)) b === Nothing
         ]
 
@@ -230,14 +231,106 @@ closePoint slack (u, v) (u', v') = close slack u u' .&&. close slack v v'
 closeChange :: (Double, Double) -> (Double, Double) -> Property
 closeChange (turn, move) (turn', move') = close 1e-5 turn turn' .&&. close 1e-9 move move'
 
+-- | A point of a clip or a head, up to 300 mm each way from the clip's
+-- origin.
+newtype Point = Point V3
+    deriving (Show)
+
+instance Arbitrary Point where
+    arbitrary = Point <$> genV3 300
+    shrink (Point p) = Point <$> shrinkV3 p
+
+-- | Where a TrackClip squarely facing the camera is seen whole, within the
+-- range a clip is tracked in.
+newtype SquareOn = SquareOn Placing
+    deriving (Show)
+
+instance Arbitrary SquareOn where
+    arbitrary = SquareOn <$> genSeen 0 trackedRange trackClip
+    shrink (SquareOn placing) = SquareOn <$> shrinkSeen trackClip placing
+
+-- | How many times as far from the camera, from half to twice.
+newtype Nearer = Nearer Double
+    deriving (Show)
+
+instance Arbitrary Nearer where
+    arbitrary = Nearer <$> choose (0.5, 2)
+    shrink (Nearer times) = Nearer <$> shrinkWithin (0.5, 2) 1 times
+
+-- | How far straight ahead of the camera, up to 3 m.
+newtype Ahead = Ahead Double
+    deriving (Show)
+
+instance Arbitrary Ahead where
+    arbitrary = Ahead <$> choose (1, 3000)
+    shrink (Ahead z) = Ahead <$> shrinkWithin (1, 3000) 1 z
+
 -- | The clips the examples above use: a TrackClip, and headset clips.
-genModel :: Gen Model
-genModel = elements [trackClip, headset, clipBent]
+clips :: [Model]
+clips = [trackClip, headset, clipBent]
+
+-- | One of 'clips'; simpler the earlier of them.
+newtype AClip = AClip Model
+    deriving (Show)
+
+instance Arbitrary AClip where
+    arbitrary = AClip <$> elements clips
+    shrink (AClip m) = AClip <$> takeWhile ((/= reflectors m) . reflectors) clips
+      where
+        reflectors c = (mLeft c, mRight c, mTop c)
+
+-- | One of 'clips' at a pose the camera sees it whole in, within the range
+-- a clip is tracked in, turned any way.
+data ClipSeen = ClipSeen Model Placing
+    deriving (Show)
+
+instance Arbitrary ClipSeen where
+    arbitrary = elements clips >>= \m -> ClipSeen m <$> genSeen 180 trackedRange m
+    shrink (ClipSeen m placing) = ClipSeen m <$> shrinkSeen m placing
+
+-- | One of 'clips' as 'ClipSeen' has it, turned up to 25 degrees from
+-- squarely facing the camera.
+data ClipFacing = ClipFacing Model Placing
+    deriving (Show)
+
+instance Arbitrary ClipFacing where
+    arbitrary = elements clips >>= \m -> ClipFacing m <$> genSeen 25 trackedRange m
+    shrink (ClipFacing m placing) = ClipFacing m <$> shrinkSeen m placing
 
 -- | Degrees of yaw, pitch and roll, short of where they stop telling a
 -- turn apart: pitch straight up or down, and yaw or roll half a turn.
-genAngles :: Gen (Double, Double, Double)
-genAngles = (,,) <$> choose (-170, 170) <*> choose (-80, 80) <*> choose (-170, 170)
+newtype Angles = Angles (Double, Double, Double)
+    deriving (Show)
+
+instance Arbitrary Angles where
+    arbitrary = Angles <$> ((,,) <$> choose (-170, 170) <*> choose (-80, 80) <*> choose (-170, 170))
+    shrink (Angles angles) = Angles <$> shrink angles
+
+-- | A turn of up to 60 degrees, as the camera is tipped from level by.
+newtype Tipped = Tipped V3
+    deriving (Show)
+
+instance Arbitrary Tipped where
+    arbitrary = Tipped <$> genTurn 60
+    shrink (Tipped w) = Tipped <$> shrinkTurn w
+
+-- | Degrees the camera is tilted down or to its right, up to 60 either
+-- way.
+newtype Tilt = Tilt Double
+    deriving (Show)
+
+instance Arbitrary Tilt where
+    arbitrary = Tilt <$> choose (-60, 60)
+    shrink (Tilt degrees) = Tilt <$> shrinkWithin (-60, 60) 0 degrees
+
+-- | How a clip is mounted: turned any way, about a pivot up to 300 mm each
+-- way from its origin.
+newtype Mount = Mount Placing
+    deriving (Show)
+
+instance Arbitrary Mount where
+    arbitrary = Mount <$> genPlacing 300
+    shrink (Mount placing) = Mount <$> shrinkPlacing placing
 
 -- | The turn from the camera's axes to level axes with the given up: its
 -- rows are level right, down and forward (see 'levelFromUp').
@@ -249,27 +342,41 @@ levelTurn up = M33 (cross down forward) down forward
 
 -- | How far a guess is from a pose: up to 3 degrees and 10 mm each way, as
 -- a pose is from the frame before's.
-genNudge :: Gen Placing
-genNudge = Placing <$> genTurn 3 <*> genV3 10
+newtype Nudge = Nudge Placing
+    deriving (Show)
+
+instance Arbitrary Nudge where
+    arbitrary = Nudge <$> (Placing <$> genTurn 3 <*> genV3 10)
+    shrink (Nudge placing) = Nudge <$> shrinkPlacing placing
 
 nudged :: Placing -> Pose -> Pose
 nudged (Placing turn move) (Pose r t) = Pose (rodrigues turn `mulMM` r) (t ^+^ move)
 
--- | The sides of a triangle, each well short of the other two together.
-genSides :: Gen (Double, Double, Double)
-genSides = do
-    a <- choose (10, 300)
-    b <- choose (10, 300)
-    c <- choose (abs (a - b) + 0.01 * (a + b), 0.99 * (a + b))
-    pure (a, b, c)
+-- | The sides of a triangle, each well short of the other two together;
+-- simpler with whole sides, where they still make one.
+newtype Sides = Sides (Double, Double, Double)
+    deriving (Show)
 
--- | Triangles with whole sides, where they still make one.
-shrinkSides :: (Double, Double, Double) -> [(Double, Double, Double)]
-shrinkSides (a, b, c) =
-    [ (a', b', c')
-    | (a', b', c') <- [(whole a, b, c), (a, whole b, c), (a, b, whole c)]
-    , (a', b', c') /= (a, b, c)
-    , c' > abs (a' - b') + 0.01 * (a' + b') && c' < 0.99 * (a' + b')
-    ]
-  where
-    whole x = fromIntegral (round x :: Int)
+instance Arbitrary Sides where
+    arbitrary = do
+        a <- choose (10, 300)
+        b <- choose (10, 300)
+        c <- choose (abs (a - b) + 0.01 * (a + b), 0.99 * (a + b))
+        pure (Sides (a, b, c))
+    shrink (Sides (a, b, c)) =
+        [ Sides (a', b', c')
+        | (a', b', c') <- [(whole a, b, c), (a, whole b, c), (a, b, whole c)]
+        , (a', b', c') /= (a, b, c)
+        , c' > abs (a' - b') + 0.01 * (a' + b') && c' < 0.99 * (a' + b')
+        ]
+      where
+        whole x = fromIntegral (round x :: Int)
+
+-- | How many times the other two sides together a side too long for a
+-- triangle is.
+newtype Beyond = Beyond Double
+    deriving (Show)
+
+instance Arbitrary Beyond where
+    arbitrary = Beyond <$> choose (1.001, 3)
+    shrink (Beyond times) = Beyond <$> shrinkWithin (1.001, 3) 2 times
