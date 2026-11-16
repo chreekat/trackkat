@@ -2,6 +2,13 @@
 
 Roughly in order.
 
+- Once the new tracker has proven itself on the user's camera, make it
+  the only one: delete the old one (`TrackKat.Old`, `Test.Old`, and
+  `TrackKat.Trackers`, which stands in front of both), the `tracker`
+  setting, its **New tracker** checkbox, and tirprobe's `--tracker`. Until
+  then the old one is frozen (see Note [The old tracker]), and
+  [docs/details.md](docs/details.md) and the README describe it where the
+  two differ.
 - Straighten tracking's heuristics, what is left of it (see
   [docs/heuristics.md](docs/heuristics.md), "What comes next"): follow two
   poses with the odds between them, in place of the one sum of doubt;

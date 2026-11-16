@@ -151,6 +151,9 @@ view** on (`lean = view`), looking behind you and leaning left leans out of
 the cockpit's right side; off, leaning moves you the same way whichever way
 you look.
 
+**New tracker** tracks with the [tracker being tried](#two-trackers);
+unchecked, with the old one.
+
 **The cover** over **Calibrate now** and **Clear calibration** keeps them
 from being clicked by mistake. Click it, or press Space, to lift it; it
 closes when you click close, after you use one of them, or once the mouse
@@ -347,8 +350,8 @@ at the end, so a recording can tell you your clip's shape.
 Something bright behind you that stays put, such as a lamp or a lit fire,
 shows to the camera as a blob much like a reflector. While trackkat follows
 the clip it ignores such blobs anyway, but to find the clip afresh, when it
-starts or after losing it, it has to tell which three blobs are the clip,
-and a fire and its flames make that harder. So trackkat learns lights that stay within a few pixels for
+starts or after losing it, it needs exactly three big blobs, and a fire
+makes a fourth. So trackkat learns lights that stay within a few pixels for
 three seconds, with any flickering bits around them, and from then on
 ignores blobs there, except where it expects the clip (your head can pass
 in front of the light). It learns them while it has lost the clip too, but
@@ -382,6 +385,27 @@ light: it is found anyway, and the light is forgotten as you move. If ignoring l
 trouble, clear **Ignore still lights** in the window, or set
 `ignore lights = off`, which tirprobe follows too; `tirprobe --no-mask` turns
 it off for tirprobe alone.
+
+## Two trackers
+
+trackkat has two trackers, the part that makes out the clip in what the
+camera sees, while a reworked one is being tried. The old one follows the
+clip from where it was, and looks for it afresh when that fails. The new
+one scores every way a frame's lights could be the clip, and the clip
+being away, and takes the likeliest. The old one is the default.
+
+To try the new one, check **New tracker** in the window, or set
+`tracker = new` in `trackkat.conf`; to go back, uncheck it, or set
+`tracker = old`. Either applies at once, while you play, and the log says
+so: `Tracking with the new tracker.` When trackkat starts, the log says
+which it is using. The tracker taking over keeps the calibration and where
+you recentered; still lights are learned again, in a few seconds.
+
+If tracking goes wrong with one and not the other,
+[record it](tirprobe.md#recording-a-problem): a recording says which
+tracker made it, and tirprobe replays it through either. Where this page
+and the README say how trackkat makes out the clip, and why it can't, they
+describe the old one.
 
 ## Anti-cheat
 

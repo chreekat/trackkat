@@ -103,7 +103,8 @@ Either way they apply at once, while you play.
   directly.
 - **Clip out of sight with its reflectors in view?** After a second the log
   says why, such as `The clip is out of sight, though 3 lights are in view:
-  too close to the camera.`
+  too far to the side of where you recentered.` Recenter if you have moved
+  your seat.
 - **Tracking goes wrong?** [Record it](docs/tirprobe.md#recording-a-problem)
   while you play, with `trackkat.exe --record`, so it can be replayed
   exactly.

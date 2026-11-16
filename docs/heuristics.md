@@ -4,6 +4,11 @@ Every number tracking judges by, in one place: what it is, what it decides,
 where it comes from, and which others it repeats or contradicts. This is a
 map for whoever tunes tracking, not a guide for users.
 
+It is about the new tracker (`TrackKat.Tracker`), which a user tries by
+`tracker = new`. The old one, the default while the new one proves itself,
+lives beside it under `TrackKat.Old`, frozen: its numbers are as this file
+had them before the new tracker, and none of them is to be tuned.
+
 ## The scheme
 
 Tracking's numbers are of five kinds, and each kind is to have one home and

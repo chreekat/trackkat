@@ -14,13 +14,15 @@ yaw   +3.2  pitch   -1.0  roll   +0.4   x    +2  y    -1  z    +5 mm   distance 
 ```
 
 tirprobe tracks the clip shape set by `clip` in trackkat.conf, in
-`%APPDATA%\trackkat`, and ignores still lights unless trackkat.conf has
-`ignore lights = off`, as trackkat does; `--clip` and `--no-mask` override
-these. It only reads trackkat.conf, and tracks with the defaults if there is
-none. Its first line says which clip shape it is using and where that came
-from:
+`%APPDATA%\trackkat`, ignores still lights unless trackkat.conf has
+`ignore lights = off`, and tracks with the tracker its `tracker` names, as
+trackkat does; `--clip`, `--no-mask`, and `--tracker` override these. It
+only reads trackkat.conf, and tracks with the defaults if there is none.
+Its first lines say which [tracker](details.md#two-trackers) and which clip
+shape it is using, and where each came from:
 
 ```
+# tracker old from C:\Users\you\AppData\Roaming\trackkat\trackkat.conf
 # clip 70,110,110 from C:\Users\you\AppData\Roaming\trackkat\trackkat.conf
 ```
 
@@ -48,6 +50,59 @@ carries on through these, and the line ends with a note when it happens:
 - `+2 masked`: blobs where a bright light stays put, such as a lit fire
   behind you, were ignored; see [still lights](details.md#still-lights).
 
+What follows is what the old tracker says; the new one's lines are
+[below](#with-the-new-tracker).
+
+When the clip is lost the line says how many blobs there were, such as
+`lost: 2 blobs, need 3`. When it is first lost, and whenever the reason
+changes, a line says why: what tracking was trying, and what ruled the blobs
+out, each with its figure and its limit:
+
+```
+# lost, with 3 blobs: following the clip, rejected: aside 401.2 mm > 400 mm
+# lost, with 3 blobs: finding the clip afresh, rejected: near 181 mm < 250 mm, size 81 px < 926 px
+# lost, with 2 blobs: following the clip, rejected: partly seen 1.008 s > 1 s
+```
+
+Here the blobs fit the clip, but 401 mm to the side of where you recentered,
+further than a seated head goes; then they were nearer the camera than the
+clip can be tracked, and far smaller than its reflectors have been; then one
+reflector had been out of sight for over a second. With `--explain` every
+line ends with what that frame was judged by, passed or not, and a line says
+what ruled out each half second of head turning that the neck pivot, the
+clip's shape, or the mirror image wasn't learned from. The names and limits
+are listed in [heuristics.md](heuristics.md).
+
+While tracking has a pose from a moment ago it follows the clip from there,
+and when that fails or looks doubtful it also looks for the clip by the
+layout of the blobs, and takes whichever is likelier. A line says so when
+the pose came from the layout:
+
+```
+# refound: following the clip scored -27.16 nats against -22.83 nats; found by layout where predicted (turn 7.637 degrees <= 15.83 degrees, move 35.97 mm <= 41.67 mm)
+# found afresh: following the clip, rejected: turn 38.51 degrees > 17.5 degrees; found by layout away from where predicted (turn 38.72 degrees > 17.5 degrees, move 19.34 mm <= 45 mm)
+# resumed: following the clip, rejected: turn 26.44 degrees > 15.83 degrees, move 131.7 mm > 41.67 mm; found by layout where a pose left a moment ago predicted (turn 1.69 degrees <= 18.33 degrees, move 1.445 mm <= 46.67 mm)
+# lost, with 3 blobs: following the clip, rejected: turn 25.61 degrees > 15.83 degrees; found by layout elsewhere, scoring -22.9 nats, but likelier where it was with 1 reflector out of sight (-18 nats)
+```
+
+*Refound* is the clip close to where it was: tracking carries on as if it
+had been followed. *Found afresh* is the clip somewhere else: what was known
+of the [mirror image](details.md#mirror-images) starts over. *Resumed* is the clip back
+where it was before being found somewhere else for a moment. The last line
+is a frame lost because blobs that look like the clip somewhere else are
+less likely it than the clip staying put with a reflector hidden. Scores
+are in nats, logs of likelihood: nearer nothing is likelier.
+
+A light being ignored says why it was taken for one, and a mirror-image
+pose corrected says on what evidence:
+
+```
+# Ignoring a bright light at (156, 296): it stayed put for 3 seconds, and at 813 pixels is bigger than the clip's reflectors (349).
+# corrected a mirror-image pose: switched the tracked pose: the tracked pose 99.8% likely the mirror image, the center 51.8%; the head turned 12 degrees from center as it was, 19 with one switched
+```
+
+### With the new tracker
+
 When the clip is lost the line says how many blobs there were, such as
 `lost: 2 blobs, need 3`. When it is first lost, and whenever the reason
 changes, a line says why: the likeliest way of seeing the clip in the
@@ -69,7 +124,8 @@ likelier the clip than not. With `--explain` every line ends with which
 hypothesis that frame was taken for and what each term of its score found,
 and a line says what ruled out each half second of head turning that the
 neck pivot, the clip's shape, or the mirror image wasn't learned from. The
-terms are listed in [heuristics.md](heuristics.md).
+terms are listed in [heuristics.md](heuristics.md), which is about this
+tracker.
 
 Every frame, tracking scores each way the blobs could be the clip, and the
 clip being away, and takes the likeliest. A line says so when that wasn't
@@ -87,14 +143,6 @@ what was known of the [mirror image](details.md#mirror-images) starts
 over. *Resumed* is the clip back where it was before being taken afresh
 somewhere else for a moment. Scores are in nats, logs of how much likelier
 the frame is that way than with no clip in it: more is likelier.
-
-A light being ignored says why it was taken for one, and a mirror-image
-pose corrected says on what evidence:
-
-```
-# Ignoring a bright light at (156, 296): it stayed put for 3 seconds, and at 813 pixels is bigger than the clip's reflectors (349).
-# corrected a mirror-image pose: switched the tracked pose: the tracked pose 99.8% likely the mirror image, the center 51.8%; the head turned 12 degrees from center as it was, 19 with one switched
-```
 
 ## Recording a problem
 
@@ -199,10 +247,24 @@ the calibration cleared, the camera going and coming back:
 
 Recordings made by builds before trackkat could record replay as they did.
 
+A recording says which tracker tracked it, and replays through that one;
+`--tracker` replays it through the one named. So to see what each makes
+of the same frames:
+
+```
+tirprobe --replay problem.txt --tracker old > old.txt
+tirprobe --replay problem.txt --tracker new > new.txt
+```
+
+The replay's first line says which, as `# tracker new from --tracker`. A
+recording from before there were two doesn't say, and replays through the
+old one. Builds 0.1.239 to 0.1.242 tracked with the new one alone: give
+their recordings `--tracker new` to replay them as they were tracked.
+
 With `--blobs` it shows the blobs instead, `--every-frame` prints every
 frame rather than ten a second, `--explain` says what each frame was judged
-by, and `--clip` and `--no-mask` track with other settings than those
-recorded, throughout. A replay ends with how many windows of head turning the neck
+by, and `--clip`, `--no-mask`, and `--tracker` track with other settings
+than those recorded, throughout. A replay ends with how many windows of head turning the neck
 pivot, the clip's shape, and the mirror image were each learned from, and how
 many were left out, by what ruled them out:
 
@@ -226,6 +288,9 @@ many were left out, by what ruled them out:
   with `masked`.
 - `--no-mask`: don't learn and ignore bright lights that stay put, whatever
   trackkat.conf's `ignore lights` says.
+- `--tracker old|new`: track with the old tracker, or the new one being
+  tried, whatever trackkat.conf's `tracker` says; see
+  [two trackers](details.md#two-trackers).
 - `--threshold N` (30–253, default 140), `--ir 5|6|7` (illuminator
   brightness), `--no-status-led`.
 - `--record FILE`: record every frame to FILE, to be replayed; see
