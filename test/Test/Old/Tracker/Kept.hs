@@ -1,0 +1,309 @@
+-- | What a frame is taken into, for the next: the still lights (see
+-- "TrackKat.Old.Tracker.Still"), which pose is the head's (see
+-- "TrackKat.Old.Tracker.Mirror"), what learns from poses (see
+-- "TrackKat.Old.Tracker.Learners"), and what a user is told of the clip
+-- staying out of sight (see "TrackKat.Old.Tracker.Absence").
+module Test.Old.Tracker.Kept (tests) where
+
+import Data.List (isSubsequenceOf, mapAccumL)
+import Data.Maybe (isJust)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.QuickCheck
+
+import Test.Gen hiding (Sizes (..), genSizes, shrinkSizes)
+import Test.Instances ()
+import Test.Old.Gen
+import Test.Old.Instances ()
+import Test.Old.Simulation (headset)
+import TrackKat.Branch (Clarity (..), Correction (..), newBranch)
+import TrackKat.Calibration (defaultCalibration)
+import TrackKat.Frame (Blob (..))
+import TrackKat.Lights (Masking (..), View (..), inMask, lightAreas, noLights)
+import TrackKat.Linear
+import TrackKat.Old.Match (Kind (..), Sight (..), Three (..), noSize)
+import TrackKat.Old.Tracker.Absence
+import TrackKat.Old.Tracker.Blobs
+import TrackKat.Old.Tracker.Learners
+import TrackKat.Old.Tracker.Mirror
+import TrackKat.Old.Tracker.Outcome
+import TrackKat.Old.Tracker.Still
+import TrackKat.Pose
+import TrackKat.Term (Finding (..), Name (..), impossible)
+import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, (.+^), (.-.))
+
+tests :: TestTree
+tests = testGroup "Kept" [still, mirror, learners, absent]
+
+-- | Nothing is masked that the lights learnt don't hold, nor where the
+-- clip is predicted to be; and with masking off nothing is learnt or
+-- masked at all.
+still :: TestTree
+still =
+    testGroup
+        "Still"
+        [ testProperty "a lamp that stays put while the clip isn't seen is learnt, once, as an area around it" $
+            once $ case lightAreas (stillLights lampLit) of
+                [(place, radius)] -> counterexample (show (place, radius)) (distance2 place lampAt < 1 && radius > 0 && radius < 40)
+                areas -> counterexample (show areas) False
+        , testProperty "a blob is masked just when in a light's area, with no reflector predicted in the area or within 20 pixels of it" $
+            \(ByLamp place) (AboutLamp predicted) ->
+                let (radius, apart) = (lampRadius, sqrt (distance2 predicted lampAt))
+                    b = Blob (fst place) (snd place) 100 10000 8 8 0
+                    clear = abs (apart - (radius + 20)) > 1e-6 && abs (sqrt (distance2 place lampAt) - radius) > 1e-6
+                 in clear ==>
+                        inMask (maskFor lampLit [predicted]) b === (distance2 place lampAt <= radius * radius && apart > radius + 20)
+        , testProperty "a mask sorts blobs into those masked and those in view, each in the order they came, none lost" $
+            \(Blobs blobs) ->
+                let Shown mask masked visible = sortBlobs (maskFor lampLit []) blobs
+                 in conjoin
+                        [ property (masked `isSubsequenceOf` blobs && visible `isSubsequenceOf` blobs)
+                        , length masked + length visible === length blobs
+                        , property (all (inMask mask) masked && not (any (inMask mask) visible))
+                        ]
+        , testProperty "with masking off, nothing is masked, learnt or told" $
+            \(Blobs blobs) now ->
+                let off = lampLit{stillMasking = NoMasking}
+                    (lights, news) = learnUnseen now blobs unwanted off
+                 in conjoin
+                        [ property (not (any (inMask (maskFor off [])) blobs))
+                        , lightAreas lights === lightAreas (stillLights off)
+                        , length news === 0
+                        ]
+        , testProperty "nothing is learnt from one frame, and what would say the clip is in a light isn't asked" $
+            \(Blobs blobs) ->
+                let (lights, news) = learnUnseen (clockAt 0) blobs unwanted (Still MaskLights noLights)
+                 in lightAreas lights === [] .&&. length news === 0
+        , testProperty "the clip is confirmed once tracked for long enough, and stays so" $
+            \since (For for) (Fraction longer) ->
+                standing (since .+^ for) since === (if for >= confirmSeconds then Confirmed else Unconfirmed)
+                    .&&. property (standing (since .+^ for) since /= Confirmed || standing (since .+^ for .+^ seconds longer) since == Confirmed)
+        , testProperty "lights are learnt clear of the clip only once it is confirmed: around each reflector, by 15 pixels or more" $
+            \(SeenSquarely placing) (ReflectorSights seen) ->
+                let view confirmed = clipView defaultIntrinsics headset confirmed (placed placing) (Just <$> seen) (Just 300)
+                 in conjoin
+                        [ length (viewDiscs (view Unconfirmed)) === 0
+                        , viewUsual (view Unconfirmed) === Nothing
+                        , map fst (viewDiscs (view Confirmed)) === map (seenAt defaultIntrinsics headset (placed placing)) [LeftReflector, RightReflector, TopReflector]
+                        , property (all ((>= 15) . snd) (viewDiscs (view Confirmed)))
+                        , viewUsual (view Confirmed) === Just 300
+                        , length (viewSights (view Confirmed)) === 3 .&&. length (viewSights (view Unconfirmed)) === 3
+                        ]
+        ]
+
+-- | A frame shows the reflectors clearly only as three blobs of their
+-- own, and no more clearly for more blobs; and one frame switches no
+-- pose for its mirror image.
+mirror :: TestTree
+mirror =
+    testGroup
+        "Mirror"
+        [ testProperty "the clip alone in view, facing the camera within 20 degrees, shows clearly" $
+            \(Apart20 placing) ->
+                case clipBlobs headset placing of
+                    blobs@[a, b, c] -> clarity (pure noSize) blobs (placed placing) (whole <$> Three a b c) === Clear
+                    blobs -> counterexample (show blobs) False
+        , testProperty "reflectors don't show clearly with one unseen, or not a blob of its own, nor more clearly for another blob in view" $
+            \(Apart20 placing) (Stray another) (Sizes sizes) (Shared kind) ->
+                case clipBlobs headset placing of
+                    blobs@[a, b, c] ->
+                        let seen = whole <$> Three a b c
+                            clear with sights = clarity sizes with (placed placing) sights == Clear
+                         in conjoin
+                                [ property (not (clear blobs (Three Nothing (whole b) (whole c))))
+                                , property (not (clear blobs (Three (fmap (\s -> s{sightKind = kind}) (whole a)) (whole b) (whole c))))
+                                , property (not (clear (another : blobs) seen) || clear blobs seen)
+                                ]
+                    blobs -> counterexample (show blobs) False
+        , testProperty "recentered on a pose, that pose is the centre" $
+            \(SeenWhole placing) ->
+                let Pose r t = placed placing
+                 in fmap (\(Pose r' t') -> (r', t')) (centrePose (recenterOn (placed placing) (Centre Nothing (newBranch headset)))) === Just (r, t)
+        , testProperty "with nothing yet believed, one frame switches neither the pose nor the centre for its mirror image" $
+            \(SeenWhole placing) (SeenWhole centre) clear ->
+                let Pose r t = placed placing
+                    Pose cr ct = placed centre
+                    told = tellApart defaultIntrinsics headset pivot (clockAt 1) clear (placed placing) (pure (Just (Sight (0, 0) 100 Whole))) (Centre (Just (placed centre)) (newBranch headset))
+                 in conjoin
+                        [ toldCorrection told === MirrorNeither
+                        , (poseR (toldPose told), poseT (toldPose told)) === (r, t)
+                        , fmap (\(Pose r' t') -> (r', t')) (centrePose (toldCentre told)) === Just (cr, ct)
+                        ]
+        ]
+
+-- | A calibration asked for watches for its seconds and then ends, once,
+-- whatever else the learners went through meanwhile.
+learners :: TestTree
+learners =
+    testGroup
+        "Learners"
+        [ testProperty "a calibration asked for says nothing while it watches, ends once when its seconds are up, and says nothing after" $
+            \(Sweep asked gaps lost corrected) ->
+                let times = scanl1 (+) (map (/ 4) gaps)
+                    frame (i, after) =
+                        ( if i `elem` lost then lostSightOf else id
+                        , if i `elem` corrected then startOver else id
+                        , asked .+^ seconds after
+                        )
+                    watched = snd (mapAccumL (\l (lose, correct, now) -> sweepOn now facing facing (correct (lose l))) (startSweep asked (newLearners headset defaultCalibration)) (map frame (zip [0 :: Int ..] times)))
+                    ended = [length events | (after, events) <- zip times watched, asked .+^ seconds after >= asked .+^ calibrationSeconds]
+                    before = [length events | (after, events) <- zip times watched, asked .+^ seconds after < asked .+^ calibrationSeconds]
+                 in counterexample (show (times, map length watched)) $
+                        all (== 0) before && take 1 ended == [1 | not (null ended)] && all (== 0) (drop 1 ended)
+        , testProperty "with no calibration asked for, poses are taken in with nothing said of one" $
+            \now ->
+                length (snd (sweepOn now facing facing (newLearners headset defaultCalibration))) === 0
+        ]
+
+-- | A user is told that the clip is out of sight only when it has been
+-- for a while with lights enough in view to be it, and not again soon.
+absent :: TestTree
+absent =
+    testGroup
+        "Absence"
+        [ testProperty "the clip out of sight is told only after a second of it, with three lights or more in view, and never twice in ten seconds" $
+            \(Spells spells) ->
+                let frames = zip (map clockAt [0, 0.25 ..]) (concat [replicate n spell | (n, spell) <- spells])
+                    step (since, a) (now, spell) =
+                        let (a', said) = absence now (outcome spell) a
+                            since' = case spell of
+                                InSight -> Nothing
+                                _ -> Just (maybe now id since)
+                         in ((since', a'), (now, spell, since', isJust said))
+                    told = [frame | frame@(_, _, _, True) <- snd (mapAccumL step (Nothing, noAbsence) frames)]
+                 in conjoin
+                        [ property (and [lights >= 3 | (_, OutOfSight lights _, _, _) <- told])
+                        , property (null [() | (_, InSight, _, _) <- told])
+                        , property (and [now .-. began > seconds 1 | (now, _, Just began, _) <- told])
+                        , property (and [later .-. sooner >= seconds 10 | ((sooner, _, _, _), (later, _, _, _)) <- zip told (drop 1 told)])
+                        ]
+        ]
+
+-- | What a quarter of a second of frames showed: the clip, or so many
+-- lights that weren't made out as it, for the reason numbered.
+data Spell = InSight | OutOfSight Int Int
+    deriving (Show)
+
+outcome :: Spell -> Outcome
+outcome InSight = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Followed Nothing)
+outcome (OutOfSight lights numbered) = Lost lights 0 (Why Following (Unfit [Finding (Name ("reason " ++ show numbered) "") impossible Nothing])) Nothing
+
+-- | Spells of up to a minute each, in sight and out; simpler of fewer.
+newtype Spells = Spells [(Int, Spell)]
+    deriving (Show)
+
+instance Arbitrary Spells where
+    arbitrary = Spells <$> listOf ((,) <$> chooseInt (1, 240) <*> oneof [pure InSight, OutOfSight <$> chooseInt (0, 5) <*> chooseInt (1, 2)])
+    shrink (Spells spells) = Spells <$> shrinkList (const []) spells
+
+-- | Something that mustn't be looked at.
+unwanted :: a
+unwanted = error "something was worked out that wasn't needed"
+
+-- | Where the head turns about, in the clip's axes.
+pivot :: V3
+pivot = V3 0 100 100
+
+-- | The clip squarely facing the camera, 700 mm off.
+facing :: Pose
+facing = Pose identity (V3 0 0 700)
+
+-- | Where a lamp is in the picture.
+lampAt :: (Double, Double)
+lampAt = (200, 150)
+
+-- | The lights learnt from a lamp of 2000 pixels seen for four seconds,
+-- 120 times a second, with the clip not in sight.
+lampLit :: Still
+lampLit = foldl' seen (Still MaskLights noLights) [0 .. 480 :: Int]
+  where
+    lamp = Blob (fst lampAt) (snd lampAt) 2000 200000 160 160 0
+    seen s i = s{stillLights = fst (learnUnseen (clockAt (fromIntegral i / 120)) [lamp] (const []) s)}
+
+-- | A place within so many pixels of the lamp, each way.
+genBy :: Double -> Gen (Double, Double)
+genBy most = (\du dv -> (fst lampAt + du, snd lampAt + dv)) <$> choose (negate most, most) <*> choose (negate most, most)
+
+-- | The lamp's own place, and the place a whole number of pixels from
+-- it, toward it.
+shrinkBy :: (Double, Double) -> [(Double, Double)]
+shrinkBy = shrinkTo lampAt (\(u, v) -> [(toward (fst lampAt) u, toward (snd lampAt) v)])
+  where
+    toward lamp x = lamp + fromIntegral (truncate (x - lamp) :: Int)
+
+-- | Where a blob is: within 25 pixels of the lamp, each way.
+newtype ByLamp = ByLamp (Double, Double)
+    deriving (Show)
+
+instance Arbitrary ByLamp where
+    arbitrary = ByLamp <$> genBy 25
+    shrink (ByLamp place) = ByLamp <$> shrinkBy place
+
+-- | Where a reflector is predicted: within 60 pixels of the lamp, each
+-- way.
+newtype AboutLamp = AboutLamp (Double, Double)
+    deriving (Show)
+
+instance Arbitrary AboutLamp where
+    arbitrary = AboutLamp <$> genBy 60
+    shrink (AboutLamp place) = AboutLamp <$> shrinkBy place
+
+-- | The radius of the area masked around the lamp.
+lampRadius :: Double
+lampRadius = sum (map snd (lightAreas (stillLights lampLit)))
+
+-- | A few blobs of sizes from a fragment's to a lamp's, some of them by
+-- the lamp.
+newtype Blobs = Blobs [Blob]
+    deriving (Show)
+
+instance Arbitrary Blobs where
+    arbitrary = do
+        n <- chooseInt (0, 8)
+        Blobs <$> vectorOf n (oneof [genBlob 400, genBlob 5000, (\b -> b{blobX = fst lampAt + blobX b / 100, blobY = snd lampAt + blobY b / 100}) <$> genBlob 400])
+    shrink (Blobs blobs) = Blobs <$> shrinkList shrinkBlob blobs
+
+-- | Seconds the clip has been tracked for, up to two.
+newtype For = For Seconds
+    deriving (Show)
+
+instance Arbitrary For where
+    arbitrary = For . seconds <$> choose (0, 2)
+    shrink (For x) = For . seconds <$> shrinkWithin (0, 2) 0 (inSeconds x)
+
+-- | A pose as 'SeenWhole' has one, turned up to 30 degrees.
+newtype SeenSquarely = SeenSquarely Placing
+    deriving (Show)
+
+instance Arbitrary SeenSquarely where
+    arbitrary = SeenSquarely <$> genSeen 30 trackedRange headset
+    shrink (SeenSquarely placing) = SeenSquarely <$> shrinkSeen trackedRange headset placing
+
+-- | How a reflector shows that isn't a blob of its own.
+newtype Shared = Shared Kind
+    deriving (Show)
+
+instance Arbitrary Shared where
+    arbitrary = Shared <$> elements [Rejoined, Merged]
+    shrink (Shared kind) = Shared <$> earlier [Rejoined, Merged] kind
+
+-- | A calibration asked for and the frames after it: when it was asked
+-- for, in seconds; four times the seconds from each frame to the next, up
+-- to twice as long as a calibration watches; and the frames, by number,
+-- before which the clip was lost, and before which its pose was
+-- corrected. Simplest asked for at the start, with no frames; simpler
+-- with fewer frames, and with fewer of those lost or corrected.
+data Sweep = Sweep Instant [Double] [Int] [Int]
+    deriving (Show)
+
+instance Arbitrary Sweep where
+    arbitrary = do
+        asked <- clockAt <$> choose (0, 10)
+        gaps <- listOf (choose (0, 2 * inSeconds calibrationSeconds))
+        Sweep asked gaps <$> sublistOf [0 .. length gaps] <*> sublistOf [0 .. length gaps]
+    shrink =
+        shrinkParts
+            [ \(Sweep asked gaps lost corrected) -> [Sweep asked fewer (filter (<= length fewer) lost) (filter (<= length fewer) corrected) | fewer <- [[] | length gaps > 1] ++ [init gaps | not (null gaps)]]
+            , \(Sweep asked gaps lost corrected) -> [Sweep asked gaps lost' corrected | lost' <- shrinkList (const []) lost]
+            , \(Sweep asked gaps lost corrected) -> [Sweep asked gaps lost corrected' | corrected' <- shrinkList (const []) corrected]
+            , \(Sweep asked gaps lost corrected) -> [Sweep (clockAt 0) gaps lost corrected | asked /= clockAt 0]
+            ]

@@ -9,6 +9,8 @@ import Test.Tasty (TestTree)
 import Text.Printf (printf)
 
 import Test.Check
+import qualified Test.Old.Scorecard as Old
+import qualified Test.Old.Simulation as Old
 import Test.Simulation
 import TrackKat.Config
 import TrackKat.Frame (Stripe)
@@ -33,6 +35,11 @@ import TrackKat.Tracker
 -- bounds, not the figures themselves, as the figures can differ in a
 -- frame or two from one machine's arithmetic to another's. With
 -- TRACKKAT_SHOW set, each scene's card is printed.
+--
+-- Each scene is tracked by the old tracker too (see Note [The old
+-- tracker] in "TrackKat.Old.Tracker"), and that card held to the figures
+-- the old tracker came to ("Test.Old.Scorecard"): the two cards, one
+-- after the other, are how the trackers compare.
 --
 -- The scenes are those the other simulations check one thing of, and
 -- those the backlog says tracking gets wrong; what is wrong is then on the
@@ -85,13 +92,15 @@ wrongMM = 30
 -- degrees; and the longest unfound, in seconds.
 data Limits = Limits Int Int Int Int Double Double
 
--- | Track a scene from a fresh tracker.
-card :: Scenario -> Card
-card (Scenario _ m masking frames) =
+-- | Track a scene from a fresh tracker: by what tracks frames of (time,
+-- true pose, stripes) to each frame's time, true pose, outcome and pose
+-- tracked, given whether an outcome is the clip lost.
+card :: (Masking -> Model -> [(Double, Pose, [Stripe])] -> [(Double, Pose, o, Maybe Pose)]) -> (o -> Bool) -> Scenario -> Card
+card track lost (Scenario _ m masking frames) =
     Card
         { cardFrames = length rows
-        , cardLost = length [() | (Whole, (_, _, Lost{}, _)) <- shown]
-        , cardGhosts = length [() | (Absent, (_, _, Tracked{}, _)) <- shown]
+        , cardLost = length [() | (Whole, (_, _, o, _)) <- shown, lost o]
+        , cardGhosts = length [() | (Absent, (_, _, o, _)) <- shown, not (lost o)]
         , cardWrong = length [() | (turn, move) <- errors, turn > wrongDegrees || move > wrongMM]
         , cardMirrored = length mirrored
         , cardWorst = (maximum (0 : map fst errors), maximum (0 : map snd errors))
@@ -99,21 +108,20 @@ card (Scenario _ m masking frames) =
         , cardUnfound = longest
         }
   where
-    (_, tracked) = trackFramesEventsWith masking m [(t, pose, stripes) | (t, pose, _, stripes) <- frames]
-    rows = map fst tracked
+    rows = track masking m [(t, pose, stripes) | (t, pose, _, stripes) <- frames]
     shown = zip [s | (_, _, s, _) <- frames] rows
-    present = [r | (s, r@(_, _, Tracked{}, _)) <- shown, s /= Absent]
+    present = [r | (s, r@(_, _, o, _)) <- shown, not (lost o), s /= Absent]
     mirrored = filter (mirroredOn m) present
     errors = [poseError truth p | r@(_, truth, _, Just p) <- present, not (mirroredOn m r)]
     end = maximum (0 : [t | (t, _, _, _) <- rows])
     -- The longest stretch unfound, and since when the clip has gone
     -- unfound while it wholly showed, if it has.
     (longest, _) = foldl unfound (0, Nothing) shown
-    unfound (most, since) (s, (t, _, o, _)) = case (o, since) of
-        (Tracked{}, Just began) -> (max most (t - began), Nothing)
-        (Tracked{}, Nothing) -> (most, Nothing)
-        (Lost{}, Just began) -> (max most (if t >= end then t - began else 0), Just began)
-        (Lost{}, Nothing)
+    unfound (most, since) (s, (t, _, o, _)) = case (lost o, since) of
+        (False, Just began) -> (max most (t - began), Nothing)
+        (False, Nothing) -> (most, Nothing)
+        (True, Just began) -> (max most (if t >= end then t - began else 0), Just began)
+        (True, Nothing)
             | s == Whole -> (most, Just t)
             | otherwise -> (most, Nothing)
 
@@ -144,7 +152,12 @@ within (Limits lost ghosts wrong mirrored worst unfound) c =
 simulations :: TestTree
 simulations = group "Scorecard" $ mapM_ scored scenarios
   where
-    scored (scenario@(Scenario name _ _ _), limits) = let c = card scenario in checkShowing name (renderCard c) (within limits c)
+    scored (scenario@(Scenario name _ _ _), limits) = do
+        let c = card (\masking m -> map fst . snd . trackFramesEventsWith masking m) isLost scenario
+            old = card (\masking m -> map fst . snd . Old.trackFramesEventsWith masking m) Old.isLost scenario
+        checkShowing name (renderCard c) (within limits c)
+        checkShowing (name ++ ", by the old tracker") (renderCard old) $
+            maybe False (\(a, b, wrong, mirrored, worst, unfound) -> within (Limits a b wrong mirrored worst unfound) old) (lookup name Old.limits)
 
 -- | What shows of a clip lit so: wholly, with each reflector at least
 -- half lit.

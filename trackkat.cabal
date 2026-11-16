@@ -34,6 +34,22 @@ library
     TrackKat.Log
     TrackKat.Match
     TrackKat.Number
+    TrackKat.Old.Match
+    TrackKat.Old.Tracker
+    TrackKat.Old.Tracker.Absence
+    TrackKat.Old.Tracker.Blobs
+    TrackKat.Old.Tracker.Choose
+    TrackKat.Old.Tracker.Follow
+    TrackKat.Old.Tracker.Judge
+    TrackKat.Old.Tracker.Layout
+    TrackKat.Old.Tracker.Learners
+    TrackKat.Old.Tracker.Mirror
+    TrackKat.Old.Tracker.Outcome
+    TrackKat.Old.Tracker.Sighting
+    TrackKat.Old.Tracker.Sizes
+    TrackKat.Old.Tracker.Still
+    TrackKat.Old.Tracker.Trail
+    TrackKat.Old.World
     TrackKat.Pose
     TrackKat.Protocol
     TrackKat.Recorder
@@ -169,6 +185,29 @@ test-suite tests
     Test.Memory
     Test.Mount
     Test.Number
+    Test.Old.Branch
+    Test.Old.Clips
+    Test.Old.Following
+    Test.Old.Gen
+    Test.Old.Instances
+    Test.Old.Lights
+    Test.Old.Match
+    Test.Old.Memory
+    Test.Old.Mount
+    Test.Old.Scorecard
+    Test.Old.Shape
+    Test.Old.Simulation
+    Test.Old.Tracker
+    Test.Old.Tracker.Blobs
+    Test.Old.Tracker.Choose
+    Test.Old.Tracker.Follow
+    Test.Old.Tracker.Judge
+    Test.Old.Tracker.Kept
+    Test.Old.Tracker.Layout
+    Test.Old.Tracker.Sizes
+    Test.Old.Tracker.Step
+    Test.Old.Tracker.Trail
+    Test.Old.Visibility
     Test.Pose
     Test.Protocol
     Test.Recording

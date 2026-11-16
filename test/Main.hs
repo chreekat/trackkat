@@ -22,6 +22,17 @@ import qualified Test.Match
 import qualified Test.Memory
 import qualified Test.Mount
 import qualified Test.Number
+import qualified Test.Old.Branch
+import qualified Test.Old.Clips
+import qualified Test.Old.Following
+import qualified Test.Old.Gen
+import qualified Test.Old.Lights
+import qualified Test.Old.Match
+import qualified Test.Old.Memory
+import qualified Test.Old.Mount
+import qualified Test.Old.Shape
+import qualified Test.Old.Tracker
+import qualified Test.Old.Visibility
 import qualified Test.Pose
 import qualified Test.Protocol
 import qualified Test.Recording
@@ -80,6 +91,12 @@ main = do
                 , Test.Updater.tests
                 , Test.Idle.tests
                 , Test.Icons.tests
+                , testGroup
+                    "the old tracker"
+                    [ Test.Old.Gen.shrinks
+                    , Test.Old.Match.tests
+                    , Test.Old.Tracker.tests
+                    ]
                 ]
             , testGroup
                 "simulation"
@@ -96,5 +113,17 @@ main = do
                 , Test.Recording.simulations
                 , Test.Memory.simulations
                 , Test.Scorecard.simulations
+                , testGroup
+                    "the old tracker"
+                    [ Test.Old.Tracker.simulations
+                    , Test.Old.Following.simulations
+                    , Test.Old.Branch.simulations
+                    , Test.Old.Lights.simulations
+                    , Test.Old.Shape.simulations
+                    , Test.Old.Clips.simulations
+                    , Test.Old.Mount.simulations
+                    , Test.Old.Visibility.simulations
+                    , Test.Old.Memory.simulations
+                    ]
                 ]
             ]

@@ -173,7 +173,7 @@ isMirrored = mirroredOn clipBent
 
 -- | Whether the pose tracked is the mirror image of the true pose of a
 -- clip of the given shape rather than the true pose.
-mirroredOn :: Model -> Row -> Bool
+mirroredOn :: Model -> (time, Pose, outcome, Maybe Pose) -> Bool
 mirroredOn m (_, truth, _, tracked) = case (mirrorPose defaultIntrinsics m truth, tracked) of
     (Just other, Just p) -> fst (poseError other p) < fst (poseError truth p) && fst (poseError truth p) > 3 && fst (poseError truth other) > 10
     _ -> False

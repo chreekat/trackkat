@@ -1,6 +1,6 @@
 -- | Tracking for hours holds on to no more memory than tracking for a
 -- minute. These need the run-time system's statistics (+RTS -T).
-module Test.Memory (simulations) where
+module Test.Memory (simulations, liveWhileStepping) where
 
 import Control.Exception (evaluate)
 import GHC.Stats (gc, gcdetails_live_bytes, getRTSStats, getRTSStatsEnabled)
