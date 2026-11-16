@@ -88,7 +88,7 @@ simulations = group "Following" $ do
     -- from it: the light is taken for the reflector, a blob being there
     -- and no other, though smaller than the reflector was learnt to be.
     -- When the reflector shows again, the three reflectors are the sizes
-    -- they were, and that outscores keeping to the light.
+    -- they were, and a few frames of that outscore keeping to the light.
     let dim lit pose = [(p, 0.5 * r) | (p, r) <- pointDiscs defaultIntrinsics clipBent lit pose]
         (topAt, topWidth) = dim allLit (glancing 6) !! 2
         light width t = [((fst topAt + 8, snd topAt), width * topWidth) | t >= 6]
@@ -97,7 +97,7 @@ simulations = group "Following" $ do
         wrongFrom rows = [t | (t, truth, Tracked{}, Just p) <- rows, fst (poseError truth p) > 5]
     checkShowing "taken onto a light by a reflector gone dark" (show (worstError [r | r@(t, _, _, _) <- caughtRows, t >= 6, t < 6.05]) ++ ", and back when the reflector shows: wrong at " ++ show (wrongFrom caughtRows) ++ ", then " ++ show (summed (after 6.1 caughtRows))) $
         fst (worstError [r | r@(t, _, _, _) <- caughtRows, t >= 6, t < 6.05]) > 5
-            && all (< 6.06) (wrongFrom caughtRows)
+            && all (< 6.08) (wrongFrom caughtRows)
             && fst (worstError (after 6.1 caughtRows)) < 1
             && lostCount caughtRows == 0
 

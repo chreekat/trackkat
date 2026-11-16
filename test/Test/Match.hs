@@ -60,6 +60,11 @@ properties =
                                 , property (all (maybe False ((== Whole) . sightKind)) (toList (matchSights best)))
                                 , matchUnused best === length (sceneStrays scene)
                                 ]
+        , testProperty "two blobs are a reflector in pieces just when each one's centre is inside a disc of their pixels about the centre of both" $
+            \scene broken ->
+                let found = matches (expectedAt (scenePose scene)) shiftSpread (blobsOf (brokenIn broken scene))
+                    rejoined = any (any (maybe False ((== Rejoined) . sightKind)) . matchSights) found
+                 in counterexample (show (blobsOf (brokenIn broken scene))) (rejoined === (brokenReach broken < 1))
         , testProperty "blobs match the same in whatever order they come" $
             \scene -> forAnyOrder (blobsOf scene) $ \shuffled ->
                 let ranks = sort . map (nats . matchRank) . matches (expectedAt (scenePose scene)) shiftSpread
@@ -106,6 +111,48 @@ blobsOf scene =
         ++ map (uncurry blob) (sceneStrays scene)
   where
     blob (x, y) size = Blob x y size (200 * size) (fromIntegral size / (4 * pi)) (fromIntegral size / (4 * pi)) 0
+
+-- | One of a scene's reflectors as two blobs: which, the bigger blob's
+-- share of its pixels, which way the smaller is from the bigger, in
+-- radians, and how far the smaller's centre is from the centre of both,
+-- in radii of a disc of the pixels of both: up to 1.4, and not within a
+-- hundredth of 1. Simplest the left one in halves, side by side, half a
+-- radius out.
+data Broken = Broken
+    { brokenWhich :: Int
+    , brokenShare :: Double
+    , brokenAngle :: Double
+    , brokenReach :: Double
+    }
+    deriving (Eq, Show)
+
+instance Arbitrary Broken where
+    arbitrary = Broken <$> chooseInt (0, 2) <*> choose (0.5, 0.8) <*> choose (0, 2 * pi) <*> oneof [choose (0.1, 0.99), choose (1.01, 1.4)]
+    shrink =
+        shrinkTo
+            (Broken 0 0.5 0 0.5)
+            ( \broken ->
+                [broken{brokenWhich = 0}, broken{brokenShare = 0.5}, broken{brokenAngle = 0}]
+                    ++ [broken{brokenReach = if brokenReach broken < 1 then 0.5 else 1.2}]
+            )
+
+-- | A scene with one of its reflectors in two pieces, and nothing else
+-- but the clip, each other reflector just where it is predicted.
+brokenIn :: Broken -> SeenClip -> SeenClip
+brokenIn (Broken which share angle reach) scene =
+    scene
+        { sceneOff = [if i == which then (negate smaller * apart * cos angle, negate smaller * apart * sin angle) else (0, 0) | i <- [0 .. 2]]
+        , sceneSizes = [if i == which then big else size | (i, size) <- zip [0 ..] (sceneSizes scene)]
+        , sceneStrays = [((u + bigger * apart * cos angle, v + bigger * apart * sin angle), small)]
+        }
+  where
+    whole = sceneSizes scene !! which
+    big = round (share * fromIntegral whole) :: Int
+    small = whole - big
+    bigger = fromIntegral big / fromIntegral whole :: Double
+    smaller = 1 - bigger
+    apart = reach * sqrt (fromIntegral whole / pi) / bigger
+    (u, v) = predicted scene !! which
 
 -- | A clip seen whole with its reflectors well apart in the picture, each
 -- blob within 3 pixels of where its reflector is, and up to four strays
