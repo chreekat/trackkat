@@ -18,8 +18,9 @@ import TrackKat.Frame (Blob)
 import TrackKat.Linear (V3)
 import TrackKat.Match
 import TrackKat.Pose
+import TrackKat.Tracker.Account (metres)
 import TrackKat.Tracker.Blobs (at, distance2)
-import TrackKat.Tracker.Judge (metres)
+import TrackKat.Tracker.Sizes (Size, sizeAt)
 import TrackKat.World (Instant)
 
 -- | Where the head was recentered, and whether the poses tracked and
@@ -37,14 +38,14 @@ recenterOn pose (Centre _ belief) = Centre (Just pose) (recentered belief)
 -- | How clearly a frame shows the reflectors, given their sizes, the
 -- frame's blobs, masked or not, and the pose and sights made of them:
 -- clearly if each reflector is a blob of its own, with no other blob
--- within its usual diameter, where a piece of it could be.
+-- within its expected diameter, where a piece of it could be.
 clarity :: Three Size -> [Blob] -> Pose -> Three (Maybe Sight) -> Clarity
 clarity sizes blobs pose sights = case sequenceA sights of
     Just three | and (alone <$> sizes <*> three) -> Clear
     _ -> Doubtful
   where
     alone size s =
-        let across = 2 * sqrt (max (sizeUsual size / (metres pose ^ (2 :: Int))) (sightPixels s) / pi)
+        let across = 2 * sqrt (max (sizeAt (metres pose) size) (sightPixels s) / pi)
          in sightKind s == Whole && length [() | b <- blobs, distance2 (sightAt s) (at b) <= across ^ (2 :: Int)] <= 1
 
 -- | What a frame's pose comes to, once it is weighed which pose is the

@@ -43,18 +43,21 @@ library
     TrackKat.ServedGame
     TrackKat.Session
     TrackKat.Shape
+    TrackKat.Sight
     TrackKat.Stats
     TrackKat.Term
     TrackKat.Tracker
     TrackKat.Tracker.Absence
+    TrackKat.Tracker.Account
     TrackKat.Tracker.Blobs
     TrackKat.Tracker.Choose
     TrackKat.Tracker.Follow
-    TrackKat.Tracker.Judge
     TrackKat.Tracker.Layout
     TrackKat.Tracker.Learners
     TrackKat.Tracker.Mirror
     TrackKat.Tracker.Outcome
+    TrackKat.Tracker.Presence
+    TrackKat.Tracker.Reflectors
     TrackKat.Tracker.Sighting
     TrackKat.Tracker.Sizes
     TrackKat.Tracker.Still
@@ -180,12 +183,15 @@ test-suite tests
     Test.Stats
     Test.Term
     Test.Tracker
+    Test.Tracker.Account
     Test.Tracker.Blobs
     Test.Tracker.Choose
     Test.Tracker.Follow
-    Test.Tracker.Judge
     Test.Tracker.Kept
+    Test.Tracker.Known
     Test.Tracker.Layout
+    Test.Tracker.Presence
+    Test.Tracker.Reflectors
     Test.Tracker.Sizes
     Test.Tracker.Step
     Test.Tracker.Trail

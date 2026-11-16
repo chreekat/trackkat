@@ -20,6 +20,7 @@ module TrackKat.Pose (
     poseAt,
     project,
     Reflector (..),
+    reflectorPoint,
     seenAt,
     tapeFacesAway,
     identify,
@@ -33,6 +34,7 @@ module TrackKat.Pose (
     Observation (..),
     solveNear,
     poseChange,
+    poseInformation,
     Level,
     cameraLevel,
     levelFromUp,
@@ -607,6 +609,27 @@ poseChange pivot from@(Pose r0 _) to@(Pose r _) =
     ( norm (rotationVector (r `mulMM` transpose r0)) * 180 / pi
     , norm (poseAt to pivot ^-^ poseAt from pivot)
     )
+
+-- | How finely what was seen fixes a pose. A pose changes six ways:
+-- turning about each of the camera's axes through the given pivot (a point
+-- in the model's axes), in degrees, and moving along each, in mm. For each
+-- pair of them, in that order, this is the sum over what was seen of how
+-- far, in pixels across and down, the one moves a reflector in the image
+-- times how far the other does, each reflector counted by its weight
+-- squared: the information about the pose in centres good to one pixel.
+poseInformation :: Intrinsics -> Model -> V3 -> Pose -> [Observation] -> [[Double]]
+poseInformation k m pivot pose@(Pose r t) obs = [[sum (zipWith (*) a b) | b <- moves] | a <- moves]
+  where
+    about = poseAt pose pivot
+    axes = [V3 1 0 0, V3 0 1 0, V3 0 0 1]
+    turned by = let turn = rodrigues by in Pose (turn `mulMM` r) (about ^+^ mulMV turn (t ^-^ about))
+    moved by = Pose r (t ^+^ by)
+    -- How far each way moves each coordinate seen, weighted, by the
+    -- difference a hundredth of a degree or of a mm makes.
+    moves = [slope (turned . (*^ axis) . (* (pi / 180))) | axis <- axes] ++ [slope (moved . (*^ axis)) | axis <- axes]
+    slope change = zipWith (\ahead here -> (ahead - here) / h) (seen (change h)) (seen pose)
+    h = 0.01
+    seen p = concat [let (u, v) = seenAt k m p which in [w * u, w * v] | Observation which w _ <- obs]
 
 -- | A head squarely facing the camera, at the distance that makes the two
 -- lower reflectors as far apart as observed.

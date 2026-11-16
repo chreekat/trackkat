@@ -50,43 +50,43 @@ carries on through these, and the line ends with a note when it happens:
 
 When the clip is lost the line says how many blobs there were, such as
 `lost: 2 blobs, need 3`. When it is first lost, and whenever the reason
-changes, a line says why: what tracking was trying, and what ruled the blobs
-out, each with its figure and its limit:
+changes, a line says why: the likeliest way of seeing the clip in the
+frame, what counted most against it with its figure, and what each
+hypothesis about the frame scored:
 
 ```
-# lost, with 3 blobs: following the clip, rejected: aside 401.2 mm > 400 mm
-# lost, with 3 blobs: finding the clip afresh, rejected: near 181 mm < 250 mm, size 81 px < 926 px
-# lost, with 2 blobs: following the clip, rejected: partly seen 1.008 s > 1 s
+# lost, with 3 blobs: finding the clip afresh, unlikely: near 181 mm < 250 mm; over away -7.785 nats
+# lost, with 3 blobs: finding the clip afresh, unlikely: left size 78 px (expected 826) (-6.6 nats); over away -8.19 nats, afresh by layout -17.73 nats
+# lost, with 2 blobs: following the clip, unlikely: partly seen 1.008 s > 1 s; over continued as predicted 22.66 nats, afresh as predicted 9.175 nats
+# lost, with 3 blobs: finding the clip afresh, unlikely: sure 0.06785 nats < 2.197 nats; over afresh by layout -1.878 nats, away -1.946 nats
 ```
 
-Here the blobs fit the clip, but 401 mm to the side of where you recentered,
-further than a seated head goes; then they were nearer the camera than the
-clip can be tracked, and far smaller than its reflectors have been; then one
-reflector had been out of sight for over a second. With `--explain` every
-line ends with what that frame was judged by, passed or not, and a line says
-what ruled out each half second of head turning that the neck pivot, the
-clip's shape, or the mirror image wasn't learned from. The names and limits
-are listed in [heuristics.md](heuristics.md).
+Here the blobs fit the clip, but nearer the camera than the clip can be
+tracked; then they were far smaller than its reflectors have been; then
+one reflector had been out of sight for over a second, so that the two in
+view no longer said where the head was; then three blobs were hardly
+likelier the clip than not. With `--explain` every line ends with which
+hypothesis that frame was taken for and what each term of its score found,
+and a line says what ruled out each half second of head turning that the
+neck pivot, the clip's shape, or the mirror image wasn't learned from. The
+terms are listed in [heuristics.md](heuristics.md).
 
-While tracking has a pose from a moment ago it follows the clip from there,
-and when that fails or looks doubtful it also looks for the clip by the
-layout of the blobs, and takes whichever is likelier. A line says so when
-the pose came from the layout:
+Every frame, tracking scores each way the blobs could be the clip, and the
+clip being away, and takes the likeliest. A line says so when that wasn't
+the clip carrying on from where it was, its reflectors where predicted:
 
 ```
-# refound: following the clip scored -27.16 nats against -22.83 nats; found by layout where predicted (turn 7.637 degrees <= 15.83 degrees, move 35.97 mm <= 41.67 mm)
-# found afresh: following the clip, rejected: turn 38.51 degrees > 17.5 degrees; found by layout away from where predicted (turn 38.72 degrees > 17.5 degrees, move 19.34 mm <= 45 mm)
-# resumed: following the clip, rejected: turn 26.44 degrees > 15.83 degrees, move 131.7 mm > 41.67 mm; found by layout where a pose left a moment ago predicted (turn 1.69 degrees <= 18.33 degrees, move 1.445 mm <= 46.67 mm)
-# lost, with 3 blobs: following the clip, rejected: turn 25.61 degrees > 15.83 degrees; found by layout elsewhere, scoring -22.9 nats, but likelier where it was with 1 reflector out of sight (-18 nats)
+# afresh by layout 34.76 nats; over continued as predicted 33.59 nats, afresh as predicted 32.9 nats
+# resumed by layout 32.66 nats; over afresh by layout 16.78 nats, resumed as predicted 14.41 nats
 ```
 
-*Refound* is the clip close to where it was: tracking carries on as if it
-had been followed. *Found afresh* is the clip somewhere else: what was known
-of the [mirror image](details.md#mirror-images) starts over. *Resumed* is the clip back
-where it was before being found somewhere else for a moment. The last line
-is a frame lost because blobs that look like the clip somewhere else are
-less likely it than the clip staying put with a reflector hidden. Scores
-are in nats, logs of likelihood: nearer nothing is likelier.
+*Continued* is the clip carrying on from where it was a moment ago; *by
+layout* says its blobs were picked out by how they lie, not by where they
+were predicted. *Afresh* is the clip with nothing said of where it was:
+what was known of the [mirror image](details.md#mirror-images) starts
+over. *Resumed* is the clip back where it was before being taken afresh
+somewhere else for a moment. Scores are in nats, logs of how much likelier
+the frame is that way than with no clip in it: more is likelier.
 
 A light being ignored says why it was taken for one, and a mirror-image
 pose corrected says on what evidence:

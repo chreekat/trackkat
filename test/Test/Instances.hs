@@ -20,6 +20,7 @@ import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
 import TrackKat.Term (LogOdds (..), Score (..), impossible, possible)
 import TrackKat.Tracker.Outcome (Way (..))
+import TrackKat.Tracker.Presence (Presence (..))
 import TrackKat.Updater (Looking (..))
 import TrackKat.World (Instant, Seconds, clockAt, inClockSeconds, inSeconds, seconds)
 
@@ -228,6 +229,10 @@ instance Arbitrary Clarity where
     arbitrary = elements [Clear, Doubtful]
     shrink = earlier [Clear, Doubtful]
 
+instance Arbitrary Presence where
+    arbitrary = elements [Present, Gone]
+    shrink = earlier [Present, Gone]
+
 instance Arbitrary Way where
-    arbitrary = elements [Followed, Refound, Resumed, FoundAfresh]
-    shrink = earlier [Followed, Refound, Resumed, FoundAfresh]
+    arbitrary = elements [Continued, Resumed, Appeared]
+    shrink = earlier [Continued, Resumed, Appeared]
