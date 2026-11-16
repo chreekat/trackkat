@@ -221,6 +221,8 @@ scenarios =
     , (points "the fastest glances, 550 degrees a second" clipBent nothingElse [(t, headSeen bentWorn (35 * sin (2 * pi * t / 0.4)) 0 0, allLit) | t <- at120 4], Limits 0 0 0 0 0.5 0)
     , (points "a hand passing over each reflector in turn" clipBent nothingElse [(t, glancing t, passing t) | t <- at120 6], Limits 0 0 0 0 3.4 0)
     , (points "seen first among two strays as big as reflectors" clipBent (const [((90, 400), 8), ((560, 90), 9)]) [(t, glancing t, allLit) | t <- at120 3], Limits 381 0 0 0 0.2 3.02)
+    , (points "a still light as big as a reflector while another is hidden for half a second" clipBent (const [((200, 150), 9)]) [(t, glancing t, (1, if t >= 2 && t < 2.5 then 0 else 1, 1)) | t <- at120 5], Limits 254 0 381 0 182.8 2.02)
+    , (points "two reflectors and a stray, the clip not seen before" clipBent (const [((340, 288), 3)]) [(t, face, (1, if t < 1 then 0 else 1, 1)) | t <- at120 2], Limits 0 0 0 0 0.5 0)
     , (unmasked (points "two strays coming on beside a glancing head, lights not masked" clipBent (\t -> [((90, 400), 8) | t >= 1] ++ [((560, 90), 9) | t >= 2]) [(t, glancing t, allLit) | t <- at120 6]), Limits 0 0 0 0 0.7 0)
     , (framed "glancing with centres a pixel out" clipBent (const Whole) [(t, pose, renderDiscs (jitter 2 i (pointDiscs defaultIntrinsics clipBent allLit pose))) | (i, t) <- zip [0 ..] (at120 6), let pose = glancing t], Limits 0 0 0 0 4.1 0)
     , (points "leaving the picture at its edge, and back" clipBent nothingElse [(t, pose, lit) | t <- at120 6, let (pose, lit) = leaving t], Limits 0 0 0 0 0.8 0)
