@@ -75,7 +75,7 @@ int main(int argc, char **argv)
     hts_gui_update_status(1, L"Up to date (0.1.151).");
     hts_gui_log(L"Tracking.");
     hts_gui_calibration(L"Camera tipped 12.4\u00b0 down and 0.8\u00b0 to its right, from 1460\u00b0 of head turning.\n"
-                        L"Neck pivot 92 mm below the clip, 71 behind it and 3 to your left, from 214 head turns.");
+                        L"Neck pivot 92\u00b112 mm below the clip, 71\u00b110 behind, 3\u00b110 to your left; 214 turns.");
     /* That calibration, with the default clip squarely facing the camera at
      * the centre: its left, right and top reflectors, from the neck pivot. */
     static const float clip[] = {38, 92, 71, -32, 92, 71, 3, 148.2f, -16.9f};
@@ -108,7 +108,7 @@ int main(int argc, char **argv)
         static const float lamp[] = {155, 292, 30};
         hts_gui_blobs(n, spots, 1, lamp);
         if (i % 60 == 0)
-            hts_gui_stats(L"latency 0.11 ms (max 0.42)  gap max 9 ms  stripes max 31  GC 3 (max 0.21 ms)");
+            hts_gui_stats(L"latency 0.11 ms (max 0.42)  gap 9 ms  stripes 31  GC 3 (max 0.21 ms)");
         if (i % 600 == 300)
             hts_gui_log(i % 1200 == 300 ? L"Recentered." : L"Joystick button pressed: Throttle - HOTAS Warthog button 23");
         int acts = hts_gui_take_actions();

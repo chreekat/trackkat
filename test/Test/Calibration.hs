@@ -51,7 +51,7 @@ tests = group "Calibration" $ do
     -- front of it.
     let lowPivot = either error id (parseCalibration "up = 0 -1 0\nturning = 900\npivot = 1 192 26\npivot windows = 40\n")
     checkShowing "a low pivot described" (describePivotBriefly (Just facing) lowPivot) $
-        "Neck pivot 192 ± 40 mm below the clip, 26 ± 40 behind, 1 ± 40 to your left," `isPrefixOf` describePivotBriefly (Just facing) lowPivot
+        "Neck pivot 192±40 mm below the clip, 26±40 behind, 1±40 to your left;" `isPrefixOf` describePivotBriefly (Just facing) lowPivot
     case learntClip headset (Just facing) lowPivot of
         Nothing -> check "clip on the head with a low pivot" False
         Just placed -> checkShowing "the clip 192 mm above a low pivot and 26 in front" (show placed) $ closeTo (middle placed) (V3 1 192 26)

@@ -54,11 +54,11 @@ sawGCs :: Int -> Double -> Window -> Window
 sawGCs n pause w = w{wGCs = wGCs w + n, wGCPauseMax = max (wGCPauseMax w) pause}
 
 -- | For example
--- @latency 0.31 ms (max 1.20)  gap max 9 ms  stripes max 40  GC 2 (max 0.15 ms)@.
+-- @latency 0.31 ms (max 1.20)  gap 9 ms  stripes 40  GC 2 (max 0.15 ms)@.
 summary :: Window -> String
 summary w =
     printf
-        "latency %.2f ms (max %.2f)  gap max %.0f ms  stripes max %d  GC %d (max %.2f ms)%s"
+        "latency %.2f ms (max %.2f)  gap %.0f ms  stripes %d  GC %d (max %.2f ms)%s"
         mean
         (ms (wLatencyMax w))
         (ms (wGapMax w))

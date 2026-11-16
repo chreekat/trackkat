@@ -52,7 +52,7 @@ tests = group "Config" $ do
     check "button zero" $ parseBinding "Stick button 0" == Left "joystick buttons are numbered from 1 to 256"
     check "button without number" $ parseBinding "Stick button" == Left "joystick buttons are numbered from 1 to 256"
     check "button without joystick" $
-        parseBinding "button 3" == Left "a joystick button needs the joystick's name, like Throttle - HOTAS Warthog button 23"
+        parseBinding "button 3" == Left "name the joystick, like Throttle - HOTAS Warthog button 23"
     check "mouse buttons" $
         parseBindings "MouseMiddle, ctrl+mouse4, Alt+Shift+Mouse5" == Right (map tap [Key [] "MouseMiddle", Key [Ctrl] "Mouse4", Key [Alt, Shift] "Mouse5"])
     check "mouse buttons round-trip" $
@@ -61,9 +61,9 @@ tests = group "Config" $ do
     check "mouse button chosen in the window" $ keyFromCodes 0x2 0x05 == Just (Key [Ctrl] "Mouse4")
     forM_ ["MouseLeft", "Ctrl+MouseRight", "mouse1", "Mouse2"] $ \b ->
         checkShowing "left and right mouse buttons refused" (b) $
-            parseBinding b == Left "the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
+            parseBinding b == Left "the mouse buttons to bind are MouseMiddle, Mouse4 and Mouse5"
     check "mouse button refused in a config" $
-        parseConfig "recenter = MouseLeft\n" == Left "line 1: the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
+        parseConfig "recenter = MouseLeft\n" == Left "line 1: the mouse buttons to bind are MouseMiddle, Mouse4 and Mouse5"
     check "empty binding in a list" $ parseBindings "F12, " == Left "empty key binding"
     check "unknown key reported" $ parseConfig "recenter = F99\n" == Left "line 1: unknown key \"F99\""
     check "unknown setting reported" $ parseConfig "\nfoo = F1\n" == Left "line 2: unknown setting \"foo\""
@@ -101,9 +101,9 @@ tests = group "Config" $ do
                 , Points [(1, 2.5)]
                 ]
     check "precision with several points" $
-        parseConfig "yaw = 1:6 2:9, precision 40" == Left "line 1: a centre precision goes with one input:output point, both above 0, like 1:6, precision 40"
+        parseConfig "yaw = 1:6 2:9, precision 40" == Left "line 1: precision needs one point above 0, like 1:6, precision 40"
     check "precision with no multiplier" $
-        parseConfig "yaw = 1:0, precision 40" == Left "line 1: a centre precision goes with one input:output point, both above 0, like 1:6, precision 40"
+        parseConfig "yaw = 1:0, precision 40" == Left "line 1: precision needs one point above 0, like 1:6, precision 40"
     check "precision out of range" $ parseConfig "yaw = 1:6, precision 101" == Left "line 1: precision is a number from 0 to 100"
     check "not a precision" $ parseConfig "yaw = 1:6, expo 40" == Left "line 1: expected precision and a number, not \"expo 40\""
     check "precision with no points" $ parseConfig "yaw = , precision 40" == Left "line 1: a curve needs at least one input:output point"

@@ -143,14 +143,14 @@ offerNotice dir o = case o of
     OfferInstall v ->
         Just
             Notice
-                { noticeText = "trackkat " ++ versionFolder v ++ " is running from " ++ dir ++ ". Install it to start it from the Start menu and keep it up to date."
+                { noticeText = versionFolder v ++ " runs from " ++ dir ++ ". Install it to keep it up to date."
                 , noticeButton = "Install trackkat"
                 , noticeTray = Nothing
                 }
     OfferInstalled v ->
         Just
             Notice
-                { noticeText = "trackkat " ++ versionFolder v ++ " is installed; this copy, in " ++ dir ++ ", isn't."
+                { noticeText = versionFolder v ++ " is installed; this copy, in " ++ dir ++ ", isn't."
                 , noticeButton = "Use installed trackkat"
                 , noticeTray = Nothing
                 }

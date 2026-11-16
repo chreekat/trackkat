@@ -606,7 +606,7 @@ parseCurve range value = case splitOn ',' value of
     [points, extra] -> do
         m <- case parsePoints points of
             Right [(i, o)] | o > 0 -> Right (o / i)
-            Right _ -> Left "a centre precision goes with one input:output point, both above 0, like 1:6, precision 40"
+            Right _ -> Left "precision needs one point above 0, like 1:6, precision 40"
             Left err -> Left err
         p <- case words extra of
             ["precision", n] -> parseKnob "precision" n
@@ -691,7 +691,7 @@ parseKeyOrButton s = case joystickButton (trim s) of
                 Just (canonical, _) -> Right (Key (heldInOrder mods) canonical)
                 Nothing
                     | map toLower k `elem` ["mouseleft", "mouseright", "mouse1", "mouse2"] ->
-                        Left "the left and right mouse buttons can't be bound; use MouseMiddle, Mouse4 or Mouse5"
+                        Left "the mouse buttons to bind are MouseMiddle, Mouse4 and Mouse5"
                     | otherwise -> Left ("unknown key " ++ show k)
   where
     splitPlus str = case break (== '+') str of
@@ -726,7 +726,7 @@ joystickButton s =
 -- name it is, as in @Throttle - HOTAS Warthog (2)@.
 parseJoystick :: String -> Either String Joystick
 parseJoystick name = case reverse name of
-    [] -> Left "a joystick button needs the joystick's name, like Throttle - HOTAS Warthog button 23"
+    [] -> Left "name the joystick, like Throttle - HOTAS Warthog button 23"
     ')' : rest
         | (index@(_ : _), '(' : beforeIndex) <- span isDigit rest
         , let n = decimal (reverse index)

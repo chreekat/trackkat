@@ -216,13 +216,13 @@ describePivotBriefly :: Maybe Pose -> Calibration -> String
 describePivotBriefly _ c | pivotTurns c <= 0 = "Neck pivot: " ++ notLearnt
 describePivotBriefly Nothing c =
     printf
-        "Neck pivot %.0f ± %.0f mm from the clip, from %.0f head turns."
+        "Neck pivot %.0f±%.0f mm from the clip; %.0f turns."
         (norm (estimatedPivot c))
         (pivotSpreadAlong c (normalize (estimatedPivot c)))
         (pivotTurns c)
 describePivotBriefly (Just centre) c =
     printf
-        "Neck pivot %.0f ± %.0f mm %s the clip, %.0f ± %.0f %s, %.0f ± %.0f to your %s, from %.0f turns."
+        "Neck pivot %.0f±%.0f mm %s the clip, %.0f±%.0f %s, %.0f±%.0f to your %s; %.0f turns."
         (abs y)
         sy
         (if y >= 0 then "below" else "above" :: String)
