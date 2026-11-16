@@ -111,12 +111,12 @@ tests =
                         (Following, Following) -> [p | Publish p <- effects] === [toGamePose (sLatest after) | isFrame event]
                     | (before, event, after, effects) <- trace moves
                     ]
-        , testProperty "pausing and resuming tell the window and the log, and nothing else does" $
+        , testProperty "pausing shows the window the pose held; it and resuming tell the window and the log, and nothing else does" $
             \(Moves moves) ->
                 conjoin
                     [ counterexample (show event) $
                         [o | ShowOutput o <- effects] === case (sSending before, sSending after) of
-                            (Following, Holding _) -> [Paused]
+                            (Following, Holding held) -> [Paused held]
                             (Holding _, Following) -> [Live]
                             _ -> []
                     | (before, event, after, effects) <- trace moves

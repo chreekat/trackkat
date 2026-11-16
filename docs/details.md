@@ -184,7 +184,8 @@ you resume.
 
 In the window, the TRIM switch lights blue while a trim is in place, with
 its yaw and pitch, and "moved" if it also moves or tilts the view, and
-PAUSE lights amber while paused. Each switch's keys
+PAUSE lights amber while paused, with the yaw and pitch of the view it
+holds. A switch that is off shows its name alone. Each switch's keys
 and buttons are listed under it, one to a line, to edit or add to.
 
 ## Aim

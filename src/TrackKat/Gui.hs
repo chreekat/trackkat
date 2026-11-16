@@ -81,7 +81,7 @@ foreign import ccall unsafe "hts_gui_frame"
     c_frame :: CInt -> CInt -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_blobs" c_blobs :: CInt -> Ptr CFloat -> CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_clip" c_clip :: CInt -> Ptr CFloat -> IO ()
-foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> IO ()
+foreign import ccall unsafe "hts_gui_paused" c_paused :: CInt -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_trim" c_trim :: CInt -> CFloat -> CFloat -> CInt -> IO ()
 foreign import ccall unsafe "hts_gui_aiming" c_aiming :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_games" c_games :: CInt -> CWString -> IO ()
@@ -267,10 +267,10 @@ showClip (Just (l, r, t)) = withArray (concatMap coords [l, r, t]) (c_clip 1)
   where
     coords (V3 x y z) = map realToFrac [x, y, z]
 
--- | Light the Pause button, or not.
+-- | Light the Pause button, saying where the view is held, or not.
 showOutput :: Output -> IO ()
-showOutput Live = c_paused 0
-showOutput Paused = c_paused 1
+showOutput Live = c_paused 0 0 0
+showOutput (Paused held) = c_paused 1 (realToFrac (yaw held)) (realToFrac (pitch held))
 
 -- | Where forward is for the view.
 showTrim :: Trim -> IO ()

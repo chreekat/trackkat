@@ -75,6 +75,7 @@ typedef struct State {
     float head[6];                 /* yaw, pitch, roll in degrees, x, y, z in mm */
     float view[6];                 /* the same, as games see it */
     int paused;
+    float held[2]; /* yaw and pitch of the view held while paused, in degrees */
     int games;
     wchar_t game_name[64]; /* one of the games, or nothing if unknown */
     int trimmed;
@@ -213,10 +214,12 @@ void hts_gui_camera(int camera, const wchar_t *text)
     ReleaseSRWLockExclusive(&lock);
 }
 
-void hts_gui_paused(int paused)
+void hts_gui_paused(int paused, float yaw, float pitch)
 {
     AcquireSRWLockExclusive(&lock);
     shared.paused = paused;
+    shared.held[0] = yaw;
+    shared.held[1] = pitch;
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -1197,35 +1200,42 @@ static void signed_degrees(wchar_t *buf, size_t size, float x)
     buf[size - 1] = 0;
 }
 
-/* What a switch says: its name, bold, and below it its state; and how it
- * is lit. */
+/* A view's yaw and pitch, and something after them. */
+static void yaw_and_pitch(wchar_t *line, size_t size, const float *view, const wchar_t *after)
+{
+    wchar_t y[16], p[16];
+    signed_degrees(y, 16, view[0]);
+    signed_degrees(p, 16, view[1]);
+    _snwprintf(line, size, L"yaw %ls pitch %ls%ls", y, p, after);
+    line[size - 1] = 0;
+}
+
+/* What a switch says: its name, bold, and while it is lit a line below
+ * of its state; and how it is lit. */
 static void switch_words(int which, const wchar_t **name, wchar_t *line, size_t size, const Lamp **lamp)
 {
     *lamp = &lamp_off;
+    line[0] = 0;
     if (which == 0) {
         *name = L"RECENTER";
-        copy_text(line, size, L"clears trim");
     } else if (which == 1) {
         *name = seen.paused ? L"PAUSED" : L"PAUSE";
-        copy_text(line, size, seen.paused ? L"games see the view held" : L"output live");
-        if (seen.paused)
+        if (seen.paused) {
+            yaw_and_pitch(line, size, seen.held, L"");
             *lamp = &lamp_amber;
+        }
     } else if (which == 2) {
         *name = L"TRIM";
         if (seen.trimmed) {
-            wchar_t y[16], p[16];
-            signed_degrees(y, 16, seen.trim[0]);
-            signed_degrees(p, 16, seen.trim[1]);
-            _snwprintf(line, size, L"yaw %ls pitch %ls%ls", y, p, seen.trim_moves ? L" · moved" : L"");
-            line[size - 1] = 0;
+            yaw_and_pitch(line, size, seen.trim, seen.trim_moves ? L" · moved" : L"");
             *lamp = &lamp_blue;
-        } else
-            copy_text(line, size, L"off");
+        }
     } else {
         *name = seen.aiming ? L"AIMING" : L"AIM";
-        copy_text(line, size, seen.aiming ? L"view turns gently" : L"off");
-        if (seen.aiming)
+        if (seen.aiming) {
+            copy_text(line, size, L"Sensitivity reduced");
             *lamp = &lamp_blue;
+        }
     }
 }
 
@@ -1237,7 +1247,7 @@ static void name_switch(int which)
     const Lamp *lamp;
     wchar_t line[64], text[96];
     switch_words(which, &name, line, 64, &lamp);
-    _snwprintf(text, 96, L"%ls: %ls",
+    _snwprintf(text, 96, line[0] ? L"%ls: %ls" : L"%ls",
                which == 1 && seen.paused ? L"Paused" : which == 3 && seen.aiming ? L"Aiming" : action[which], line);
     text[95] = 0;
     SetWindowTextW(switch_ctl[which], text);
@@ -1281,7 +1291,9 @@ static void draw_switch(const DRAWITEMSTRUCT *d)
     SetBkMode(dc, TRANSPARENT);
     int shift = pressed ? S(1) : 0, h = r.bottom - r.top, w = r.right - r.left;
     SetTextCharacterExtra(dc, S(2));
-    text_at(dc, bold_font, lamp->name, r.left + shift, r.top + h / 2 - S(19) + shift, w, S(20), DT_CENTER, name);
+    /* The name alone sits in the middle; with a line below, above it. */
+    text_at(dc, bold_font, lamp->name, r.left + shift, r.top + h / 2 - S(line[0] ? 19 : 10) + shift, w, S(20),
+            DT_CENTER, name);
     SetTextCharacterExtra(dc, 0);
     text_at(dc, small_font, lamp->line, r.left + S(4) + shift, r.top + h / 2 + shift, w - S(8), S(18), DT_CENTER,
             line);
@@ -2511,7 +2523,7 @@ static void refresh(void)
                         wcscmp(st.offer_tray, seen.offer_tray) != 0;
     int strip_changed = offer_changed || st.checking != seen.checking || st.up_to_date != seen.up_to_date ||
                         wcscmp(st.update_status, seen.update_status) != 0;
-    int paused_changed = st.paused != seen.paused;
+    int paused_changed = st.paused != seen.paused || st.held[0] != seen.held[0] || st.held[1] != seen.held[1];
     int trim_changed = st.trimmed != seen.trimmed || st.trim[0] != seen.trim[0] || st.trim[1] != seen.trim[1] ||
                        st.trim_moves != seen.trim_moves;
     int aiming_changed = st.aiming != seen.aiming;

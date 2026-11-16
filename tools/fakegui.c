@@ -23,7 +23,7 @@ void hts_gui_frame(int blobs, int reflectors_seen, float yaw, float pitch, float
 void hts_gui_camera(int camera, const wchar_t *text);
 void hts_gui_clip(int shown, const float *points);
 void hts_gui_blobs(int n, const float *blobs, int m, const float *areas);
-void hts_gui_paused(int paused);
+void hts_gui_paused(int paused, float yaw, float pitch);
 void hts_gui_trim(int trimmed, float yaw, float pitch, int moves);
 void hts_gui_aiming(int aiming);
 void hts_gui_games(int games, const wchar_t *name);
@@ -118,7 +118,7 @@ int main(int argc, char **argv)
         }
         if (acts & 0x2) {
             paused = !paused;
-            hts_gui_paused(paused);
+            hts_gui_paused(paused, yaw * 6, pitch * 7);
         }
         /* Trimming looks at the left MFD. */
         if (acts & 0x80) {

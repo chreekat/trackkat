@@ -27,7 +27,10 @@ data Sighting
     deriving (Eq, Show)
 
 -- | Whether games see the head move.
-data Output = Live | Paused
+data Output
+    = Live
+    | -- | the view held
+      Paused HeadPose
     deriving (Eq, Show)
 
 -- | Whether trackkat is looking for a newer version.

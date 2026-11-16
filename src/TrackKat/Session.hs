@@ -246,7 +246,7 @@ step event s = case event of
     RecenterAsked -> recenter s
     PauseAsked -> case sSending s of
         Holding _ -> (s{sSending = Following}, [ShowOutput Live, say "Resumed."])
-        Following -> (s{sSending = Holding (sLatest s)}, [ShowOutput Paused, say "Paused: games see your head held still."])
+        Following -> (s{sSending = Holding (sLatest s)}, [ShowOutput (Paused (sLatest s)), say "Paused: games see your head held still."])
     TrimAsked ->
         let t = trimTo (sent s)
          in (s{sTrim = t}, [ShowTrim t, say ("Trimmed: forward is now " ++ describeTrim t ++ ".")])
