@@ -2174,6 +2174,8 @@ static void place(HWND c, int x, int y, int w, int h)
 
 /* ---- Scrolling ------------------------------------------------------------ */
 
+static void place_bindings_tip(void);
+
 static void scroll_to(int pos)
 {
     RECT rc;
@@ -2186,6 +2188,7 @@ static void scroll_to(int pos)
     ScrollWindowEx(main_hwnd, 0, scroll_pos - pos, NULL, NULL, NULL, NULL, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
     scroll_pos = pos;
     SetScrollPos(main_hwnd, SB_VERT, pos, TRUE);
+    place_bindings_tip();
 }
 
 /* Show a scroll bar if the window is shorter than its content, keeping the
@@ -2430,14 +2433,21 @@ static void tip_strip(void)
                                : L"Installed, trackkat starts from the Start menu and keeps itself up to date");
 }
 
-/* What a binding list's heading, box and button say. */
-static const wchar_t *const list_tips[LISTS] = {
-    L"Keys and buttons that recenter, one per line; add hold or double after one",
-    L"Keys and buttons that pause, one per line; add hold or double after one",
-    L"Keys and buttons that trim, one per line; add hold or double after one",
-    L"Keys and buttons that aim, one per line; with hold after one, aims while held"};
-static const wchar_t *const add_button_tip =
-    L"Click, then press a key or button to add it; click again to stop waiting";
+/* What the control bindings say, wherever the mouse rests among them. */
+static const wchar_t bindings_tip[] = L"Click text to manually edit. Tag with 'hold' or 'double' at end";
+#define BINDINGS_TIP_ID 1
+
+/* Where the control bindings' box is in the window, as it is scrolled. */
+static void place_bindings_tip(void)
+{
+    TTTOOLINFOW ti;
+    memset(&ti, 0, sizeof ti);
+    ti.cbSize = TTTOOLINFOW_V2_SIZE;
+    ti.hwnd = main_hwnd;
+    ti.uId = BINDINGS_TIP_ID;
+    SetRect(&ti.rect, S(10), S(BIND_Y) - scroll_pos, S(710), S(BIND_Y + BIND_H) - scroll_pos);
+    SendMessageW(tips, TTM_NEWTOOLRECTW, 0, (LPARAM)&ti);
+}
 
 /* ---- The window's parts --------------------------------------------------- */
 
@@ -2643,7 +2653,7 @@ static void build_window(void)
     for (int i = 0; i < LISTS; i++) {
         int x = column_x(i);
         list_heading[i] = tip(control(L"STATIC", headings[i], SS_OWNERDRAW, x, BIND_Y + 20, column_w, 20, 0),
-                              list_tips[i]);
+                              bindings_tip);
         HWND box = CreateWindowExW(0, L"EDIT", L"",
                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_MULTILINE |
                                        ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN,
@@ -2651,9 +2661,9 @@ static void build_window(void)
                                    (HMENU)(INT_PTR)(ID_FIELD + F_RECENTER + i), inst, NULL);
         SendMessageW(box, WM_SETFONT, (WPARAM)small_font, FALSE);
         edit_proc = (WNDPROC)SetWindowLongPtrW(box, GWLP_WNDPROC, (LONG_PTR)list_box_proc);
-        field_ctl[F_RECENTER + i] = tip(box, list_tips[i]);
+        field_ctl[F_RECENTER + i] = tip(box, bindings_tip);
         add_button[i] = tip(control(L"BUTTON", L"Add…", WS_TABSTOP | BS_PUSHBUTTON, x, BIND_Y + 112, 100, 24, add_ids[i]),
-                            add_button_tip);
+                            bindings_tip);
         button_proc = (WNDPROC)SetWindowLongPtrW(add_button[i], GWLP_WNDPROC, (LONG_PTR)add_button_proc);
     }
 
@@ -2791,6 +2801,8 @@ static void build_window(void)
 
     /* Boxes last, beneath the controls they frame. */
     group(L"Control bindings", 10, BIND_Y, 700, BIND_H);
+    tip_area(main_hwnd, BINDINGS_TIP_ID, 0, 0, 0, 0, bindings_tip);
+    place_bindings_tip();
     group(L"Response", 10, RESP_Y - 6, 700, RESP_H + 6);
     control(L"STATIC", L"", SS_ETCHEDFRAME, 10, LOG_Y, 700, 36, 0);
 }

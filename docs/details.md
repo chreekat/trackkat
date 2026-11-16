@@ -108,7 +108,11 @@ longest gap between frames, the most stripes in a frame, and garbage
 collections with the longest pause; corrupt packets too, if there were any.
 
 **Bindings.** Each list has one key or button to a line, however long; a
-line too long for its column scrolls sideways as you edit it. **Add…**
+line too long for its column scrolls sideways as you edit it. Click a
+list's text to edit it by hand, and click anywhere else to finish; tag a
+line with `hold` or `double` at its end for
+[what the button does held or pressed twice](#one-button-several-things).
+**Add…**
 waits for the next key, joystick button, or middle or side mouse button
 pressed over the window, and adds it; click it again to stop waiting.
 Delete a line to remove one.
