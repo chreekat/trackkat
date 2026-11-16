@@ -18,6 +18,7 @@ module TrackKat.Linear (
     rotationVector,
     rotateToward,
     solveLinear,
+    logDeterminant,
 ) where
 
 import Data.List (unsnoc)
@@ -137,3 +138,10 @@ solveLinear a b = backSubst <$> eliminate (zipWith (\row v -> row ++ [v]) a b)
     step (p : rest) xs
         | Just (coeffs, rhs) <- unsnoc rest = (rhs - sum (zipWith (*) coeffs xs)) / p : xs
     step _ xs = xs
+
+-- | The log of the determinant of a symmetric positive-definite matrix,
+-- by elimination: each pivot is positive, and their product is the
+-- determinant.
+logDeterminant :: [[Double]] -> Double
+logDeterminant ((p : row) : rest) = log p + logDeterminant [zipWith (\c pc -> c - x / p * pc) xs row | x : xs <- rest]
+logDeterminant _ = 0

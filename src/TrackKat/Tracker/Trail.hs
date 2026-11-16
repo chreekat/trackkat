@@ -14,7 +14,7 @@ module TrackKat.Tracker.Trail (
 
 import TrackKat.Branch (Branch, foundAfresh)
 import TrackKat.Pose (Pose)
-import TrackKat.Tracker.Outcome (Way (..))
+import TrackKat.Tracker.Account (Way (..))
 import TrackKat.World (Instant, Seconds, seconds, (.-.))
 
 -- | The last pose tracked.
@@ -37,8 +37,8 @@ data Trail = Trail
     { trailRecent :: !(Maybe Recent)
     -- ^ the last pose tracked
     , trailLeft :: !(Maybe LeftBehind)
-    -- ^ a pose left for one found afresh (see Note [Following or finding
-    -- afresh] in "TrackKat.Tracker.Choose")
+    -- ^ a pose left for one found afresh (see Note [Choosing] in
+    -- "TrackKat.Tracker.Choose"), which a pose may yet resume
     }
 
 -- | Nothing tracked yet.
@@ -75,18 +75,18 @@ data Carried = Carried
 -- from the poses still predicting then, given what is believed of the
 -- last pose. A pose that continues the last carries on what goes by
 -- continuity; one resumed takes up what the pose left behind had; one
--- found afresh starts it over (see Note [Following or finding afresh] in
+-- come afresh starts it over (see Note [Choosing] in
 -- "TrackKat.Tracker.Choose").
 --
 -- A pose still predicting that is left for one found afresh is kept while
 -- it predicts, unless one left before it still does.
 carryOn :: Way -> Instant -> Branch -> Trail -> Carried
 carryOn way now belief (Trail following left) = case (way, left) of
-    (FoundAfresh, _) -> Carried (foundAfresh belief) now leaving
+    (Appeared, _) -> Carried (foundAfresh belief) now leaving
     (Resumed, Just (LeftBehind was believed)) -> Carried believed (recentSince was) Nothing
     _ -> Carried belief (maybe now recentSince following) leaving
   where
     leaving = case (way, left, following) of
         (Resumed, _, _) -> Nothing
-        (FoundAfresh, Nothing, Just r) -> Just (LeftBehind r belief)
+        (Appeared, Nothing, Just r) -> Just (LeftBehind r belief)
         _ -> left

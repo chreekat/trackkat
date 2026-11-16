@@ -1,5 +1,5 @@
--- | What is remembered of the reflectors' sizes, and what it says of how
--- they show (see "TrackKat.Tracker.Sizes").
+-- | What is learnt of the reflectors' sizes, and what a blob's size says
+-- (see "TrackKat.Tracker.Sizes").
 module Test.Tracker.Sizes (tests) where
 
 import Test.Tasty (TestTree, testGroup)
@@ -8,122 +8,149 @@ import Test.Tasty.QuickCheck
 import Test.Gen
 import Test.Instances ()
 import TrackKat.Linear (V3 (..), identity)
-import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
+import TrackKat.Match (Three (..))
 import TrackKat.Pose (Pose (..))
 import TrackKat.Tracker.Sizes
-import TrackKat.World (inSeconds, seconds)
+import TrackKat.World (Seconds, World (..), inSeconds, seconds, world)
 
--- | A size is in pixels at 1 m, so it says the same of a reflector
--- wherever it was seen. Seen as a blob of its own, a reflector's latest
--- size is what the blob shows, and its usual size no less; unseen, or
--- sharing a blob, its sizes only fade.
+-- | One distribution says how big a reflector is, wherever a size is
+-- judged: a blob is likeliest the size expected and no likelier the
+-- further off, what is learnt from a blob is never then contradicted by
+-- it, and what is learnt fades at the rate stated.
 tests :: TestTree
 tests =
     testGroup
         "Sizes"
-        [ testProperty "a reflector seen as a blob of its own is the size the blob shows, and usually no smaller" $
-            \(ASize size) (Own sight) since (Metres z) ->
-                let after = resized since z size (Just sight)
-                 in sizeLatest after === sightPixels sight * z * z .&&. property (sizeUsual after >= sizeLatest after)
-        , testProperty "a blob says the same of its reflector's size at any distance, for the pixels it would light at 1 m" $
-            \(ASize size) (AtOneMetre atOneMetre) since (Metres z) ->
-                let seenAt d = resized since d size (Just (Sight (0, 0) (atOneMetre / (d * d)) Whole))
-                 in close (1e-9 * atOneMetre) (sizeLatest (seenAt z)) (sizeLatest (seenAt 1))
-                        .&&. close (1e-9 * (atOneMetre + sizeUsual size)) (sizeUsual (seenAt z)) (sizeUsual (seenAt 1))
-        , testProperty "a reflector unseen, or sharing a blob, keeps its latest size, and its usual size only fades" $
-            \(ASize size) sight since (Metres z) ->
+        [ testProperty "a reflector not seen is the size reflectors are, about, and not known" $
+            once $
                 conjoin
-                    [ sizeLatest after === sizeLatest size .&&. property (sizeUsual after <= sizeUsual size && sizeUsual after >= 0)
-                    | after <- [resized since z size Nothing, resized since z size (Just sight{sightKind = Merged})]
+                    [ close 1e-9 (sizeAt 1 unlearnt) (reflectorPixels world)
+                    , close 1e-12 (sizeVariance unlearnt) (log (reflectorPixelsFactor world) ^ (2 :: Int))
+                    , sizeKnown unlearnt === False
                     ]
-        , testProperty "no time passing, a reflector unseen is the size it was" $
-            \(ASize size) (Metres z) ->
-                let after = resized (seconds 0) z size Nothing
-                 in sizeLatest after === sizeLatest size .&&. sizeUsual after === sizeUsual size
-        , testProperty "a usual size fades as much over two times as over their sum, by e in the seconds sizes are remembered" $
-            \(ASize size) first second ->
-                let unseen since from = resized since 1 from Nothing
-                 in close (1e-9 * sizeUsual size) (sizeUsual (unseen second (unseen first size))) (sizeUsual (unseen (seconds (inSeconds first + inSeconds second)) size))
-                        .&&. close (1e-9 * sizeUsual size) (sizeUsual (unseen sizeMemory size)) (sizeUsual size / exp 1)
-        , testProperty "the clip has been seen once any reflector has, and not before" $
-            \(Sizes sizes) (Own sight) ->
-                conjoin
-                    [ everSeen (pure noSize) === False
-                    , everSeen (resized (seconds 0) 1 <$> pure noSize <*> Three Nothing (Just sight) Nothing) === True
-                    , everSeen sizes === any ((> 0) . sizeUsual) sizes
-                    ]
-        , testProperty "the biggest reflector lights, at a pose, its usual size for the distance; nothing with no pose or no reflector seen" $
-            \(Sizes sizes) (Millimetres mm) ->
-                let pose = Pose identity (V3 0 0 mm)
-                    Three l r top = sizeUsual <$> sizes
+        , testProperty "a blob lights fewer pixels the further off, by the square of the distance" $
+            \(ASize size) (Metres z) -> close (1e-9 * sizeAt 1 size) (sizeAt z size * z * z) (sizeAt 1 size)
+        , testProperty "a blob is likeliest its reflector's when just the size expected, and no likelier the further off, bigger or smaller" $
+            \(ASize size) (Metres z) (Times nearer) (Times further) ->
+                let says k = readSays (reading z size (k * sizeAt z size))
                  in conjoin
-                        [ biggestAt sizes Nothing === Nothing
-                        , biggestAt (pure noSize) (Just pose) === Nothing
-                        , case biggestAt sizes (Just pose) of
-                            Nothing -> everSeen sizes === False
-                            Just lit -> close (1e-9 * lit) (lit * (mm / 1000) ^ (2 :: Int)) (maximum [l, r, top])
+                        [ property (says nearer <= says 1 && says (1 / nearer) <= says 1)
+                        , property (says (nearer * further) <= says nearer + 1e-9)
+                        , property (says (1 / (nearer * further)) <= says (1 / nearer) + 1e-9)
                         ]
-        , testProperty "reflectors each a blob of their own all show, and with one unseen, one is out" $
-            \(Sizes sizes) (Owns (Three l r top)) (Metres z) ->
-                showing sizes z (Just <$> Three l r top) === AllShowing
-                    .&&. conjoin [showing sizes z sights === OneOut | sights <- [Three Nothing (Just r) (Just top), Three (Just l) Nothing (Just top), Three (Just l) (Just r) Nothing]]
-        , testProperty "two reflectors sharing a blob both show, or one is perhaps behind the other: never is one surely out" $
-            \(Sizes sizes) (Owns (Three l r top)) (Metres z) ->
-                let shared s = Just s{sightKind = Merged}
-                 in property (showing sizes z (Three (shared l) (shared r) (Just top)) `elem` [AllShowing, OneBehind])
-        , testProperty "the less of the clip shows, the shorter it is followed so" $
-            once (property (showingSeconds AllShowing > showingSeconds OneBehind && showingSeconds OneBehind > showingSeconds OneOut && showingSeconds OneOut > seconds 0))
+        , testProperty "a blob half again smaller than expected or more, which may be part of its reflector, is no less likely than one as many times bigger" $
+            \(ASize size) (Metres z) (Times k) ->
+                let says times = readSays (reading z size (times * sizeAt z size))
+                 in k >= 1.5 ==> property (says (1 / k) >= says k - 1e-9)
+        , testProperty "the chances of a reflector's blob being each size, from a pixel up, come to one" $
+            \(ASize size) ->
+                let steps = 4000 :: Int
+                    least = negate (sizeMean size)
+                    width = (10 - least) / fromIntegral steps
+                    density i = strayDensity * exp (readSays (reading 1 size (exp (sizeMean size + least + width * (fromIntegral i + 0.5)))))
+                 in sizeMean size > log 100 ==> close 0.02 (width * sum (map density [0 .. steps - 1])) 1
+        , testProperty "what is learnt from a blob is nearer it and surer, and the blob no less likely for it: never contradicted by its own latest" $
+            \(ASize size) (Metres z) (Pixels pixels) ->
+                let after = learntFrom z pixels size
+                    off s = abs (readOff (reading z s pixels))
+                 in conjoin
+                        [ counterexample "further" (off after <= off size + 1e-9)
+                        , counterexample "less sure" (sizeVariance after <= sizeVariance size + 1e-12)
+                        , counterexample "less likely" (readSays (reading z after pixels) >= readSays (reading z size pixels) - 1e-9)
+                        ]
+        , testProperty "a blob teaches the same of its reflector at any distance, for the pixels it would light at 1 m" $
+            \(Pixels atOneMetre) (Metres z) ->
+                close 1e-9 (sizeEvidence (learntFrom z (atOneMetre / (z * z)) unlearnt)) (sizeEvidence (learntFrom 1 atOneMetre unlearnt))
+        , testProperty "a blob much smaller than its reflector, likely part of it, teaches less than one as big as expected" $
+            \(ASize size) (Metres z) ->
+                let weighs pixels = sizeWeight (learntFrom z pixels size) - sizeWeight size
+                 in sizeKnown size ==> property (weighs (sizeAt z size / 8) <= weighs (sizeAt z size))
+        , testProperty "what is learnt fades as much over two times as over their sum, weighing less by e in the seconds sizes are remembered" $
+            \(ASize size) (Lasting first) (Lasting second) ->
+                conjoin
+                    [ close (1e-9 * sizeWeight size) (sizeWeight (faded second (faded first size))) (sizeWeight (faded (seconds (inSeconds first + inSeconds second)) size))
+                    , close (1e-9 * sizeWeight size) (sizeWeight (faded (sizeMemory world) size)) (sizeWeight size / exp 1)
+                    , sizeEvidence (faded first size) === sizeEvidence size
+                    ]
+        , testProperty "fading leaves a size no surer, and long enough leaves it as it was before anything was learnt" $
+            \(ASize size) (Lasting since) ->
+                property (sizeVariance (faded since size) >= sizeVariance size - 1e-12)
+                    .&&. close 1e-6 (sizeMean (faded (seconds (40 * inSeconds (sizeMemory world))) size)) (sizeMean unlearnt)
+        , testProperty "a reflector seen for a few frames is known, and its size is the biggest's at a pose if it is; with no pose, or none known, there is none" $
+            \(Pixels pixels) (Metres z) ->
+                let seen = iterate (learntFrom 1 pixels) unlearnt !! 20
+                    pose = Pose identity (V3 0 0 (1000 * z))
+                 in conjoin
+                        [ sizeKnown seen === True
+                        , biggestAt (pure unlearnt) (Just pose) === Nothing
+                        , biggestAt (Three unlearnt seen unlearnt) Nothing === Nothing
+                        , maybe (counterexample "none" False) (\lit -> close (1e-6 * lit) lit (sizeAt z seen)) (biggestAt (Three unlearnt seen unlearnt) (Just pose))
+                        ]
+        , testProperty "sizes learnt well have nothing in common, and unlearnt sizes all but what one reflector differs from another by" $
+            \(Pixels pixels) ->
+                let seen = iterate (learntFrom 1 pixels) unlearnt !! 20
+                 in shared (pure seen) === 0
+                        .&&. close 1e-12 (shared (pure unlearnt)) (sizeVariance unlearnt - log (sameSizeFactor world) ^ (2 :: Int))
+                        .&&. shared (Three unlearnt unlearnt seen) === 0
+        , testProperty "with nothing in common, or one blob, being alike adds nothing; unlearnt, three all half again as big or more say more than two so and one as much smaller" $
+            \(Metres z) (Times k) ->
+                let off times = reading z unlearnt (times * sizeAt z unlearnt)
+                    common = shared (pure unlearnt)
+                 in conjoin
+                        [ alikeness 0 [off k, off k, off k] === 0
+                        , close 1e-9 (alikeness common [off k]) 0
+                        , property (k < 1.5 || alikeness common [off k, off k, off k] >= alikeness common [off k, off k, off (1 / k)] - 1e-9)
+                        ]
+        , testProperty "a blob two reflectors share is as likely anything from the bigger of them to both, by its pixels, and less likely beyond" $
+            \(ASize a) (ASize b) (Metres z) (Fraction between) (Times beyond) ->
+                let both = sizeAt z a + sizeAt z b
+                    bigger = max (sizeAt z a) (sizeAt z b)
+                    says pixels = readSays (sharedReading z a b pixels)
+                    part = bigger + between * (both - bigger)
+                 in conjoin
+                        [ close 1e-9 (says part - says both) (log (part / both))
+                        , property (says (beyond * both) <= says both + 1e-9)
+                        , property (says (bigger / beyond) <= says bigger + 1e-9)
+                        ]
         ]
 
--- | A reflector's size: not seen yet, or seen at up to 3000 pixels at
--- 1 m, its usual size from twice its latest down to a twentieth of it.
--- Simplest not seen yet, and simpler with its usual size its latest.
+-- | What is learnt of a reflector's size: nothing, or the evidence of
+-- blobs of up to 3000 pixels at 1 m. Simplest nothing.
 newtype ASize = ASize Size
     deriving (Show)
 
 instance Arbitrary ASize where
     arbitrary = (\(Three size _ _) -> ASize size) <$> genSizes 3000
-    shrink (ASize size) = ASize <$> shrinkTo noSize (\s -> [s{sizeUsual = sizeLatest s}]) size
+    shrink (ASize size) = [ASize unlearnt | size /= unlearnt]
 
--- | A reflector seen as a blob of its own, or as two taken for one.
-newtype Own = Own Sight
-    deriving (Show)
-
-instance Arbitrary Own where
-    arbitrary = Own <$> genOwn
-    shrink (Own sight) = Own <$> shrinkSight sight
-
--- | Each reflector seen as 'Own' has one.
-newtype Owns = Owns (Three Sight)
-    deriving (Show)
-
-instance Arbitrary Owns where
-    arbitrary = Owns <$> genThree genOwn
-    shrink (Owns sights) = Owns <$> shrinkThree shrinkSight sights
-
-genOwn :: Gen Sight
-genOwn = genSight 5000 `suchThat` ((/= Merged) . sightKind)
-
--- | Metres from the camera, within its range.
+-- | How far off the clip is, in metres, within the camera's range.
 newtype Metres = Metres Double
     deriving (Show)
 
 instance Arbitrary Metres where
     arbitrary = Metres <$> choose (0.25, 2.5)
-    shrink (Metres x) = Metres <$> shrinkWithin (0.25, 2.5) 1 x
+    shrink (Metres z) = Metres <$> shrinkWithin (0.25, 2.5) 1 z
 
--- | The pixels a reflector would light at 1 m, up to a lamp's 5000.
-newtype AtOneMetre = AtOneMetre Double
+-- | A blob's pixels, from the smallest kept to a lamp's.
+newtype Pixels = Pixels Double
     deriving (Show)
 
-instance Arbitrary AtOneMetre where
-    arbitrary = AtOneMetre <$> choose (6, 5000)
-    shrink (AtOneMetre x) = AtOneMetre <$> shrinkWithin (6, 5000) 6 x
+instance Arbitrary Pixels where
+    arbitrary = Pixels <$> choose (6, 5000)
+    shrink (Pixels pixels) = Pixels <$> shrinkWithin (6, 5000) 6 pixels
 
--- | Millimetres from the camera, within its range.
-newtype Millimetres = Millimetres Double
+-- | How many times as big, from as big to eight times.
+newtype Times = Times Double
     deriving (Show)
 
-instance Arbitrary Millimetres where
-    arbitrary = Millimetres <$> choose (250, 2500)
-    shrink (Millimetres x) = Millimetres <$> shrinkWithin (250, 2500) 1000 x
+instance Arbitrary Times where
+    arbitrary = Times <$> choose (1, 8)
+    shrink (Times k) = Times <$> shrinkWithin (1, 8) 1 k
+
+-- | A length of time of up to two minutes.
+newtype Lasting = Lasting Seconds
+    deriving (Show)
+
+instance Arbitrary Lasting where
+    arbitrary = Lasting . seconds <$> choose (0, 120)
+    shrink (Lasting d) = Lasting . seconds <$> shrinkWithin (0, 120) 0 (inSeconds d)

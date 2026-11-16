@@ -2,7 +2,7 @@
 -- (see "TrackKat.Tracker.Blobs").
 module Test.Tracker.Blobs (tests) where
 
-import Data.List (isSubsequenceOf, sortOn)
+import Data.List (isSubsequenceOf)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
@@ -13,38 +13,12 @@ import TrackKat.Lights (noMask)
 import TrackKat.Match (Kind (..), Sight (..))
 import TrackKat.Tracker.Blobs
 
--- | Sorting blobs neither makes any up nor changes their order, and says
--- the same of them in whatever order they come.
+-- | Sorting blobs neither makes any up nor changes their order.
 tests :: TestTree
 tests =
     testGroup
         "Blobs"
-        [ testProperty "the big blobs are some of the blobs, in the order they came, each of a fair size and not tiny beside the biggest" $
-            \(Blobs blobs) ->
-                let big = bigAmong blobs
-                    biggest = maximum (0 : map blobPoints blobs)
-                 in conjoin
-                        [ property (big `isSubsequenceOf` blobs)
-                        , property (all (\b -> blobPoints b >= minBlobPixels && 25 * blobPoints b >= 3 * biggest) big)
-                        , property (all (\b -> b `elem` big || blobPoints b < minBlobPixels || 25 * blobPoints b < 3 * biggest) blobs)
-                        ]
-        , testProperty "a blob just three twenty-fifths of the biggest is big, if of a fair size, and one a pixel less isn't" $
-            \(Unit k) ->
-                let blob points = Blob 0 0 points (100 * points) 1 1 0
-                 in map blobPoints (bigAmong [blob (25 * k), blob (3 * k), blob (3 * k - 1)]) === 25 * k : [3 * k | 3 * k >= minBlobPixels]
-        , testProperty "the big among the big blobs are all of them" $
-            \(Blobs blobs) -> bigAmong (bigAmong blobs) === bigAmong blobs
-        , testProperty "which blobs are big doesn't go by the order they come in" $
-            \(Blobs blobs) -> forAnyOrder blobs $ \shuffled ->
-                inOrder (bigAmong shuffled) === inOrder (bigAmong blobs)
-        , testProperty "another blob no bigger than the biggest leaves the big blobs big, and a bigger one makes none big that wasn't" $
-            \(Blobs blobs) another ->
-                let before = bigAmong blobs
-                    after = filter (/= another) (bigAmong (another : blobs))
-                 in if blobPoints another <= maximum (0 : map blobPoints blobs)
-                        then after === filter (/= another) before
-                        else property (after `isSubsequenceOf` before)
-        , testProperty "with nothing masked, every blob is in view, in the order they came" $
+        [ testProperty "with nothing masked, every blob is in view, in the order they came" $
             \(Blobs blobs) ->
                 let shown = sortBlobs noMask blobs
                  in shownVisible shown === blobs .&&. shownMasked shown === []
@@ -76,10 +50,6 @@ tests =
                 Just (Sight place pixels Whole) -> place === at b .&&. pixels === fromIntegral (blobPoints b)
                 other -> counterexample (show other) False
         ]
-
--- | Blobs in an order that doesn't go by the order they came in.
-inOrder :: [Blob] -> [Blob]
-inOrder = sortOn (\b -> (blobX b, blobY b, blobPoints b))
 
 -- | A few blobs of sizes from a fragment's to a lamp's.
 newtype Blobs = Blobs [Blob]

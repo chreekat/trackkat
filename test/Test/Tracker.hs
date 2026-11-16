@@ -3,17 +3,19 @@
 module Test.Tracker (tests, simulations) where
 
 import Control.Monad (forM_)
-import Data.List (isPrefixOf, mapAccumL, nub)
+import Data.List (isInfixOf, isPrefixOf, mapAccumL, nub)
 import Test.Tasty (TestTree, testGroup)
 
 import Test.Check
 import Test.Simulation
+import qualified Test.Tracker.Account
 import qualified Test.Tracker.Blobs
 import qualified Test.Tracker.Choose
 import qualified Test.Tracker.Follow
-import qualified Test.Tracker.Judge
 import qualified Test.Tracker.Kept
 import qualified Test.Tracker.Layout
+import qualified Test.Tracker.Presence
+import qualified Test.Tracker.Reflectors
 import qualified Test.Tracker.Sizes
 import qualified Test.Tracker.Step
 import qualified Test.Tracker.Trail
@@ -48,9 +50,9 @@ tests = group "Tracker" $ do
 
     -- Told to the user once it has lasted a second, and not again for a
     -- while, unless the clip came back meanwhile and the quiet has passed.
-    let lostFor why = Lost 3 0 why Nothing
+    let lostFor why = Lost 3 0 why []
         because name = Why Following (Unfit [Finding (Name name ("it is " ++ name)) Term.impossible Nothing])
-        tracked = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Followed Nothing)
+        tracked = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Continued ByPrediction Term.possible [])
         tellings = snd . mapAccumL (\a (t, o) -> let (a', said) = absence (clockAt t) o a in (a', (,) t <$> said)) noAbsence
         outcomeAt t
             | t < 2 = tracked
@@ -58,7 +60,7 @@ tests = group "Tracker" $ do
             | t < 20 = lostFor (because "far")
             | t < 21 = tracked
             | t < 40 = lostFor (because "far")
-            | otherwise = Lost 2 0 (because "far") Nothing
+            | otherwise = Lost 2 0 (because "far") []
         told = [said | Just said <- tellings [(t, outcomeAt t) | t <- at120 50]]
     checkShowing "out of sight is told once a second in, then seldom" (show told) $ case told of
         [(a, first), (b, second), (c, third)] ->
@@ -71,9 +73,11 @@ tests = group "Tracker" $ do
         _ -> False
 
     tree Test.Tracker.Blobs.tests
+    tree Test.Tracker.Presence.tests
     tree Test.Tracker.Sizes.tests
+    tree Test.Tracker.Reflectors.tests
     tree Test.Tracker.Trail.tests
-    tree Test.Tracker.Judge.tests
+    tree Test.Tracker.Account.tests
     tree Test.Tracker.Layout.tests
     tree Test.Tracker.Follow.tests
     tree Test.Tracker.Choose.tests
@@ -101,15 +105,16 @@ followed = group "following the clip" $ do
     checkShowing "height labelling swaps while nodding" (show swapped) $ swapped > 100
     checkShowing "nodding through the swap" (show (summed nodded)) $ lostCount nodded == 0 && fst (worstError nodded) < 1 && snd (worstError nodded) < 10
 
-    -- An impossible jump is not followed: the head 40 degrees away from
-    -- one frame to the next is lost at first, while it is likelier where
-    -- it was with a reflector out of sight, and within a few frames is
-    -- found afresh there.
+    -- A jump no head makes is not followed: the head 40 degrees away
+    -- from one frame to the next is likelier where it was at first, a
+    -- reflector out of sight and another light in view, and within a
+    -- frame or two the frames say otherwise and it is taken afresh there.
     let jumping = [(t, headSeen bentWorn (if t < 0.5 then 0 else 40) 0 0, allLit) | t <- at120 1.2]
         jumped = trackPath clipBent jumping
-    checkShowing "a jump is lost at first, for" (show (lostCount jumped) ++ " frames") $
-        all isLost [o | (t, _, o, _) <- jumped, t >= 0.5, t < 0.51] && lostCount jumped <= 3
-    checkShowing "then believed" (show (summed (after 1 jumped))) $ lostCount (after 1 jumped) == 0 && fst (worstError jumped) < 1
+        heldBack = [t | (t, truth, Tracked{}, Just p) <- jumped, fst (poseError truth p) > 5]
+    checkShowing "a jump is doubted at first, for" (show (length heldBack) ++ " frames, " ++ show (lostCount jumped) ++ " lost") $
+        not (null heldBack) && length heldBack <= 2 && lostCount jumped == 0
+    checkShowing "then believed" (show (summed (after 0.52 jumped))) $ lostCount (after 0.52 jumped) == 0 && fst (worstError (after 0.52 jumped)) < 1
 
     -- The top reflector fading from view for a moment while the head
     -- turns: the two lower ones are tracked, the turn followed.
@@ -216,51 +221,62 @@ followed = group "following the clip" $ do
 explained :: TestTree
 explained = group "saying why" $ do
     let face = headSeen bentWorn 0 0 0
-    -- Why the clip is lost. Moved slowly aside, beyond where a seated
-    -- head goes: the reach from the centre says so, by name.
+    -- Moved slowly aside, beyond where a seated head mostly goes: the
+    -- clip is the clip all the same, and is tracked, the reach from the
+    -- centre told as how unlikely it is. When it leaves the picture it is
+    -- lost, and says why.
     let aside d = let Pose r p = face in Pose r (p ^+^ V3 d 0 0)
         whys rows = [(t, w) | (t, _, Lost{outWhy = w}, _) <- rows]
         rejecting rows = nub (map (whyRejectedBy . snd) (whys rows))
         asideRows = trackPath clipBent [(t, aside (120 * t), allLit) | t <- at120 4.2]
-    checkShowing "moved aside beyond reach, lost for that" (show (take 1 (whys asideRows))) $
-        take 1 (rejecting asideRows) == [["aside"]]
-            && and [looking == Following | (_, Why looking _) <- take 1 (whys asideRows)]
-            && and [measureValue m > 400 && measureLimit m == 400 | (_, Why _ (Unfit [Finding (Name "aside" _) _ (Just m)])) <- whys asideRows]
-    checkShowing "and said plainly" (concat (take 1 (map (describeWhy . snd) (whys asideRows)))) $
-        take 1 (map (describeWhy . snd) (whys asideRows)) == ["too far to the side of where you recentered"]
+        reaches = [(measureValue m, measureLimit m, Term.nats scored) | (t, _, Tracked{outJudged = judged}, _) <- asideRows, t >= 3.5, t < 3.51, Finding (Name "aside" _) scored (Just m) <- judged]
+    checkShowing "moved aside beyond where heads mostly go, tracked, and judged for it" (show reaches) $
+        not (any (\(t, _) -> t < 3.8) (whys asideRows))
+            && and [value > 400 && spread == 200 && scored < -2 && scored > -3 | (value, spread, scored) <- reaches]
+            && not (null reaches)
+    checkShowing "out of the picture, lost, and said plainly" (concat (take 1 (map (describeWhy . snd) (whys asideRows)))) $
+        take 1 (map (describeWhy . snd) (whys asideRows)) == ["the clip's reflectors aren't where they were a moment ago"]
     checkShowing "and to a developer" (concat (take 1 (map (explainWhy . snd) (whys asideRows)))) $
-        any ("following the clip, rejected: aside 40" `isPrefixOf`) (take 1 (map (explainWhy . snd) (whys asideRows)))
+        any ("following the clip, no blobs are where its reflectors were predicted" `isPrefixOf`) (take 1 (map (explainWhy . snd) (whys asideRows)))
 
-    -- Lights by the camera laid out like the clip: following, they don't
-    -- fit where the clip was; found afresh, they are too near.
+    -- Lights by the camera laid out like the clip: continuing the clip
+    -- where it was, they aren't where its reflectors would be; come
+    -- afresh, they are too near.
     let phone pose = [(project defaultIntrinsics (Pose (poseR pose) (190 *^ normalize (poseT pose))) p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
         phoned = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then pointDiscs defaultIntrinsics clipBent allLit face else phone face)) | t <- at120 2]
     checkShowing "lights by the camera don't fit, then are too near" (show (rejecting phoned)) $
-        and ["fit" `elem` whyRejectedBy w | (t, w) <- whys phoned, t < 1.4]
+        and [all (`elem` ["left place", "right place", "top place"]) (whyRejectedBy w) | (t, w) <- whys phoned, t < 1.4]
             && and [looking == Afresh && "near" `elem` whyRejectedBy w | (t, w@(Why looking _)) <- whys phoned, t > 1.6]
 
     -- Lights laid out like the clip where the clip was, but far smaller
     -- than its reflectors were: too small.
     let smallRows = trackFrames clipBent [(t, face, renderDiscs (if t < 1 then lit else if t < 2 then [] else [(p, 0.3 * r) | (p, r) <- lit])) | t <- at120 3, let lit = pointDiscs defaultIntrinsics clipBent allLit face]
-    checkShowing "lights too small for the clip" (show (rejecting (after 2 smallRows))) $ rejecting (after 2 smallRows) == [["size"]]
+    checkShowing "lights too small for the clip" (show (rejecting (after 2 smallRows))) $ all (`elem` [["left size"], ["right size"], ["top size"]]) (rejecting (after 2 smallRows)) && not (null (rejecting (after 2 smallRows)))
 
-    -- Too few and too many big blobs, and none at all.
+    -- Too few blobs, and none at all; and with two more than the clip's,
+    -- as big as its reflectors, the three that are the clip.
     let countRows n = trackFrames clipBent [(t, face, renderDiscs (take n (((100, 100), 9) : ((500, 400), 9) : pointDiscs defaultIntrinsics clipBent allLit face))) | t <- at120 0.1]
-        counts n = [(measureValue m, measureBound m, measureLimit m) | (_, Why Afresh (Unfit [Finding (Name "big blobs" _) _ (Just m)])) <- whys (countRows n)]
-    checkShowing "fewer than three big blobs, and more" (show (map (take 1 . counts) [0, 2, 5])) $
-        map (take 1 . counts) [0, 2, 5] == [[(0, AtLeast, 3)], [(2, AtLeast, 3)], [(5, AtMost, 3)]]
+        counts n = [(measureValue m, measureBound m, measureLimit m) | (_, Why Afresh (Unfit [Finding (Name "blobs" _) _ (Just m)])) <- whys (countRows n)]
+    checkShowing "fewer than three blobs" (show (map (take 1 . counts) [0, 2])) $
+        map (take 1 . counts) [0, 2] == [[(0, AtLeast, 3)], [(2, AtLeast, 3)]]
+    checkShowing "the clip among two other lights as big, made out" (show (summed (countRows 5))) $
+        lostCount (countRows 5) == 0 && fst (worstError (countRows 5)) < 1
 
     -- A reflector out of sight for too long: lost for that.
     let hidden = trackPath clipBent [(t, face, (1, 1, if t > 1 then 0 else 1)) | t <- at120 2.4]
     checkShowing "a reflector gone too long" (show (rejecting hidden)) $ take 1 (rejecting hidden) == [["partly seen"]]
 
-    -- An impossible jump: the head would have turned too fast.
+    -- A jump no head makes: taken afresh, and said so with what it was
+    -- chosen over.
     let jumped = trackPath clipBent [(t, headSeen bentWorn (if t < 0.5 then 0 else 40) 0 0, allLit) | t <- at120 0.6]
-    checkShowing "a jump" (show (rejecting jumped)) $ rejecting jumped == [["turn"]]
+        afreshSaid = [explainChosen chosen | (t, _, Tracked{outChosen = chosen@(Chosen Appeared _ _ _)}, _) <- jumped, t >= 0.5]
+    checkShowing "a jump" (concat (take 1 afreshSaid)) $ any ("afresh by layout " `isPrefixOf`) (take 1 afreshSaid) && any ("; over continued as predicted " `isInfixOf`) (take 1 afreshSaid)
 
-    -- A tracked frame says what it was judged by.
-    check "a tracked frame's findings" $ case [map (brief . findingName) judged | (_, _, Tracked{outJudged = judged}, _) <- take 3 jumped] of
-        [afresh, following, _] -> afresh == ["near", "far", "size"] && following == ["places", "sizes", "unseen", "fit", "turn", "move", "near", "far", "turned", "aside", "usual size", "misfit", "turning", "moving"]
+    -- A tracked frame says what it was judged by, part by part: where
+    -- the pose is, how it came there, and what shows.
+    let showing = concat [[r ++ " shows", r ++ " place", r ++ " size"] | r <- ["left", "right", "top"]] ++ ["alike"]
+    checkShowing "a tracked frame's findings" (show (take 1 [map (brief . findingName) judged | (_, _, Tracked{outJudged = judged}, _) <- drop 1 jumped])) $ case [map (brief . findingName) judged | (_, _, Tracked{outJudged = judged}, _) <- take 3 jumped] of
+        [afresh, following, _] -> afresh == ["near", "far", "room", "in view"] ++ showing && following == ["near", "far", "turned", "aside", "turning", "moving", "room", "in view"] ++ showing
         _ -> False
 
     -- Why a light is learnt: a lamp bigger than the reflectors, beside

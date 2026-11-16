@@ -8,12 +8,13 @@ module TrackKat.Tracker.Outcome (
     Looking (..),
     Reason (..),
     Way (..),
+    Picking (..),
+    Guess (..),
     Chosen (..),
-    Tried (..),
-    Fate (..),
+    Rival (..),
     explainChosen,
-    Held (..),
-    explainHeld,
+    explainRivals,
+    decisive,
     whyRejectedBy,
     sameWhy,
     describeWhy,
@@ -34,6 +35,7 @@ import TrackKat.Lights (Learning (..), Moving (..), NotTheClip (..))
 import TrackKat.Pose (HeadPose, Reflector)
 import TrackKat.Shape (ShapeEstimate)
 import TrackKat.Term
+import TrackKat.Tracker.Account (Guess (..), Picking (..), Way (..))
 
 -- | Something that happened while handling a frame.
 data Event
@@ -76,11 +78,10 @@ data Outcome
         -- ^ RMS reprojection error, pixels
         , outSeen :: Seen
         , outJudged :: [Finding]
-        -- ^ what each term that accepted the pose found (see Note
+        -- ^ what each term of the pose's score found (see Note
         -- [Explaining]); worked out only if looked at
         , outChosen :: Chosen
-        -- ^ how the pose was come by, of the ways tried (see Note
-        -- [Following or finding afresh] in "TrackKat.Tracker.Choose");
+        -- ^ which hypothesis gave the pose, and what the others scored;
         -- worked out only if looked at
         }
     | -- | The clip couldn't be made out.
@@ -91,121 +92,81 @@ data Outcome
         -- ^ blobs ignored as part of a still light
         , outWhy :: Why
         -- ^ why not (see Note [Explaining]); worked out only if looked at
-        , outHeld :: Maybe Held
-        -- ^ a pose found by layout that wasn't taken, the clip being
-        -- likelier where it was (see Note [Following or finding afresh] in
-        -- "TrackKat.Tracker.Choose"); worked out only if looked at
+        , outRivals :: [Rival]
+        -- ^ every hypothesis about the frame, best scored first; worked
+        -- out only if looked at
         }
     deriving (Show)
 
 -- Note [Explaining]
 -- ~~~~~~~~~~~~~~~~~
--- Whether blobs are the clip is decided by terms (see "TrackKat.Term"):
--- 'canBeThere' for whether a pose is somewhere a head can be, with the fit
--- and the jump from the last frame when following the clip ('followable'),
--- and with the blobs' sizes when finding it afresh ('clipLike'). Before
--- them come rules about which blobs to try at all: how many big blobs
--- there are when finding the clip afresh ('threeBig'), and for how long
--- the clip may be followed with a reflector out of sight ('partlySeen').
+-- What to make of a frame is chosen among hypotheses by their scores, each
+-- a sum of named terms (see Note [One account] in
+-- "TrackKat.Tracker.Account"). So whatever is made of a frame can say
+-- why: which hypothesis won ('outChosen'), what each of its terms found
+-- ('outJudged'), and what every other hypothesis scored ('Rival').
 --
--- A frame where the clip isn't made out says why ('Why'): what was being
--- tried, and which terms rejected the best candidate, with the figure each
--- judged and its limit. A limit that vetoes good blobs then shows as
--- itself and not as three strays. A frame
--- where it is made out says what each term found, so that how close a
--- limit came can be watched ('outJudged').
+-- A frame where the clip isn't made out says why ('Why'): what the
+-- likeliest way of seeing the clip in it was, and which term counted most
+-- against that ('decisive'), with its figure; or which gate made it
+-- impossible; or that there was nothing to try. A limit that vetoes good
+-- blobs then shows as itself and not as three strays.
 --
--- Both are lazy: tracking pays for a judgement's findings only when
+-- All of it is lazy: tracking pays for a judgement's findings only when
 -- something looks at them, and an outcome whose findings nobody looks at
 -- costs one unevaluated value. Nothing of them is kept in the tracker, so
 -- a tracker holds on to no frame through them.
---
--- The best candidate is the first tried: when following, the best match
--- (see Note [Matching blobs] in "TrackKat.Match"); when finding afresh,
--- the three big blobs, if there are just three. Others tried after it,
--- and rejected too, aren't told.
---
--- With a pose to go on, following and finding by layout are both tried
--- when the first is rejected or weak (see Note [Following or finding
--- afresh] in "TrackKat.Tracker.Choose"). A tracked frame says which gave
--- its pose and what became of the other ('outChosen'); a lost one gives
--- following's reason, and any pose found by layout that was passed over
--- ('outHeld').
 --
 -- What learns from tracked poses says what it did likewise: a light
 -- learnt says why it was taken for one, a correction says on what
 -- evidence, and windows of turning are counted by what took or rejected
 -- them ('trackerWindows').
 
--- | How a tracked frame's pose was come by (see Note [Following or
--- finding afresh] in "TrackKat.Tracker.Choose").
-data Way
-    = -- | by following the last pose, its reflectors matched to blobs near
-      -- where it predicts them
-      Followed
-    | -- | by the layout of the big blobs, at a pose that continues the last
-      Refound
-    | -- | by the layout of the big blobs, at a pose that doesn't continue
-      -- the last but one from a moment before, left for a pose found
-      -- afresh
-      Resumed
-    | -- | by the layout of the big blobs, at a pose that doesn't continue
-      -- the last, or with none to continue
-      FoundAfresh
+-- | A hypothesis about a frame, and what it scored.
+data Rival = Rival Guess Score
     deriving (Eq, Show)
 
--- | Which way gave a tracked frame's pose, and what became of the other,
--- if both were tried.
-data Chosen = Chosen Way (Maybe Tried)
+-- | Which hypothesis gave a tracked frame's pose: how the clip came to be
+-- there, how its blobs were picked out, and what it scored; and every
+-- other hypothesis about the frame, best scored first.
+data Chosen = Chosen Way Picking Score [Rival]
     deriving (Eq, Show)
 
--- | The way not taken: what became of it, and what the jump to the pose
--- found by layout was judged to be, against what following allows, if a
--- pose was found so. The jump is from the last pose, or, of a pose
--- resumed, from the one it continues.
-data Tried = Tried Fate [Finding]
-    deriving (Eq, Show)
+-- | A hypothesis in a developer's words.
+explainGuess :: Guess -> String
+explainGuess OutOfView = "away"
+explainGuess (InView way source) =
+    ( case way of
+        Continued -> "continued"
+        Resumed -> "resumed"
+        Appeared -> "afresh"
+    )
+        ++ case source of
+            ByPrediction -> " as predicted"
+            ByLayout -> " by layout"
 
--- | What became of a way of making out the clip that wasn't taken.
-data Fate
-    = -- | it was rejected, for this
-      Failed Why
-    | -- | it scored less: what the way taken scored, and what it did
-      Outscored Score Score
-    deriving (Eq, Show)
+-- | How a tracked frame's pose was come by, for a developer: the
+-- hypothesis taken with its score, and the next best.
+explainChosen :: Chosen -> String
+explainChosen (Chosen way source won rivals) = explainGuess (InView way source) ++ " " ++ renderScore won ++ explainRivals (take 2 rivals)
 
--- | What was decided between following the clip and finding it afresh in
--- a tracked frame, for a developer; nothing if only one was tried.
-explainChosen :: Chosen -> Maybe String
-explainChosen (Chosen _ Nothing) = Nothing
-explainChosen (Chosen way (Just (Tried fate jump))) = Just $ case way of
-    Followed -> "followed: " ++ against "finding the clip afresh"
-    Refound -> "refound: " ++ against "following the clip" ++ "; found by layout where predicted (" ++ renderFindings jump ++ ")"
-    Resumed -> "resumed: " ++ against "following the clip" ++ "; found by layout where a pose left a moment ago predicted (" ++ renderFindings jump ++ ")"
-    FoundAfresh -> "found afresh: " ++ against "following the clip" ++ "; found by layout away from where predicted (" ++ renderFindings jump ++ ")"
-  where
-    against other = case fate of
-        Failed why -> explainWhy why
-        Outscored won lost -> other ++ " scored " ++ renderScore lost ++ " against " ++ renderScore won
+-- | Hypotheses passed over, for a developer: empty if there are none.
+explainRivals :: [Rival] -> String
+explainRivals [] = ""
+explainRivals rivals = "; over " ++ intercalate ", " [explainGuess guess ++ " " ++ renderScore scored | Rival guess scored <- rivals]
 
--- | A pose found by layout away from where the last pose predicts the
--- clip, and not taken: what it scored, how many reflectors have no blob
--- near where they are predicted, and what the clip being there all the
--- same, those out of sight, scores.
-data Held = Held Score Int Score
-    deriving (Eq, Show)
-
--- | A pose passed over for the clip being where it was, for a developer.
-explainHeld :: Held -> String
-explainHeld (Held found missing held) =
-    "found by layout elsewhere, scoring "
-        ++ renderScore found
-        ++ ", but likelier where it was with "
-        ++ show missing
-        ++ (if missing == 1 then " reflector" else " reflectors")
-        ++ " out of sight ("
-        ++ renderScore held
-        ++ ")"
+-- | Of what a hypothesis's terms found, what counted against it: the
+-- terms that make it impossible, if any do; or else the one term that
+-- scored least, of those that say how the frame is unlike what was
+-- expected. (How much room the hypothesis had, and whether the clip was
+-- in view or where it was followed a moment before, are what they are,
+-- whatever the frame shows, and aren't told as what is wrong with it.)
+decisive :: [Finding] -> [Finding]
+decisive found = case [f | f <- found, isImpossible (findingScore f)] of
+    [] -> case [f | f <- found, brief (findingName f) `notElem` ["room", "in view", "left"]] of
+        [] -> []
+        f : rest -> [foldl (\least g -> if findingScore g < findingScore least then g else least) f rest]
+    failed -> failed
 
 -- | Why the clip wasn't made out in a frame: what was being tried, and
 -- what came of it.
@@ -222,7 +183,9 @@ data Looking
 
 -- | What came of looking.
 data Reason
-    = -- | a candidate was judged, and these terms rejected it
+    = -- | the likeliest way of seeing the clip was less likely than its
+      -- being away, or was not to be told, and these terms counted against
+      -- it (see 'decisive')
       Unfit [Finding]
     | -- | no pose puts the clip's reflectors where the candidate's blobs
       -- are
@@ -231,7 +194,7 @@ data Reason
       NothingMatches
     deriving (Eq, Show)
 
--- | The brief names of the terms that rejected the best candidate.
+-- | The brief names of the terms that counted against the best candidate.
 whyRejectedBy :: Why -> [String]
 whyRejectedBy (Why _ (Unfit failed)) = map (brief . findingName) failed
 whyRejectedBy _ = []
@@ -255,8 +218,8 @@ describeWhy (Why looking reason) = case reason of
         Following -> "the clip's reflectors aren't where they were a moment ago"
         Afresh -> "nothing in view looks like the clip"
 
--- | Why the clip wasn't made out, for a developer: the terms that
--- rejected, each with its figure and limit.
+-- | Why the clip wasn't made out, for a developer: the terms that counted
+-- against it, each with its figure and limit.
 explainWhy :: Why -> String
 explainWhy (Why looking reason) =
     ( case looking of
@@ -264,7 +227,7 @@ explainWhy (Why looking reason) =
         Following -> "following the clip, "
     )
         ++ case reason of
-            Unfit failed -> "rejected: " ++ renderFindings failed
+            Unfit failed -> "unlikely: " ++ renderFindings failed
             NoPoseFits -> "no pose puts the clip where the blobs are"
             NothingMatches -> "no blobs are where its reflectors were predicted"
 
