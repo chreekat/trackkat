@@ -89,13 +89,15 @@ run start window recorded after = do
         launch (versionExe paths v) (startArgs start window recorded ++ afterArgs after) >>= \case
             Right () -> exitSuccess
             Left e -> consoleLine ("Can't start trackkat " ++ versionFolder v ++ " (error " ++ show e ++ "); carrying on.")
-    first <- case after of
-        Nothing -> singleInstance
-        Just pid -> do
+    let takeOverFrom pid = do
             _ <- waitForExit pid 30
             -- Games' NPClients check for trackkat, holding its name briefly.
             let claim n = singleInstance >>= \ok -> if ok || n <= (0 :: Int) then pure ok else threadDelay 200000 >> claim (n - 1)
             claim 50
+    alone <- maybe singleInstance takeOverFrom after
+    -- Asked to record, trackkat takes over from one already running,
+    -- which is not recording, or not to the file asked for.
+    first <- if alone || recorded == Unrecorded then pure alone else quitRunning >>= maybe (pure False) takeOverFrom
     unless first $ do
         shown <- showRunning
         consoleLine (if shown then "trackkat is already running; showing its window." else "trackkat is already running.")
