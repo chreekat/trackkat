@@ -92,9 +92,9 @@ simulations =
                 ending <- finish rec
                 ending @?= Whole
                 pure came
-            r <- readRecording path
+            whole <- B.readFile path
             removePathForcibly path
-            fmap replayedTo (replay =<< r) @?= Right live
+            fmap replayedTo (replay =<< parseRecording (BL.fromStrict whole)) @?= Right live
             assertBool (show live) (length live == 6)
         , testCase "a later version of recording is refused" $
             assertBool "" (isLeft (parseRecording (BL.fromStrict (C.pack "trackkat recording 3\n"))))
