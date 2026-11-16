@@ -84,6 +84,73 @@ If the camera is unplugged, or the PC sleeps, trackkat waits and picks it up
 again when it comes back. Joysticks plugged in while it runs, or that come
 back after sleep, work straight away.
 
+## The window
+
+The tooltips in trackkat's window are kept to a phrase each; this is the
+rest of what there is to say.
+
+**Head and games see.** The head column is your head as the camera measures
+it, from the centre you set by recentering: degrees turned, mm moved. The
+games-see column is what games get, after smoothing, the curves and any
+trim; while paused, or with the clip out of sight, it holds still. In each
+bar, blue is where games see that axis, out to the end of its range (behind
+you, straight up, 300 mm), and the yellow tick is your head.
+
+**Lights.** Camera is green when trackkat has the camera, grey while it
+looks for it, and red, with the reason, when it can't use it. Clip says
+whether the camera sees all three reflectors. Games names a game reading
+your head, by its program's name when trackkat can read it; the camera's
+second green light shows the same.
+
+**Figures.** Under the switches, over the last second: how long trackkat
+took from a camera frame to games having the pose (average and worst), the
+longest gap between frames, the most stripes in a frame, and garbage
+collections with the longest pause; corrupt packets too, if there were any.
+
+**Bindings.** Each list has one key or button to a line, however long; a
+line too long for its column scrolls sideways as you edit it. **Add…**
+waits for the next key, joystick button, or middle or side mouse button
+pressed over the window, and adds it; click it again to stop waiting.
+Delete a line to remove one.
+
+**Saving.** Switches and sliders are written to `trackkat.conf` straight
+away, text when you leave its box or press Enter. Only what you changed is
+rewritten, so your own edits and comments in the file stay. The line beside
+**Response** says whether the last save worked, and if not, why.
+
+**Curves.** In a plot, across is your head and up is the game's view; the
+dot is your head now. The multiplier is how many times further the view
+turns or moves than your head, and its arrows step it by halves. A
+precision above 0 makes small movements gentler, for aiming and reading
+gauges, and large ones steeper, so the same head movement still reaches the
+end of the view; the dotted line is then the multiplier alone. The line
+under each says how far your head moves for the view to reach the end of
+its range. **Curves as text** shows them as `trackkat.conf` writes them: a
+multiplier such as `1:6`, perhaps with a precision as in `1:6, precision
+40`, or input:output points such as `10:10 45:120`, joined by straight
+lines from 0:0. A curve of points is left as it is unless you change its
+multiplier or precision.
+
+**Aids.** Smoothing calms the view while your head is still, at the cost of
+a little lag when you move; off, games get every tremor. Raise steadiness
+if the view jitters while you are still, and lower it if it feels floaty or
+drifts into place. Raise responsiveness if the view lags behind your head,
+and lower it if it jitters as you move slowly. With **Lean follows the
+view** on (`lean = view`), looking behind you and leaning left leans out of
+the cockpit's right side; off, leaning moves you the same way whichever way
+you look.
+
+**The cover** over **Calibrate now** and **Clear calibration** keeps them
+from being clicked by mistake. Click it, or press Space, to lift it; it
+closes when you click close, after you use one of them, or once the mouse
+has been away for a few seconds. Clear the calibration after moving the
+camera or bending the clip, or if turning your head turns the view the
+wrong way.
+
+**Check for updates** rests for a minute after each look, and works only
+for an installed trackkat. **Install trackkat** and **Restart to update**
+restart trackkat in a moment; games keep their head tracking.
+
 ## Recentering
 
 Recenter (F12, or a game's own "recenter TrackIR" binding) makes the way you
@@ -116,7 +183,8 @@ paused, trimming takes the held view as forward, and games stay held until
 you resume.
 
 In the window, the TRIM switch lights blue while a trim is in place, with
-its yaw and pitch, and PAUSE lights amber while paused. Each switch's keys
+its yaw and pitch, and "moved" if it also moves or tilts the view, and
+PAUSE lights amber while paused. Each switch's keys
 and buttons are listed under it, one to a line, to edit or add to.
 
 ## Aim

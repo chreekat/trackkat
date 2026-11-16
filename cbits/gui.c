@@ -2329,7 +2329,7 @@ static void make_tips(void)
 {
     tips = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
                            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, main_hwnd, NULL, inst, NULL);
-    /* A width makes long tips wrap; long enough to read them. */
+    /* A width makes the longest tips wrap. */
     SendMessageW(tips, TTM_SETMAXTIPWIDTH, 0, S(360));
     SendMessageW(tips, TTM_SETDELAYTIME, TTDT_AUTOPOP, 30000);
 }
@@ -2390,70 +2390,38 @@ static void live_tips(void)
     int x0 = S(TABLE_X), bar_l = x0 + S(226), right = S(PANEL_W - 10);
     int rows = S(26) + 6 * S(ROW_H), lights = S(LIGHTS_Y), w = S(LIGHT_W);
     tip_area(live_hwnd, 2, x0, 0, x0 + S(130), rows,
-             L"Your head as the camera measures it, from the centre you set by recentering: degrees turned, mm "
-             L"moved.");
+             L"Your head as the camera measures it, from where you recentered");
     tip_area(live_hwnd, 3, x0 + S(130), 0, bar_l - S(4), rows,
-             L"What games get: your head after smoothing, the curves and any trim. While paused, or with the clip "
-             L"out of sight, it holds still.");
+             L"What games get: your head after smoothing, the curves and any trim");
     tip_area(live_hwnd, 4, bar_l, 0, right, rows,
-             L"Blue: where games see each axis, out to the end of its range (behind you, straight up, 300 mm). "
-             L"Yellow tick: your head.");
+             L"Blue: where games see each axis in its range. Yellow tick: your head");
     tip_area(live_hwnd, 5, S(8), lights, S(8) + w, lights + S(18),
-             L"Green when trackkat has the camera; grey while it looks for it; red, with the reason, when it can't "
-             L"use it. trackkat picks it up again after unplugging or sleep.");
+             L"Green: camera in use. Grey: looking for it. Red: can't use it, and why");
     tip_area(live_hwnd, 6, S(8) + w, lights, S(8) + 2 * w, lights + S(18),
-             L"Whether the camera sees all three reflectors on the TrackClip. Out of sight, games see your head "
-             L"held where it was until it comes back.");
+             L"Whether the camera sees the clip's reflectors; out of sight, the view holds");
     tip_area(live_hwnd, 7, S(8) + 2 * w, lights, right, lights + S(18),
-             L"Games reading your head through trackkat's NPClient, by the name of the game's program when trackkat "
-             L"can read it. The camera's second green light shows this too.");
+             L"Games reading your head through trackkat, by name where it is known");
     tip_area(live_hwnd, 8, S(8), S(STATS_Y), right, S(PANEL_H),
-             L"Over the last second: how long trackkat took from a camera frame to games having the pose (average "
-             L"and worst), the longest wait between frames, the most stripes in a frame and garbage collections. "
-             L"For bug reports.");
+             L"The last second's latency, frame gaps, stripes and GCs, for bug reports");
 }
 
 /* What the strip's help says: about the offer, when it makes one. */
 static void tip_strip(void)
 {
-    static const wchar_t quiet[] =
-        L"trackkat's version, and what the last look for a newer version found. An installed trackkat looks when "
-        L"it starts and every few hours while Keep up to date is on; the log says more.";
-    static const wchar_t install[] =
-        L"trackkat runs from wherever you unzipped it until you install it. Installed, it lives in your user's "
-        L"programs folder (no admin needed), starts from the Start menu, keeps itself up to date, and can be "
-        L"uninstalled from Settings' apps. Settings stay where they are.";
-    static const wchar_t update[] =
-        L"The newer version is fetched already: Restart to update switches to it now, or it starts the next time "
-        L"trackkat does. Your settings and calibration stay.";
-    static wchar_t text[TEXT_MAX + 512];
-    if (seen.offer[0])
-        _snwprintf(text, TEXT_MAX + 512, L"%ls\n\n%ls", seen.offer, seen.offer_tray[0] ? update : install);
-    else
-        copy_text(text, TEXT_MAX + 512, quiet);
-    text[TEXT_MAX + 511] = 0;
-    retip(strip_hwnd, text);
+    retip(strip_hwnd,
+          !seen.offer[0]       ? L"trackkat's version, and what the last look for a newer one found"
+          : seen.offer_tray[0] ? L"A newer version is fetched: restart to use it now, or it starts next time"
+                               : L"Installed, trackkat starts from the Start menu and keeps itself up to date");
 }
 
 /* What a binding list's heading, box and button say. */
-#define GESTURE_TIP                                                                                                    \
-    L" To have one key or button do several things, type hold after it for what it does when held down for a moment, " \
-    L"or double for what it does when pressed twice quickly, as in Throttle - HOTAS Warthog button 4 hold; it then "   \
-    L"acts on a plain press only once that is all it can be."
 static const wchar_t *const list_tips[LISTS] = {
-    L"Keys and buttons that recenter, one to a line, such as F12, Ctrl+Mouse4 or Throttle - HOTAS Warthog button "
-    L"23. They work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one."
-    GESTURE_TIP,
-    L"Keys and buttons that pause, one to a line, such as F9, Mouse5 or Joystick - HOTAS Warthog button 5. They "
-    L"work from anywhere, even inside a game. Click the list to edit it; delete a line to remove one." GESTURE_TIP,
-    L"Keys and buttons that trim, one to a line, such as Ctrl+F12 or Throttle - HOTAS Warthog button 24. Empty, as "
-    L"it starts, trim has no key. Click the list to edit it; delete a line to remove one." GESTURE_TIP,
-    L"Keys and buttons that aim, one to a line. With hold typed after it, as in Throttle - HOTAS Warthog button 4 "
-    L"hold, one aims while it is held down; without, it turns aiming on, then off. Empty, as it starts, aim has no "
-    L"key. Click the list to edit it; delete a line to remove one." GESTURE_TIP};
+    L"Keys and buttons that recenter, one per line; add hold or double after one",
+    L"Keys and buttons that pause, one per line; add hold or double after one",
+    L"Keys and buttons that trim, one per line; add hold or double after one",
+    L"Keys and buttons that aim, one per line; with hold after one, aims while held"};
 static const wchar_t *const add_button_tip =
-    L"Click, then press the key, joystick button, or middle or side mouse button (over this window) to add. Click "
-    L"again to stop waiting. To make it a hold or a double, type hold or double after it in the list.";
+    L"Click, then press a key or button to add it; click again to stop waiting";
 
 /* ---- The window's parts --------------------------------------------------- */
 
@@ -2482,15 +2450,9 @@ static void show_log(void)
 /* What the head view's help says, for each view: how to switch, and what
  * the view shows. */
 static const wchar_t *const head_view_tips[VIEWS] = {
-    L"Click to switch views: virtual, physical, camera. Virtual: your head as games see it, turned and moved as "
-    L"the game's view will be; the blue line shows where it looks. In the corner, what the camera sees.",
-    L"Click to switch views: virtual, physical, camera. Physical: your head as the camera measures "
-    L"it, dotted yellow, turning about your neck pivot, the grey dot. Once the level and neck pivot are learnt, "
-    L"the clip where it sits on your head: each reflector blue while seen, hollow while not. In the corner, what "
-    L"the camera sees.",
-    L"Click to switch views: virtual, physical, camera. Camera: what the camera sees, the whole of its picture, "
-    L"each bright thing at its size and shape: the clip's reflectors blue, joined as its triangle; other bright "
-    L"things amber, ignored; still lights grey, ignored, with the area ignored around each dashed."};
+    L"Virtual: your head as games see it. Click for the physical view",
+    L"Physical: your head as measured, turning about your neck. Click for camera",
+    L"Camera: all the camera sees, the clip's reflectors blue. Click for virtual"};
 
 /* Show a view in the head view, naming it for screen readers. */
 static void show_head_view(int view)
@@ -2627,14 +2589,11 @@ static void build_window(void)
     tip(strip_hwnd, L"");
     check_updates = tip(control_in(strip_hwnd, L"BUTTON", L"Check for updates", WS_TABSTOP | BS_PUSHBUTTON,
                                    CLIENT_W - 10 - 130, 8, 130, 24, ID_CHECK_UPDATES),
-                        L"Look for a newer version now, even with Keep up to date off, and fetch it if there is "
-                        L"one. Beside it, what was found; the log says more. It rests for a minute after each look. "
-                        L"Only for an installed trackkat.");
+                        L"Look for a newer version now, and fetch it if there is one");
     EnableWindow(check_updates, updatable);
     offer_button = tip(control_in(strip_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   CLIENT_W - 10 - STRIP_BUTTON_W, 7, STRIP_BUTTON_W, 26, ID_OFFER),
-                       L"Install trackkat and switch to the installed copy, or switch to the newer version now. "
-                       L"trackkat restarts in a moment; games keep their head tracking.");
+                       L"trackkat restarts in a moment; games keep their head tracking");
     ShowWindow(offer_button, SW_HIDE);
     tip_strip();
 
@@ -2648,18 +2607,10 @@ static void build_window(void)
     show_head_view(head_view);
     static const int switch_ids[LISTS] = {ID_RECENTER, ID_PAUSE, ID_TRIM, ID_AIM};
     static const wchar_t *const switch_tips[LISTS] = {
-        L"Make the way you face now straight ahead, and clear any trim. Its keys and buttons, below, or a game's "
-        L"own recenter binding, do the same from anywhere.",
-        L"Freeze the view: games see your head held still until you press it again, handy for stretching or "
-        L"looking away from the screen. Lit amber while paused.",
-        L"Make the view now the new forward, where it looks and where it has moved to, handy for craning toward a "
-        L"console; you can still glance around from there. Lit blue while trimmed, with where Trim made the new "
-        L"forward, in degrees as games see it (pitch positive down), and \"moved\" if it also moves or tilts the "
-        L"view; the log has the whole of it. Recenter clears it.",
-        L"Turn the view gently from where it is, to lay a gunsight on something by head: while aiming, the view "
-        L"turns only a little further than your head does from where it was when you began, and steadier. Press "
-        L"it again, or recenter, and the view glides back. Lit blue while aiming. A key or button bound below with "
-        L"hold aims just while it is held down. Its curves and smoothing are the aim settings in trackkat.conf."};
+        L"Make the way you face now straight ahead, and clear any trim",
+        L"Hold the view still until pressed again. Lit amber while paused",
+        L"Make the view now the new forward, until you recenter. Lit blue while trimmed",
+        L"Turn the view gently, to aim by head, until pressed again. Lit blue meanwhile"};
     for (int i = 0; i < LISTS; i++) {
         switch_ctl[i] = tip(control_in(live_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 8 + i * (SWITCH_W + 10),
                                        SWITCH_Y, SWITCH_W, SWITCH_H, switch_ids[i]),
@@ -2694,31 +2645,19 @@ static void build_window(void)
     int caption = text_width(bold_font, L"Response");
     settings_text = tip(
         control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 18 + caption + 10, RESP_Y - 4, 330, 16, 0),
-        L"Settings are written to trackkat.conf, in %APPDATA%\\trackkat, as you change them, and apply at once: "
-        L"switches and sliders straight away, text when you leave its box or press Enter. Only what you changed is "
-        L"rewritten, so your own edits and comments there stay. This says whether the last save worked, and if "
-        L"not, why.");
+        L"Whether the last change was saved to trackkat.conf; changes apply at once");
     SendMessageW(settings_text, WM_SETFONT, (WPARAM)small_font, FALSE);
     curves_as_text = tip(control(L"BUTTON", L"Curves as text", WS_TABSTOP | BS_AUTOCHECKBOX, 592, RESP_Y - 8, 104,
                                  20, ID_CURVES_AS_TEXT),
-                         L"Edit the curves as text, as trackkat.conf has them, to give any shape by points. "
-                         L"trackkat.conf explains how.");
+                         L"Edit the curves as text, as trackkat.conf has them, for any shape by points");
 
-    static const wchar_t plot_tip[] =
-        L"The curve: across, your head; up, the game's view. The dot is your head now; with a precision, the "
-        L"dotted line is the multiplier alone.";
-    static const wchar_t multiplier_tip[] =
-        L"How many times further the view turns or moves than your head; the line below says what that comes to. "
-        L"The arrows step it by halves.";
+    static const wchar_t plot_tip[] = L"Across, your head; up, the game's view. The dot is your head now";
+    static const wchar_t multiplier_tip[] = L"How many times further the view turns or moves than your head";
     static const wchar_t precision_tip[] =
-        L"Above 0, small movements are gentler, for aiming and reading gauges, and large ones steeper, so the "
-        L"same head movement still reaches the end of the view.";
-    static const wchar_t note_tip[] =
-        L"How far your head moves for the view to reach the end of its range. A custom curve, of points, is left "
-        L"as it is unless you change its multiplier or precision.";
+        L"Above 0, small movements are gentler and large ones steeper, for aiming";
+    static const wchar_t note_tip[] = L"How far your head moves for the view to reach the end of its range";
     static const wchar_t text_tip[] =
-        L"The curve as trackkat.conf writes it: a multiplier such as 1:6, perhaps with a precision as in 1:6, "
-        L"precision 40, or input:output points such as 10:10 45:120, joined by straight lines from 0:0.";
+        L"A multiplier such as 1:6, or 1:6, precision 40, or points such as 10:10 45:120";
     for (int i = 0; i < 6; i++) {
         int x = 22 + (i % 3) * 226, y = CURVES_Y + (i / 3) * 72, right = x + 72;
         curve_plot[i] = tip(CreateWindowExW(0, L"trackkat_curve", L"", WS_CHILD | WS_VISIBLE, S(x), S(y), S(64),
@@ -2754,12 +2693,12 @@ static void build_window(void)
     control(L"STATIC", L"", SS_ETCHEDHORZ, 22, AIDS_Y - 8, 676, 2, 0);
 
     /* Aids to the response. */
-    static const wchar_t smoothing_tip[] = L"Calm the view while your head is still, at the cost of a little lag when "
-                                           L"you move. Off, games get every tremor.";
-    static const wchar_t steadiness_tip[] = L"How still the view stays while your head is still. Raise it if the "
-                                            L"view jitters; lower it if it feels floaty or drifts into place.";
-    static const wchar_t responsiveness_tip[] = L"How closely the view keeps up when you move. Raise it if the view "
-                                                L"lags behind your head; lower it if it jitters as you move slowly.";
+    static const wchar_t smoothing_tip[] =
+        L"Calm the view while your head is still, for a little lag when you move";
+    static const wchar_t steadiness_tip[] =
+        L"Raise it if the view jitters while you are still; lower it if it feels floaty";
+    static const wchar_t responsiveness_tip[] =
+        L"Raise it if the view lags behind your head; lower it if slow moves jitter";
     aids_label = tip(label(L"Aids", 22, AIDS_Y, 44), smoothing_tip);
     field_ctl[F_SMOOTHING] = tip(
         control(L"BUTTON", L"Smoothing", WS_TABSTOP | BS_AUTOCHECKBOX, 70, AIDS_Y, 90, 22, ID_FIELD + F_SMOOTHING),
@@ -2780,19 +2719,15 @@ static void build_window(void)
     }
     field_ctl[F_LEAN] = tip(control(L"BUTTON", L"Lean follows the view", WS_TABSTOP | BS_AUTOCHECKBOX, 70,
                                     AIDS_Y + 26, 160, 22, ID_FIELD + F_LEAN),
-                            L"On, leaning follows the view (lean = view): looking behind you, leaning left leans out "
-                            L"of the cockpit's right side. Off, leaning moves you the same way whichever way you "
-                            L"look.");
+                            L"On, leaning follows where you look; off, it moves you the same way always");
     field_ctl[F_LIGHTS] = tip(
         control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 246, AIDS_Y + 26, 140, 22,
                 ID_FIELD + F_LIGHTS),
-        L"Learn bright lights that stay put, such as a lamp or a fire behind you, and ignore them, so they don't "
-        L"stop trackkat finding the clip (ignore lights = on). The log says when one is learnt or forgotten.");
+        L"Learn bright lights that stay put, such as a lamp, and ignore them");
 
     /* The calibration, and under its cover the two buttons that change it. */
     static const wchar_t calibration_tip[] =
-        L"What trackkat has learnt from how you turn your head: how the camera is tipped, and where your neck "
-        L"pivots. It keeps learning as you play, and keeps it in trackkat.calibration.";
+        L"What trackkat has learnt: how the camera is tipped, where your neck pivots";
     calibration_title = tip(control(L"STATIC", L"Calibration · learnt as you play", SS_OWNERDRAW, 22, CAL_Y + 2,
                                     COVER_X - 34, 18, 0),
                             calibration_tip);
@@ -2800,56 +2735,43 @@ static void build_window(void)
                            calibration_tip);
     SendMessageW(calibration_text, WM_SETFONT, (WPARAM)small_font, FALSE);
     cover = tip(control(L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, COVER_X, CAL_Y + 6, COVER_W, 38, ID_COVER),
-                L"A cover over Calibrate now and Clear calibration, so they aren't clicked by mistake. Click it, or "
-                L"press Space, to lift it. It closes again when you click close, after you use one of them, or once "
-                L"the mouse has been away from it for a few seconds.");
+                L"Covers Calibrate now and Clear calibration against mistakes; click to lift");
     cover_buttons[0] =
         tip(control(L"BUTTON", L"Calibrate now", WS_TABSTOP | BS_PUSHBUTTON, COVER_X + 8, CAL_Y + 22, 104, 26,
                     ID_CALIBRATE),
-            L"Learn which way is up, the camera's level, now: click, then turn your head left and right for five "
-            L"seconds. trackkat learns it as you play anyway, so this is mainly for after moving the camera.");
+            L"Click, then turn your head left and right for five seconds, to learn level");
     cover_buttons[1] = tip(control(L"BUTTON", L"Clear calibration", WS_TABSTOP | BS_PUSHBUTTON, COVER_X + 116,
                                    CAL_Y + 22, 106, 26, ID_CLEAR_CALIBRATION),
-                           L"Forget what trackkat has learnt and start tracking afresh: it learns again as you turn "
-                           L"your head. Use it after moving the camera or bending the clip, or if turning your head "
-                           L"turns the view the wrong way.");
+                           L"Forget what trackkat has learnt; it learns again as you turn your head");
     cover_frame = control(L"STATIC", L"", SS_ETCHEDFRAME, COVER_X, CAL_Y + 14, COVER_W, 40, 0);
     lift_cover(0);
 
     /* The log: its latest line, and the rest in a window of its own. */
-    tip(control(L"STATIC", L"Log", SS_LEFT, 20, LOG_Y + 10, 30, 18, 0), L"The log: what trackkat reports.");
+    tip(control(L"STATIC", L"Log", SS_LEFT, 20, LOG_Y + 10, 30, 18, 0), L"The log: what trackkat reports");
     log_line = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 54, LOG_Y + 10, 450, 18, 0),
-                   L"The latest line of the log. Open log shows the whole of it.");
+                   L"The latest line of the log; Open log shows the rest");
     SendMessageW(log_line, WM_SETFONT, (WPARAM)mono_font, FALSE);
     tip(control(L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 512, LOG_Y + 6, 90, 24, ID_COPY_LOG),
-        L"Copy the whole log, to paste into a bug report.");
+        L"Copy the whole log, to paste into a bug report");
     tip(control(L"BUTTON", L"Open log", WS_TABSTOP | BS_PUSHBUTTON, 610, LOG_Y + 6, 90, 24, ID_OPEN_LOG),
-        L"Open the log in a window of its own: what trackkat reports, such as recentering, trim, calibration, "
-        L"joysticks and the buttons pressed on them, settings reloads, and errors.");
+        L"Open the log, all that trackkat reports, in a window of its own");
 
     /* How trackkat runs, and the way out. */
     control(L"STATIC", L"", SS_ETCHEDHORZ, 0, MODES_Y, CLIENT_W, 2, 0);
     field_ctl[F_STARTUP] = tip(
         control(L"BUTTON", L"Start with Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 14, MODES_Y + 12, 130, 22,
                 ID_FIELD + F_STARTUP),
-        L"Start trackkat in the tray when you log in (startup = on). Games start trackkat themselves anyway, but "
-        L"in anti-cheat mode they can't: this is the way to use it without starting trackkat by hand.");
+        L"Start trackkat in the tray when you log in; anti-cheat mode needs it running");
     field_ctl[F_UPDATES] = tip(
         control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 156, MODES_Y + 12, 116, 22,
                 ID_FIELD + F_UPDATES),
-        L"Once installed, look for a newer version when trackkat starts and every few hours, and fetch it in the "
-        L"background (updates = on). It is used when you click Restart to update, at the top, or when trackkat "
-        L"next starts. Your settings and calibration stay.");
+        L"Once installed, fetch newer versions in the background as they come out");
     field_ctl[F_NPCLIENT] = tip(
         control(L"BUTTON", L"Anti-cheat mode", WS_TABSTOP | BS_AUTOCHECKBOX, 284, MODES_Y + 12, 120, 22,
                 ID_FIELD + F_NPCLIENT),
-        L"For games whose anti-cheat blocks trackkat's NPClient, such as Arma Reforger (npclient = trackir): games "
-        L"load the NPClient of NaturalPoint's TrackIR software instead, which must be installed but not running. "
-        L"Games can't start trackkat then, so start it first, or have it start with Windows. Applies to games "
-        L"started after you change it.");
+        L"For anti-cheat that blocks trackkat's NPClient: games load NaturalPoint's");
     tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 590, MODES_Y + 10, 116, 26, ID_QUIT),
-        L"Stop tracking and quit: the camera's lights go off and trackkat leaves the tray. Closing this window "
-        L"instead keeps trackkat running in the tray.");
+        L"Stop tracking and quit; closing the window instead keeps trackkat in the tray");
 
     /* Boxes last, beneath the controls they frame. */
     group(L"Control bindings", 10, BIND_Y, 700, BIND_H);
@@ -2877,20 +2799,19 @@ static void build_log_window(void)
                           SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, 0);
     log_box = tip(control_in(log_hwnd, L"EDIT", L"", WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 0, 0, 0,
                              0, 0),
-                  L"What trackkat reports: recentering, trim, calibration, joysticks and the buttons pressed on them, "
-                  L"settings reloads, and errors.");
+                  L"What trackkat reports: recentering, calibration, joysticks, errors");
     SendMessageW(log_box, WM_SETFONT, (WPARAM)mono_font, FALSE);
     SendMessageW(log_box, EM_SETLIMITTEXT, LOG_MAX * 2, 0);
     wchar_t version[96];
     _snwprintf(version, 96, L"trackkat %ls", version_text);
     version[95] = 0;
     log_version = tip(control_in(log_hwnd, L"STATIC", version, SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, 0),
-                      L"The version of trackkat running, as bug reports should say; the log says it too.");
+                      L"The version of trackkat running, as bug reports should say");
     SendMessageW(log_version, WM_SETFONT, (WPARAM)small_font, FALSE);
     log_copy = tip(control_in(log_hwnd, L"BUTTON", L"Copy log", WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, ID_COPY_LOG),
-                   L"Copy the whole log, to paste into a bug report.");
+                   L"Copy the whole log, to paste into a bug report");
     log_close = tip(control_in(log_hwnd, L"BUTTON", L"Close", WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, ID_CLOSE_LOG),
-                    L"Close the log window. trackkat keeps running, and the log keeps growing.");
+                    L"Close the log window; trackkat keeps running, and the log keeps growing");
     RECT rc;
     GetClientRect(log_hwnd, &rc);
     layout_log(rc.right, rc.bottom);
