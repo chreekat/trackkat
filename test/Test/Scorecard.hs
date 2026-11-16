@@ -28,7 +28,8 @@ import TrackKat.Tracker
 -- from a fresh tracker and summed up ('Card') by what went wrong: frames
 -- lost with the whole clip showing, frames tracked with no clip in view,
 -- poses far from the truth, poses on the mirror image, the worst and usual
--- errors, and the longest the clip went unfound while it showed.
+-- errors, the longest the clip went unfound while it showed, and how much
+-- the pose wobbles from frame to frame that the head doesn't.
 --
 -- Each scene is held to the figures it came to ('Limits'), so that a
 -- change that moves one must say so where it is pinned. The limits are
@@ -80,6 +81,9 @@ data Card = Card
     , cardUnfound :: Double
     -- ^ the longest, in seconds, from a frame lost with the whole clip
     -- showing to the next frame tracked, or to the scene's end
+    , cardWobble :: Double
+    -- ^ the root mean square, in degrees, of how far the pose's error
+    -- turns from one frame tracked to the next
     }
 
 -- | How far from the truth a pose tracked is wrong: degrees, mm.
@@ -91,6 +95,10 @@ wrongMM = 30
 -- showing, tracked with it absent, wrong, and mirrored; the worst error in
 -- degrees; and the longest unfound, in seconds.
 data Limits = Limits Int Int Int Int Double Double
+
+-- | The most a scene's pose may wobble, in degrees, where that is what
+-- the scene is for.
+newtype Steady = Steady Double
 
 -- | Track a scene from a fresh tracker: by what tracks frames of (time,
 -- true pose, stripes) to each frame's time, true pose, outcome and pose
@@ -106,6 +114,7 @@ card track lost (Scenario _ m masking frames) =
         , cardWorst = (maximum (0 : map fst errors), maximum (0 : map snd errors))
         , cardRMS = sqrt (sum [turn * turn | (turn, _) <- errors] / fromIntegral (max 1 (length errors)))
         , cardUnfound = longest
+        , cardWobble = sqrt (sum [turn * turn | turn <- wobbles] / fromIntegral (max 1 (length wobbles)))
         }
   where
     rows = track masking m [(t, pose, stripes) | (t, pose, _, stripes) <- frames]
@@ -114,6 +123,10 @@ card track lost (Scenario _ m masking frames) =
     mirrored = filter (mirroredOn m) present
     errors = [poseError truth p | r@(_, truth, _, Just p) <- present, not (mirroredOn m r)]
     end = maximum (0 : [t | (t, _, _, _) <- rows])
+    -- How each pose tracked is turned from the truth, and how far that
+    -- turns from each frame to the next, both tracked.
+    turnedFrom = [if lost o then Nothing else (\p -> poseR p `mulMM` transpose (poseR truth)) <$> pose | (_, truth, o, pose) <- rows]
+    wobbles = [norm (rotationVector (b `mulMM` transpose a)) * 180 / pi | (Just a, Just b) <- zip turnedFrom (drop 1 turnedFrom)]
     -- The longest stretch unfound, and since when the clip has gone
     -- unfound while it wholly showed, if it has.
     (longest, _) = foldl unfound (0, Nothing) shown
@@ -129,7 +142,7 @@ card track lost (Scenario _ m masking frames) =
 renderCard :: Card -> String
 renderCard c =
     printf
-        "%d frames: %d lost, %d ghosts, %d wrong, %d mirrored; worst %.2f deg %.1f mm, rms %.3f deg; unfound %.3f s"
+        "%d frames: %d lost, %d ghosts, %d wrong, %d mirrored; worst %.2f deg %.1f mm, rms %.3f deg; unfound %.3f s; wobble %.3f deg"
         (cardFrames c)
         (cardLost c)
         (cardGhosts c)
@@ -139,6 +152,7 @@ renderCard c =
         (snd (cardWorst c))
         (cardRMS c)
         (cardUnfound c)
+        (cardWobble c)
 
 within :: Limits -> Card -> Bool
 within (Limits lost ghosts wrong mirrored worst unfound) c =
@@ -150,12 +164,12 @@ within (Limits lost ghosts wrong mirrored worst unfound) c =
         && cardUnfound c <= unfound
 
 simulations :: TestTree
-simulations = group "Scorecard" $ mapM_ scored scenarios
+simulations = group "Scorecard" $ mapM_ scored ([(scenario, limits, Nothing) | (scenario, limits) <- scenarios] ++ [(scenario, limits, Just steady) | (scenario, limits, steady) <- flecked])
   where
-    scored (scenario@(Scenario name _ _ _), limits) = do
+    scored (scenario@(Scenario name _ _ _), limits, steady) = do
         let c = card (\masking m -> map fst . snd . trackFramesEventsWith masking m) isLost scenario
             old = card (\masking m -> map fst . snd . Old.trackFramesEventsWith masking m) Old.isLost scenario
-        checkShowing name (renderCard c) (within limits c)
+        checkShowing name (renderCard c) (within limits c && maybe True (\(Steady most) -> cardWobble c <= most) steady)
         checkShowing (name ++ ", by the old tracker") (renderCard old) $
             maybe False (\(a, b, wrong, mirrored, worst, unfound) -> within (Limits a b wrong mirrored worst unfound) old) (lookup name Old.limits)
 
@@ -190,6 +204,59 @@ unmasked (Scenario name m _ frames) = Scenario name m NoMasking frames
 
 nothingElse :: Double -> [Disc]
 nothingElse = const []
+
+-- | Scenes of a fleck of light that isn't the clip's but moves with it,
+-- as a reflection off glasses or a headset does, each with the most its
+-- card may come to and the most its pose may wobble: a fleck of so many
+-- pixels across, amid the reflectors or 3 pixels clear of the left one,
+-- there in every frame or in about half, the head still or glancing, each
+-- reflector's centre moved by up to a twentieth of a pixel.
+flecked :: [(Scenario, Limits, Steady)]
+flecked =
+    zipWith
+        (\scene (limits, steady) -> (scene, limits, steady))
+        [ framed (printf "a fleck %d pixels across %s, %s, the head %s" (round (2 * radius) :: Int) placeName comingName headName) clipBent (const Whole) frames
+        | (headName, path) <- heads
+        , (placeName, place) <- places
+        , (comingName, comes) <- comings
+        , radius <- [1.5, 2.5, 3.5]
+        , let frames = [(t, pose, renderDiscs (jitter 0.1 i (pointDiscs defaultIntrinsics clipBent allLit pose) ++ [(place radius pose, radius) | comes i])) | (i, t) <- zip [0 ..] (at120 4), let pose = path t]
+        ]
+        pinned
+  where
+    heads = [("still", const (headSeen bentWorn 0 0 0)), ("glancing", \t -> headSeen bentWorn (25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0)]
+    places = [("amid the reflectors", amid), ("beside a reflector", beside)]
+    comings = [("steady", const True), ("flickering", \i -> noise i 7 > 0)]
+    amid _ pose = let seen = map (project defaultIntrinsics pose) [mLeft clipBent, mRight clipBent, mTop clipBent] in (sum (map fst seen) / 3, sum (map snd seen) / 3)
+    beside radius pose = case pointDiscs defaultIntrinsics clipBent allLit pose of
+        ((u, v), r) : _ -> (u + r + radius + 3, v)
+        [] -> (0, 0)
+    pinned =
+        [ (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.7 0, Steady 0.15)
+        , (Limits 0 0 0 0 1.2 0, Steady 0.16)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.6 0, Steady 0.19)
+        , (Limits 0 0 0 0 1.1 0, Steady 0.36)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
+        , (Limits 0 0 0 0 0.9 0, Steady 0.18)
+        , (Limits 0 0 0 0 1.7 0, Steady 0.21)
+        , (Limits 0 0 0 0 3 0, Steady 0.28)
+        , (Limits 0 0 0 0 0.9 0, Steady 0.24)
+        , (Limits 0 0 0 0 1.7 0, Steady 0.5)
+        , (Limits 0 0 0 0 2.7 0, Steady 0.41)
+        , (Limits 0 0 0 0 0.6 0, Steady 0.17)
+        , (Limits 0 0 0 0 1.3 0, Steady 0.17)
+        , (Limits 0 0 157 0 2.1 0, Steady 0.18)
+        , (Limits 0 0 0 0 0.6 0, Steady 0.21)
+        , (Limits 0 0 0 0 1.2 0, Steady 0.39)
+        , (Limits 0 0 0 0 0.4 0, Steady 0.17)
+        ]
 
 -- | The scenes, each with the most its card may come to.
 scenarios :: [(Scenario, Limits)]
