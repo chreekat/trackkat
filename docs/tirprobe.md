@@ -98,9 +98,72 @@ pose corrected says on what evidence:
 
 ## Recording a problem
 
-When tracking goes wrong in a way you can make happen again, such as the
-view jumping, flipping, or drifting, a recording lets the developer replay
-it exactly, frame by frame, through trackkat's tracking.
+When tracking goes wrong, such as the view jumping, flipping, or drifting,
+a recording lets the developer replay it exactly, frame by frame, through
+trackkat's tracking. trackkat records while you play; tirprobe records on
+its own, with no game, when you can make the problem happen again.
+
+### While you play, with trackkat
+
+1. Bind a key or button to `mark` in `trackkat.conf`, in
+   `%APPDATA%\trackkat`, as you would to `recenter`:
+
+   ```
+   mark = F8
+   ```
+
+   The window has no list for it; the file is the only place.
+2. Start trackkat with `--record`, either way:
+   - From a terminal in the folder with `trackkat.exe`, run
+     `.\trackkat.exe --record`.
+   - Copy trackkat's shortcut, open the copy's **Properties**, and add
+     ` --record` to the end of **Target**, after the closing quote. An
+     installed trackkat's shortcut names the version it had then; once
+     that version has been updated away, make the copy again.
+
+   A trackkat already running makes way for it. The log says where the
+   recording is going:
+
+   ```
+   Recording to C:\Users\you\AppData\Roaming\trackkat\recording-2026-11-16-203015.txt: about 6 MB a minute, until trackkat quits.
+   ```
+
+   The file is named for the date and time, beside `trackkat.conf`.
+   `--record FILE` records to FILE instead, replacing it.
+3. Play. The moment tracking goes wrong, press your mark: the log says
+   `Mark 1 recorded.` (then 2, and so on) and the recording notes the
+   moment.
+4. Quit trackkat when you are done. The last line of its log, which a
+   terminal shows, is `Recording saved to` and the file.
+5. Zip the file (right-click it, **Compress to ZIP file**) and attach the
+   zip to your bug report, saying what went wrong at each mark.
+
+The recording holds what trackkat tracked from, in the order it happened:
+the bright spots the camera saw in every frame, which are not pictures;
+the settings, as trackkat.conf had them at the start and each time it was
+saved; the calibration trackkat started from; and each recenter, from a
+key, the window, or a game, each calibration asked for, and the
+calibration being cleared. So replaying it tracks your head just as
+trackkat did, to the last digit, through the camera being unplugged and
+found again, which the recording notes. What it does not hold is what
+came after tracking: pause, trim, aim, smoothing, and the curves, so a
+replay shows your head's pose, not the view games were sent.
+
+Recording doesn't slow tracking down: frames are written by a thread of
+their own. If the disk is full, or falls about 20 seconds behind, the
+recording stops there and the log says so, as `Recording stopped: the disk
+can't keep up. Tracking goes on.`, and tracking does go on. If trackkat
+is killed instead of quit, the recording lacks its last second at most,
+and replays up to there. Uninstalling trackkat without keeping your
+settings deletes the recordings kept beside them.
+
+Replay it with tirprobe, as [below](#replaying):
+
+```
+tirprobe --replay recording-2026-11-16-203015.txt --explain
+```
+
+### On its own, with tirprobe
 
 1. Quit trackkat (**Quit trackkat** in its window, or from the tray menu):
    only one program can have the camera.
@@ -119,18 +182,27 @@ minutes is plenty. It holds what tirprobe tracked: the bright spots the
 camera saw, which are not pictures, and the settings it tracked with, from
 trackkat.conf. Recording doesn't slow tracking down.
 
-`tirprobe --replay problem.txt` tracks a recording as tirprobe tracked it
-live, on Windows or Linux, printing the same lines, each after the time in
-seconds, and where Enter, `c` Enter, and `m` Enter were pressed:
+### Replaying
+
+`tirprobe --replay problem.txt` tracks a recording as it was tracked live,
+by tirprobe or by trackkat, on Windows or Linux, printing the lines
+tirprobe prints, each after the time in seconds, and where there was a
+recenter (`# Enter pressed`), a calibration asked for (`# c Enter
+pressed`), or a mark, and what else trackkat recorded: a setting saved,
+the calibration cleared, the camera going and coming back:
 
 ```
      12.483  # mark 1
+     31.020  # setting clip = 70 105 105
+     40.250  # camera stopped: The camera went quiet, perhaps after sleep.
 ```
+
+Recordings made by builds before trackkat could record replay as they did.
 
 With `--blobs` it shows the blobs instead, `--every-frame` prints every
 frame rather than ten a second, `--explain` says what each frame was judged
 by, and `--clip` and `--no-mask` track with other settings than those
-recorded. A replay ends with how many windows of head turning the neck
+recorded, throughout. A replay ends with how many windows of head turning the neck
 pivot, the clip's shape, and the mirror image were each learned from, and how
 many were left out, by what ruled them out:
 
@@ -158,7 +230,8 @@ many were left out, by what ruled them out:
   brightness), `--no-status-led`.
 - `--record FILE`: record every frame to FILE, to be replayed; see
   [recording a problem](#recording-a-problem).
-- `--replay FILE`: track a recording instead of the camera.
+- `--replay FILE`: track a recording, tirprobe's or trackkat's, instead of
+  the camera.
 - `--explain`: end each frame's line with what tracking judged it by, each
   figure against its limit, and say what ruled out each window of head
   turning not learned from.

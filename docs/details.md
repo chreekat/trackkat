@@ -69,6 +69,13 @@ wait for it, and adds a line a second with the pose and figures.
 **Started with Windows** (`--tray`), trackkat shows only its tray icon,
 until you quit it.
 
+**Started with `--record`**, trackkat also writes every frame the camera
+sends to a file, to replay the tracking exactly later, and takes over from
+a trackkat already running. A key or button bound to `mark` in
+`trackkat.conf` notes a moment in the recording, and the log says `Mark 1
+recorded.`; without `--record` it says there is no recording to mark. See
+[recording a problem](tirprobe.md#recording-a-problem).
+
 **Started by a game**, trackkat shows only its tray icon.
 Once no game has been tracking for a minute, and neither its window nor its
 log window is open, it quits by itself, so a game restarted within the
@@ -229,6 +236,8 @@ aim = Throttle - HOTAS Warthog button 4 hold
 ```
 
 In the window, type `hold` or `double` after a key or button in its list.
+`mark` is bound the same ways, in `trackkat.conf` alone: the window has no
+list for it, and keeps what the file says when it saves.
 
 A key bound only as a press acts the moment it goes down, as it always has.
 One that also has a hold or a double waits until the press can be nothing

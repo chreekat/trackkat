@@ -104,7 +104,8 @@ Either way they apply at once, while you play.
   says why, such as `The clip is out of sight, though 3 lights are in view:
   too close to the camera.`
 - **Tracking goes wrong?** [Record it](docs/tirprobe.md#recording-a-problem)
-  with tirprobe, so it can be replayed exactly.
+  while you play, with `trackkat.exe --record`, so it can be replayed
+  exactly.
 - **A game doesn't move?** `npclient.log`, in `%APPDATA%\trackkat`, records
   what each game asked for and got. `npgame` loads NPClient as a game does and prints
   the pose.
