@@ -95,8 +95,9 @@ import TrackKat.World (Instant, Seconds, World (..), during, frameTime, inDegree
 --    its size, or its being out of sight.
 --
 -- The clip being away ('judgeAway') is scored by the same parts: where
--- it was, if a pose still says; that it went, or stayed away; and of what
--- the frame shows nothing, every blob being a stray.
+-- it was, if a pose still says; that it has gone from view since it was
+-- made out; and of what the frame shows nothing, every blob being a
+-- stray.
 --
 -- Room. A hypothesis that says "the head is somewhere near where it was"
 -- and one that says "the head is somewhere in the room" both end up
@@ -109,11 +110,12 @@ import TrackKat.World (Instant, Seconds, World (..), during, frameTime, inDegree
 -- the volume there was. The log of that share is 'room'. It is worked out
 -- from how far each of a pose's six freedoms could have gone (the spreads
 -- of 'followingRoom' or 'anywhereRoom') and how finely the reflectors
--- seen fix each ('poseInformation'), and needs no tuning: it is some 5
--- nats a frame after a pose and some 25 with nothing known, and the 20
--- between them is all that makes a pose that continues the last likelier
--- than the same pose found afresh. A reflector unseen fixes less, so
--- costs less room: what the frame can't say stays where it was.
+-- seen fix each ('poseInformation'), and needs no tuning: it is some 6
+-- nats a frame after a pose and some 25 with nothing known, and the 19
+-- between them, with what it costs the clip to have left where it was
+-- ('comeAfresh'), is all that makes a pose that continues the last
+-- likelier than the same pose come afresh. A reflector unseen fixes less,
+-- so costs less room: what the frame can't say stays where it was.
 
 -- | What says where a head can be.
 data Reach = Reach
