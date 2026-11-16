@@ -27,6 +27,7 @@ import qualified Test.Protocol
 import qualified Test.Recording
 import qualified Test.Release
 import qualified Test.Response
+import qualified Test.Scorecard
 import qualified Test.ServedGame
 import qualified Test.Session
 import qualified Test.Shape
@@ -94,5 +95,6 @@ main = do
                 , Test.Visibility.simulations
                 , Test.Recording.simulations
                 , Test.Memory.simulations
+                , Test.Scorecard.simulations
                 ]
             ]
