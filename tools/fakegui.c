@@ -128,7 +128,7 @@ int main(int argc, char **argv)
         if (acts & 0x1000) {
             aiming = !aiming;
             hts_gui_aiming(aiming);
-            hts_gui_log(aiming ? L"Aiming: the view turns gently from where it is." : L"Aiming ended.");
+            hts_gui_log(aiming ? L"Aiming: sensitivity reduced for finer control." : L"Aiming ended.");
         }
         if (acts & 0x10) {
             for (int f = 0; f < (int)(sizeof names / sizeof *names); f++) {

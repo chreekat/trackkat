@@ -57,8 +57,8 @@ tooltip saying what it does.
 5. Camera, clip and games (by name): green is good.
 6. **Recenter**: where you face now becomes straight ahead; clears trim and ends aiming.
 7. **Pause**: games see your head held still until you press it again. Lit amber while paused, with where the view is held.
-8. **Trim**: the view now, where it looks and where it has moved to, becomes forward, until you recenter. Lit blue while trimmed, with where.
-9. **Aim**: the view turns gently from where it is, to lay a gunsight on something by head, until you press it again. Lit blue while aiming.
+8. **Trim**: the current view, where it looks and where it has moved to, becomes the new forward; recenter to disengage. Lit blue while trimmed, with where.
+9. **Aim**: reduced sensitivity for finer control, to lay a gunsight on something by head, until you press it again. Lit blue while aiming.
 10. Latency and other figures, for bug reports.
 11. Keys and buttons for each switch above, one to a line; here a HOTAS button that trims when pressed, aims while held and recenters when pressed twice. Click a list to edit it.
 12. **Add…**: press a key, joystick button, or middle or side mouse button to add it.

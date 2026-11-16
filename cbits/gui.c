@@ -2621,8 +2621,8 @@ static void build_window(void)
     static const wchar_t *const switch_tips[LISTS] = {
         L"Make the way you face now straight ahead, and clear any trim",
         L"Hold the view still until pressed again. Lit amber while paused",
-        L"Make the view now the new forward, until you recenter. Lit blue while trimmed",
-        L"Turn the view gently, to aim by head, until pressed again. Lit blue meanwhile"};
+        L"Make the current view the new forward. Recenter to disengage",
+        L"Reduced sensitivity for finer control"};
     for (int i = 0; i < LISTS; i++) {
         switch_ctl[i] = tip(control_in(live_hwnd, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 8 + i * (SWITCH_W + 10),
                                        SWITCH_Y, SWITCH_W, SWITCH_H, switch_ids[i]),

@@ -192,7 +192,8 @@ and buttons are listed under it, one to a line, to edit or add to.
 
 The curves turn the view much further than your head, so that you can look
 behind you without looking away from the screen: too far to lay a gunsight
-on something by head, as the Apache's gunner does. Aim is for that. From the
+on something by head, as the Apache's gunner does. Aim is for that: it
+reduces the sensitivity, for finer control. From the
 moment you begin aiming, the view turns from where it then is by how far
 your head turns from where it then is, half as far again by default, and
 smoothed more steadily. Look roughly at the target, aim, and finish with

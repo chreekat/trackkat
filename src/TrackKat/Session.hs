@@ -313,7 +313,7 @@ aimTo wanted s
     | otherwise = (s{sAim = wanted}, [ShowAim wanted, say line])
   where
     line = case wanted of
-        Aiming -> "Aiming: the view turns gently from where it is."
+        Aiming -> "Aiming: sensitivity reduced for finer control."
         NotAiming -> "Aiming ended."
 
 -- | Recenter on the next frame that shows the clip, undoing any trim and

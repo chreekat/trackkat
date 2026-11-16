@@ -78,12 +78,12 @@ tests =
                 )
                 @?= [ "Tracking."
                     , "Recentered."
-                    , "Aiming: the view turns gently from where it is."
+                    , "Aiming: sensitivity reduced for finer control."
                     , "Aiming ended."
                     , "Settings reloaded: aim = Stick button 2 hold"
-                    , "Aiming: the view turns gently from where it is."
+                    , "Aiming: sensitivity reduced for finer control."
                     , "Aiming ended."
-                    , "Aiming: the view turns gently from where it is."
+                    , "Aiming: sensitivity reduced for finer control."
                     , "Aiming ended."
                     ]
         , testCase "aiming, a turn of the head turns the view a quarter as far, as the default curves have it" $

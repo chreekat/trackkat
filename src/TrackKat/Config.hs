@@ -334,10 +334,10 @@ renderConfig c =
         , "# A key with a hold or a double acts on a plain press only once it"
         , "# is clear that is all it was; other keys act as they go down."
         , "#"
-        , "# aim: while aiming, the view turns gently from where it is, to lay"
-        , "# a gunsight on something by head. A key or button with hold aims"
-        , "# while it is held down; one without turns aiming on, then off."
-        , "# Recentering ends it."
+        , "# aim: while aiming, the view turns from where it is with reduced"
+        , "# sensitivity, for finer control: to lay a gunsight on something by"
+        , "# head. A key or button with hold aims while it is held down; one"
+        , "# without turns aiming on, then off. Recentering ends it."
         , settingText "recenter" (renderBindings (recenterBindings c))
         , settingText "pause" (renderBindings (pauseBindings c))
         , settingText "trim" (renderBindings (trimBindings c))
