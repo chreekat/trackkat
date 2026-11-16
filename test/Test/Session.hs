@@ -2,9 +2,10 @@
 -- aiming, recentering, the keys and buttons, the settings and the log,
 -- whatever happens to it. See Note [What a session promises] in
 -- "TrackKat.Session".
-module Test.Session (tests) where
+module Test.Session (tests, Move (..), Asked (..), Moves (..), timeline) where
 
 import Data.List (mapAccumL)
+import Data.Word (Word64)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 import Test.Tasty.QuickCheck
@@ -20,7 +21,7 @@ import TrackKat.Gesture (Edge (..), holdAfter)
 import TrackKat.Linear
 import TrackKat.Log
 import TrackKat.Pose
-import TrackKat.Recording (Did (..))
+import TrackKat.Recording (Did (..), trackerTime)
 import TrackKat.Response
 import TrackKat.Session
 import TrackKat.Synth (rotYXZ, squareStripes)
@@ -170,7 +171,7 @@ tests =
                 let before = reached moves
                     same = (sSettings before){headView = view}
                     (after, effects) = step (SettingsSaved "text" same) before
-                 in map brief effects === ["BindHotkeys", "ShowSettings \"text\""]
+                 in map brief effects === ["Record (TookSettings \"text\")", "BindHotkeys", "ShowSettings \"text\""]
                         .&&. sSettings after === same
                         .&&. unchanged before after
         , testProperty "settings saved are the session's settings, and games and Windows are told of just what changed for them" $
@@ -357,33 +358,42 @@ data Asked = ToRecenter | ToPause | ToTrim | ToAim | ToCalibrate | ToClear | ToM
 
 -- | The events moves make, frames 120 a second, but for the waits.
 events :: [Move] -> [Event]
-events = snd . mapAccumL event (0 :: Int, 0 :: Int, 0 :: Int)
+events = map snd . timeline
+
+-- | The events moves make, each with the time it happens at on a
+-- monotonic clock that starts with them, in nanoseconds: frames 120 a
+-- second, but for the waits. A settings file saved has the text that
+-- says its settings.
+timeline :: [Move] -> [(Word64, Event)]
+timeline = snd . mapAccumL event (0 :: Int, 0 :: Int, 0 :: Int)
   where
     event (frames, waits, recenters) move = case move of
-        Seek -> (same, CameraSought)
-        Connect -> (same, CameraConnected recenters)
-        Stop why -> (same, CameraStopped why)
-        See y p -> (next, FrameArrived now (clipAt (Pose (rotYXZ y p 0) (V3 0 0 700))))
-        Dark -> (next, FrameArrived now [])
-        Glint -> (next, FrameArrived now (squareStripes (300, 200)))
+        Seek -> (same, (ns, CameraSought))
+        Connect -> (same, (ns, CameraConnected recenters))
+        Stop why -> (same, (ns, CameraStopped why))
+        See y p -> (next, (ns, FrameArrived now (clipAt (Pose (rotYXZ y p 0) (V3 0 0 700)))))
+        Dark -> (next, (ns, FrameArrived now []))
+        Glint -> (next, (ns, FrameArrived now (squareStripes (300, 200))))
         Look edges game ->
             let recenters' = recenters + (if game == GameAsked then 1 else 0)
-             in ((frames, waits, recenters'), ControlsPolled now [KeyEdge now way key | (way, key) <- edges] recenters')
-        Wait -> ((frames, waits + 1, recenters), ControlsPolled (at frames (waits + 1)) [] recenters)
-        Ask ToRecenter -> (same, RecenterAsked)
-        Ask ToPause -> (same, PauseAsked)
-        Ask ToTrim -> (same, TrimAsked)
-        Ask ToAim -> (same, AimAsked)
-        Ask ToCalibrate -> (same, CalibrateAsked)
-        Ask ToClear -> (same, ClearCalibrationAsked)
-        Ask ToMark -> (same, MarkAsked)
-        Save config -> (same, SettingsSaved "text" config)
-        Corrupt -> (same, PacketCorrupt "too short")
+             in ((frames, waits, recenters'), (ns, ControlsPolled now [KeyEdge now way key | (way, key) <- edges] recenters'))
+        Wait -> ((frames, waits + 1, recenters), (at frames (waits + 1), ControlsPolled (trackerTime (at frames (waits + 1))) [] recenters))
+        Ask ToRecenter -> (same, (ns, RecenterAsked))
+        Ask ToPause -> (same, (ns, PauseAsked))
+        Ask ToTrim -> (same, (ns, TrimAsked))
+        Ask ToAim -> (same, (ns, AimAsked))
+        Ask ToCalibrate -> (same, (ns, CalibrateAsked))
+        Ask ToClear -> (same, (ns, ClearCalibrationAsked))
+        Ask ToMark -> (same, (ns, MarkAsked))
+        Save config -> (same, (ns, SettingsSaved (renderConfig config) config))
+        Corrupt -> (same, (ns, PacketCorrupt "too short"))
       where
         same = (frames, waits, recenters)
         next = (frames + 1, waits, recenters)
-        now = at frames waits
-    at frames waits = clockAt (fromIntegral frames / 120 + fromIntegral waits * 4 / 3 * inSeconds holdAfter)
+        ns = at frames waits
+        now = trackerTime ns
+    -- A wait is a third longer than a key is down before it is held.
+    at frames waits = fromIntegral frames * 8333333 + fromIntegral waits * round (4 / 3 * inSeconds holdAfter * 1e9)
     clipAt pose = concatMap (squareStripes . project defaultIntrinsics pose) [mLeft model, mRight model, mTop model]
     model = clipModel (clip defaultConfig)
 

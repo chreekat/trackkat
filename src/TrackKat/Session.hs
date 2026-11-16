@@ -36,7 +36,7 @@ import TrackKat.Gesture (Recognizer, Signal (..), edge, forget, newRecognizer, t
 import TrackKat.Linear (V3)
 import TrackKat.Log (Line (..))
 import TrackKat.Pose
-import TrackKat.Recording (Did (..))
+import TrackKat.Recording (Did (..), resettled, trackerFor)
 import TrackKat.Response
 import TrackKat.Shape
 import TrackKat.Tracker (
@@ -53,11 +53,8 @@ import TrackKat.Tracker (
     describeMasked,
     describeSeen,
     describeWhy,
-    newTracker,
     noAbsence,
     request,
-    setMasking,
-    setModel,
     trackerBlobs,
     trackerCalibration,
     trackerCentre,
@@ -96,6 +93,12 @@ import TrackKat.World (Instant)
 --
 --  * Marks are numbered from 1, in the order asked for, whatever else
 --    happens.
+--
+--  * Whatever is done with the tracker is said, in the order done, for a
+--    recording: replayed from how the session started, the recording
+--    tracks what the session tracked (see "TrackKat.Recording"). Besides
+--    that it is told the settings file as saved, the marks, corrupt
+--    packets, and the camera coming and going.
 --
 -- "Test.Session" states these as properties.
 
@@ -138,7 +141,7 @@ data Sending
 newSession :: Config -> Calibration -> Session
 newSession config c =
     Session
-        { sTracker = trackerFor config c
+        { sTracker = trackerFor defaultIntrinsics config c
         , sSettings = config
         , sShaper = newShaper
         , sOutcome = Nothing
@@ -162,11 +165,6 @@ startingCalibration path found = case found of
     Nothing -> (defaultCalibration, none)
   where
     none = [say noCalibration, ShowCalibration noCalibration]
-
--- | A tracker of the clip the settings give, masking still lights or not
--- as they say, starting from a calibration.
-trackerFor :: Config -> Calibration -> Tracker
-trackerFor config = newTracker defaultIntrinsics (clipModel (clip config)) (lightMasking config)
 
 -- | The head at its centre.
 centred :: HeadPose
@@ -248,12 +246,12 @@ step :: Event -> Session -> (Session, [Effect])
 step event s = case event of
     CameraSought -> (s, [ShowCamera Searching])
     CameraConnected recenters ->
-        (s{sRecenters = recenters, sAbsence = noAbsence}, [say "Tracking.", ShowCamera Tracking])
+        (s{sRecenters = recenters, sAbsence = noAbsence}, [say "Tracking.", ShowCamera Tracking, Record (Noted "camera connected")])
     CameraStopped problem ->
-        (s, [say problem, ShowCamera (CameraDown problem), say "Trying the camera again in 3 seconds."])
+        (s, [say problem, ShowCamera (CameraDown problem), say "Trying the camera again in 3 seconds.", Record (Noted ("camera stopped: " ++ problem))])
     ControlsPolled now edges recenters -> uncurry (flip steps) (controlsLooked now edges recenters s)
     FrameArrived now stripes -> frame now stripes s
-    PacketCorrupt why -> (s, [say ("# dropped a corrupt packet: " ++ why)])
+    PacketCorrupt why -> (s, [say ("# dropped a corrupt packet: " ++ why), Record (DroppedCorrupt why)])
     RecenterAsked -> recenter s
     PauseAsked -> case sSending s of
         Holding _ -> (s{sSending = Following}, [ShowOutput Live, say "Resumed."])
@@ -264,11 +262,12 @@ step event s = case event of
     AimAsked -> aimTo (case sAim s of Aiming -> NotAiming; NotAiming -> Aiming) s
     AimHeld -> aimTo Aiming s
     AimLetGo -> aimTo NotAiming s
-    CalibrateAsked -> (s{sTracker = request Calibrate (sTracker s)}, [])
+    CalibrateAsked -> (s{sTracker = request Calibrate (sTracker s)}, [Record (Requested Calibrate)])
     ClearCalibrationAsked ->
-        ( s{sTracker = trackerFor (sSettings s) defaultCalibration, sShaper = newShaper}
+        ( s{sTracker = trackerFor defaultIntrinsics (sSettings s) defaultCalibration, sShaper = newShaper}
         ,
-            [ SaveCalibration defaultCalibration
+            [ Record ClearedCalibration
+            , SaveCalibration defaultCalibration
             , say "Calibration cleared: trackkat learns it afresh as you turn your head."
             , ShowCalibration noCalibration
             , ShowClip Nothing
@@ -333,7 +332,7 @@ aimTo wanted s
 -- ending aiming. If the clip is out of sight, games see the view centred
 -- straight away.
 recenter :: Session -> (Session, [Effect])
-recenter s = (cleared ++) <$> aimTo NotAiming (lost s{sTracker = request Recenter (sTracker s), sTrim = NoTrim})
+recenter s = ((Record (Requested Recenter) : cleared) ++) <$> aimTo NotAiming (lost s{sTracker = request Recenter (sTracker s), sTrim = NoTrim})
   where
     cleared = case sTrim s of
         NoTrim -> []
@@ -347,7 +346,8 @@ recenter s = (cleared ++) <$> aimTo NotAiming (lost s{sTracker = request Recente
 frame :: Instant -> [Stripe] -> Session -> (Session, [Effect])
 frame now stripes s =
     ( s'
-    , told
+    , Record (GaveFrame stripes)
+        : told
         ++ map SaveCalibration (concatMap learnt events)
         ++ [say line | Just line <- [outOfSight]]
         ++ [ Publish (toGamePose (sent s'))
@@ -385,10 +385,10 @@ frame now stripes s =
 -- it was starts afresh: what its being held down began ends, and nothing
 -- more comes of a press of it under way.
 settingsSaved :: String -> Config -> Session -> (Session, [Effect])
-settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSettings = new, sTracker = reshaped (masked (sTracker s)), sGestures = watched}
+settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSettings = new, sTracker = resettled old new (sTracker s), sGestures = watched}
   where
     applied =
-        [BindHotkeys new]
+        [Record (TookSettings text), BindHotkeys new]
             ++ [PointGames (npclient new) | npclient new /= npclient old]
             ++ [SetStartup (startup new) | startup new /= startup old]
             -- Clicking through the head view saves it; that is no news.
@@ -397,12 +397,6 @@ settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSet
             ++ [ShowSettings text]
     old = sSettings s
     (watched, ended) = forget (\k -> boundTo new k /= boundTo old k) (sGestures s)
-    masked
-        | lightMasking new /= lightMasking old = setMasking (lightMasking new)
-        | otherwise = id
-    reshaped
-        | clip new /= clip old = setModel (clipModel (clip new))
-        | otherwise = id
 
 -- | A trim as the console and log show it.
 describeTrim :: Trim -> String

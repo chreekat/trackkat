@@ -32,6 +32,7 @@ module TrackKat.Recording (
     liveFrame,
 
     -- * What a session does
+    startOfSession,
     Did (..),
     Tape,
     startTape,
@@ -57,7 +58,7 @@ import TrackKat.Calibration (Calibration, defaultCalibration, parseCalibration)
 import TrackKat.Config (Config (..), clipModel, parseConfig, settingValues)
 import TrackKat.Frame (Stripe (..))
 import TrackKat.Number (parseExact, parseNatural, renderExact)
-import TrackKat.Pose (Intrinsics (..))
+import TrackKat.Pose (Intrinsics (..), defaultIntrinsics)
 import TrackKat.Tracker
 import TrackKat.World (Instant, clockAt)
 
@@ -447,6 +448,20 @@ liveFrame inputs at n stripes t =
     (t', outcome, events) = step (trackerTime at) stripes (trackingTracker given)
 
 -- * What a session does
+
+-- | How the recording of a session of trackkat starts, the clock telling
+-- the time given: with some notes, the camera trackkat takes it to be,
+-- the settings as the settings file's text gives them, and, if the
+-- session starts from what a calibration file says, that file's text.
+startOfSession :: [String] -> String -> Maybe String -> Word64 -> Start
+startOfSession notes settings calibration clock =
+    Start
+        { startNotes = notes
+        , startIntrinsics = defaultIntrinsics
+        , startSettings = settingValues settings
+        , startCalibration = maybe FreshCalibration SavedCalibration calibration
+        , startClock = clock
+        }
 
 -- | Something a session of trackkat did with its tracker, or that
 -- happened to it, for a recording to say.

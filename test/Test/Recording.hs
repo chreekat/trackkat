@@ -3,8 +3,9 @@
 -- | Recording and replaying (see "TrackKat.Recording"): a session recorded
 -- as tirprobe records one replays to the very same outcomes, events and
 -- poses, and the recordings of real problems in 'recordingRegressions'
--- replay as they should; and writing a recording never holds up whoever
--- records (see "TrackKat.Recorder").
+-- replay as they should; a session of trackkat, whatever happens to it,
+-- replays from its recording to what its tracker came to; and writing a
+-- recording never holds up whoever records (see "TrackKat.Recorder").
 module Test.Recording (simulations, properties) where
 
 import Control.Concurrent (forkFinally)
@@ -29,14 +30,17 @@ import Test.Tasty.QuickCheck
 
 import Test.Gen (earlier, genConfig, shrinkFrom, shrinkParts)
 import Test.Instances ()
+import Test.Session (Asked (..), Move (..), Moves (..), timeline)
 import Test.Simulation (clipBent, headSeen)
 import TrackKat.Calibration
 import TrackKat.Config
-import TrackKat.Frame
+import TrackKat.Frame hiding (Packet (..))
 
 import TrackKat.Pose
 import TrackKat.Recorder
 import TrackKat.Recording
+import TrackKat.Session (Effect (Record), Session (..), newSession)
+import qualified TrackKat.Session as Session
 import TrackKat.Synth
 import TrackKat.Tracker
 
@@ -74,6 +78,24 @@ simulations =
                             _ -> False
                         Left _ -> False
                 ]
+        , testCase "a session of trackkat, its threads recording it to a file as it goes, replays from the file to what its tracker came to" $ do
+            tmp <- getTemporaryDirectory
+            let path = tmp </> "trackkat-test-session-recording.txt"
+                moves = [Connect, See 0 0, Ask ToMark, See 2 0, Save defaultConfig{lightMasking = NoMasking}, See 4 1, Ask ToClear, Corrupt, See 6 1, Ask ToCalibrate, See 4 0, Stop "The camera stopped.", Ask ToRecenter, See 2 0]
+                began = Beginning (renderConfig defaultConfig) Nothing
+            (start, session0) <- either (assertFailure . ("the session's start: " ++)) pure (beginning began)
+            sessionAt <- newIORef session0
+            live <- withRecorder path start (const (pure ())) $ \opened -> do
+                rec <- either (\err -> ioError (userError ("the session's file: " ++ err))) pure opened
+                recorder <- newSessionRecorder start rec
+                came <- concat <$> mapM (taken recorder sessionAt) (zip (cycle [0 ..]) (timeline moves))
+                ending <- finish rec
+                ending @?= Whole
+                pure came
+            r <- readRecording path
+            removePathForcibly path
+            fmap replayedTo (replay =<< r) @?= Right live
+            assertBool (show live) (length live == 6)
         , testCase "a later version of recording is refused" $
             assertBool "" (isLeft (parseRecording (BL.fromStrict (C.pack "trackkat recording 3\n"))))
         , testGroup
@@ -88,6 +110,12 @@ simulations =
         ]
   where
     steppedOf (Replayed _ s) = (\(t, o, evs) -> stepped t o evs) <$> s
+    -- Take a session through an event, recording it; what a frame came to.
+    taken recorder sessionAt (i, (at, event)) = do
+        s <-
+            recordStep recorder at i $
+                atomicModifyIORef' sessionAt (\before -> let (after, effects) = Session.step event before in (after, (after, [did | Record did <- effects])))
+        pure [cameTo (sTracker s) outcome | Session.FrameArrived{} <- [event], Just outcome <- [sOutcome s]]
 
 -- | Check something of the session as tracked live and of its recording
 -- read back.
@@ -247,6 +275,21 @@ properties =
                 let entries = either (const []) (\t0 -> fst (tracked t0 session)) (startTracking sessionStart)
                     outcomes es = fmap (\rs -> [stepped t o evs | Replayed _ (Just (t, o, evs)) <- rs]) (replay (Recording sessionStart es))
                  in outcomes (InputEntry sessionClock (Setting "clip" "1 1 5") : entries) === outcomes entries
+        , testProperty "a session of trackkat replays from its recording to what its tracker came to, whatever happened to it" $
+            \began (Moves before) (SettingsFile saved) (Moves after) ->
+                case (beginning began, parseConfig saved) of
+                    (Right (start, session0), Right config) ->
+                        let (first, rest) = splitAt (length before + 2) (timeline (before ++ [Dark, See 0 0] ++ after ++ [Dark, See 0 0]))
+                            happened = first ++ [(maximum (map fst first), Session.SettingsSaved saved config)] ++ rest
+                            (entries, live, session) = lived start session0 happened
+                            later = maximum (map fst happened) + 6000000000
+                         in counterexample (C.unpack (BL.toStrict (written (Recording start entries)))) $
+                                case replay =<< parseRecording (written (Recording start entries)) of
+                                    Left err -> counterexample err False
+                                    Right replayed ->
+                                        replayedTo replayed === live
+                                            .&&. [probed later t | Replayed _ (Just (t, _, _)) <- take 1 (reverse replayed)] === [probed later (sTracker session)]
+                    (failed, _) -> counterexample (either id (const saved) failed) False
         , testProperty "a recorder writes a recording's start and what it is given, in order, and ends whole" $
             \(Recorded r) -> ioProperty $ do
                 (sink, text) <- collecting (pure ())
@@ -353,6 +396,88 @@ properties =
         let (entries, (t', o, evs)) = liveFrame inputs at n stripes t
             (more, came) = tracked t' rest
          in (entries ++ more, stepped (trackingTracker t') o evs : came)
+
+-- | What a frame came to, comparably: what it showed, the pose tracked
+-- and recentered on, and the calibration.
+cameTo :: Tracker -> Outcome -> String
+cameTo t o = show (o, trackerPose t, trackerCentre t, renderCalibration (trackerCalibration t))
+
+-- | What each frame replayed came to.
+replayedTo :: [Replayed] -> [String]
+replayedTo replayed = [cameTo t o | Replayed _ (Just (t, o, _)) <- replayed]
+
+-- | Take a session whose recording starts as given through what happens
+-- to it, each event at its time on the monotonic clock: what its
+-- recording says, what each of its frames came to, and the session it
+-- came to.
+lived :: Start -> Session -> [(Word64, Session.Event)] -> ([Entry], [String], Session)
+lived start session0 happened = (concat entries, concat came, session)
+  where
+    ((_, session), (entries, came)) = unzip <$> mapAccumL go (startTape start, session0) (zip (cycle [0 ..]) happened)
+    go (tape, s) (i, (at, event)) =
+        let (s', effects) = Session.step event s
+            (tape', said) = mapAccumL (flip (taped at i)) tape [did | Record did <- effects]
+         in ((tape', s'), (concat said, [cameTo (sTracker s') outcome | Session.FrameArrived{} <- [event], Just outcome <- [sOutcome s']]))
+
+-- | What a tracker comes to shown the clip from a later time on the
+-- monotonic clock, late enough to end a calibration asked for: what tells
+-- of what it was asked for and has yet to do.
+probed :: Word64 -> Tracker -> [String]
+probed later t0 = snd (mapAccumL shown t0 [later, later + 8333333, later + 16666666])
+  where
+    shown t at = let (t', o, evs) = step (trackerTime at) clipSeen t in (t', stepped t' o evs)
+    clipSeen = concat [stripes | (_, Session.FrameArrived _ stripes) <- timeline [See 0 0]]
+
+-- | How a session of trackkat begins: the settings file's text, and the
+-- calibration file's, if there is one. Simplest the default settings and
+-- no calibration.
+data Beginning = Beginning String (Maybe String)
+    deriving (Eq, Show)
+
+instance Arbitrary Beginning where
+    arbitrary = Beginning <$> elements settingsFiles <*> elements calibrationFiles
+    shrink (Beginning settings calibration) =
+        shrinkParts
+            [ \(Beginning s c) -> [Beginning s' c | s' <- earlier settingsFiles s]
+            , \(Beginning s c) -> [Beginning s c' | c' <- earlier calibrationFiles c]
+            ]
+            (Beginning settings calibration)
+
+-- | The session that begins so, as the monotonic clock starts, and how
+-- its recording starts, unless a file can't be read.
+beginning :: Beginning -> Either String (Start, Session)
+beginning (Beginning settings calibration) = do
+    config <- parseConfig settings
+    learnt <- maybe (Right defaultCalibration) parseCalibration calibration
+    pure (startOfSession ["a session of trackkat"] settings calibration 0, newSession config learnt)
+
+-- | What a calibration file may say, if there is one: nothing learnt, or
+-- a camera tipped down and a neck some way behind the clip.
+calibrationFiles :: [Maybe String]
+calibrationFiles =
+    [ Nothing
+    , Just (renderCalibration defaultCalibration)
+    , Just "# as learned\nup = 0.05 -0.95 0.3\nturning = 412.5\npivot = 3 92.25 81\npivot windows = 40\npivot information = 2.5 0 0.1 3 0.2 1.5\n"
+    ]
+
+-- | A settings file's text, as trackkat writes it or as a user might
+-- leave it. Simplest the default file.
+newtype SettingsFile = SettingsFile String
+    deriving (Show)
+
+instance Arbitrary SettingsFile where
+    arbitrary = SettingsFile <$> elements settingsFiles
+    shrink (SettingsFile text) = SettingsFile <$> earlier settingsFiles text
+
+-- | Settings files: the default, and some that say a clip, its distances
+-- to more decimals than trackkat writes, and whether to ignore lights.
+settingsFiles :: [String]
+settingsFiles =
+    [ renderConfig defaultConfig
+    , "clip = 70.00003 110.00002 109.99997\n"
+    , "# mine\nignore lights = off\nclip = 69.123456 111.5 108.25  # measured\nmark = F8\n"
+    , renderConfig defaultConfig{lightMasking = NoMasking}
+    ]
 
 -- | A sink that keeps what it is given, once the action given has let it
 -- be written, and what it has kept so far.
