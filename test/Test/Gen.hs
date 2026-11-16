@@ -98,13 +98,14 @@ import TrackKat.Config
 import TrackKat.Frame (Blob (..), frameHeight, frameWidth)
 import TrackKat.Lights (Masking (..))
 import TrackKat.Linear
-import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
+import TrackKat.Match (Kind (..), Sight (..), Three (..))
 import TrackKat.Number
 import TrackKat.Pose
 import TrackKat.Response
 import TrackKat.Synth (allLit, pointDiscs, renderDiscs)
 import TrackKat.Term (Score (..))
 import TrackKat.Tracker.Blobs (findBlobs)
+import TrackKat.Tracker.Sizes (Size (..), unlearnt)
 import TrackKat.World (Seconds, World (..), inMillimetres, inSeconds, seconds, world)
 
 -- | That two numbers are within a tolerance of each other.
@@ -490,23 +491,19 @@ instance Arbitrary ReflectorBlobs where
     arbitrary = ReflectorBlobs <$> genThree (genBlob 500)
     shrink (ReflectorBlobs three) = ReflectorBlobs <$> shrinkThree shrinkBlob three
 
--- | The sizes the reflectors have had, in pixels at 1 m: none seen yet, or
--- each seen at up to the given size, its usual size from twice its latest
--- down to a twentieth of it, as when it has faded out of sight.
+-- | What is learnt of the reflectors' sizes: nothing yet, or of each the
+-- evidence of blobs of up to the given pixels at 1 m, weighing from what
+-- one faint blob says to what minutes of tracking do.
 genSizes :: Double -> Gen (Three Size)
-genSizes most = oneof [pure (pure noSize), genThree size]
+genSizes most = oneof [pure (pure unlearnt), genThree size]
   where
-    size = do
-        latest <- choose (1, most)
-        Size latest . (latest *) <$> choose (0.05, 2)
+    size = Size . log <$> choose (1, most) <*> (exp <$> choose (0, 12))
 
--- | None seen yet, and each with its usual size its latest.
+-- | Nothing learnt yet.
 shrinkSizes :: Three Size -> [Three Size]
-shrinkSizes sizes =
-    [pure noSize | any ((> 0) . sizeUsual) sizes]
-        ++ [settled | let settled = (\s -> s{sizeUsual = sizeLatest s}) <$> sizes, or ((/=) <$> (sizeUsual <$> sizes) <*> (sizeUsual <$> settled))]
+shrinkSizes = shrinkTo (pure unlearnt) (const [])
 
--- | The sizes the reflectors have had, each seen at up to 3000 pixels at
+-- | What is learnt of the reflectors' sizes, each of up to 3000 pixels at
 -- 1 m (see 'genSizes').
 newtype Sizes = Sizes (Three Size)
     deriving (Eq, Show)

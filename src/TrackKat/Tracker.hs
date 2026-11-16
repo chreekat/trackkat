@@ -3,14 +3,16 @@
 -- A frame goes through stages, each a function of just what it reads, in
 -- a module of its own under @TrackKat.Tracker@: its blobs are sorted by
 -- what the still lights learnt mask ("TrackKat.Tracker.Blobs",
--- "TrackKat.Tracker.Still"); the clip is made out in them, by following
--- the last pose or by their layout, whichever is likelier
--- ("TrackKat.Tracker.Follow", "TrackKat.Tracker.Layout",
--- "TrackKat.Tracker.Choose"), each hypothesis judged by the same terms
--- ("TrackKat.Tracker.Judge"); and what the frame showed is taken into
--- what is kept for the next: the poses to follow from
--- ("TrackKat.Tracker.Trail"), the reflectors' sizes
--- ("TrackKat.Tracker.Sizes"), which pose is the head's
+-- "TrackKat.Tracker.Still"); the ways of making out the clip in them are
+-- gathered, near where the last pose predicts it and by their layout
+-- ("TrackKat.Tracker.Follow", "TrackKat.Tracker.Layout"), each is scored
+-- as a hypothesis by one account, as is the clip being away
+-- ("TrackKat.Tracker.Account", with "TrackKat.Tracker.Reflectors",
+-- "TrackKat.Tracker.Sizes" and "TrackKat.Tracker.Presence" for what the
+-- frame shows), and the best scored is taken ("TrackKat.Tracker.Choose");
+-- and what the frame showed is taken into what is kept for the next: the
+-- poses to follow from ("TrackKat.Tracker.Trail"), the reflectors' sizes
+-- and whether each shows, which pose is the head's
 -- ("TrackKat.Tracker.Mirror"), the lights, and what learns from poses
 -- ("TrackKat.Tracker.Learners"). 'step' puts them together.
 module TrackKat.Tracker (
@@ -37,12 +39,12 @@ module TrackKat.Tracker (
     Looking (..),
     Reason (..),
     Way (..),
+    Picking (..),
+    Guess (..),
     Chosen (..),
-    Tried (..),
-    Fate (..),
+    Rival (..),
     explainChosen,
-    Held (..),
-    explainHeld,
+    explainRivals,
     whyRejectedBy,
     sameWhy,
     describeWhy,
@@ -78,18 +80,20 @@ import TrackKat.Pose
 import TrackKat.Shape
 import TrackKat.Term
 import TrackKat.Tracker.Absence
+import TrackKat.Tracker.Account (Known (..), Reach (..), expecting, metres)
 import TrackKat.Tracker.Blobs
 import TrackKat.Tracker.Choose
-import TrackKat.Tracker.Judge
-import TrackKat.Tracker.Layout (findAfresh)
+import TrackKat.Tracker.Follow (Showing (..), showing)
 import TrackKat.Tracker.Learners
 import TrackKat.Tracker.Mirror
 import TrackKat.Tracker.Outcome
+import TrackKat.Tracker.Presence (Presence)
+import TrackKat.Tracker.Reflectors (Expect (..), presences)
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Sizes
 import TrackKat.Tracker.Still
 import TrackKat.Tracker.Trail
-import TrackKat.World (Instant, seconds, (.-.))
+import TrackKat.World (Instant)
 
 -- | Something the user asked for, carried out on the next tracked frame.
 data Request = Recenter | Calibrate
@@ -101,6 +105,16 @@ data Tracker = Tracker
     , trClip :: !Model
     , trTrail :: !Trail
     , trSizes :: !(Three Size)
+    -- ^ what is learnt of each reflector's size, as of when the clip was
+    -- last made out
+    , trShowed :: !(Maybe (Three Presence, Instant))
+    -- ^ whether each reflector showed when the clip was last made out,
+    -- and when that was
+    , trMadeOut :: !(Maybe Instant)
+    -- ^ when the clip was last made out, if ever
+    , trDoubt :: !Double
+    -- ^ the doubt of the pose followed (see Note [Doubt] in
+    -- "TrackKat.Tracker.Choose")
     , trCentre :: !Centre
     , trLearners :: !Learners
     , trStill :: !Still
@@ -114,7 +128,7 @@ data Tracker = Tracker
 -- | A tracker that starts from the given calibration and recenters on the
 -- first frame it tracks.
 newTracker :: Intrinsics -> Model -> Masking -> Calibration -> Tracker
-newTracker k m masking c = Tracker k m noTrail (pure noSize) (Centre Nothing (newBranch m)) (newLearners m c) (Still masking noLights) [Recenter] []
+newTracker k m masking c = Tracker k m noTrail (pure unlearnt) Nothing Nothing 0 (Centre Nothing (newBranch m)) (newLearners m c) (Still masking noLights) [Recenter] []
 
 -- | What the tracker has learnt so far.
 trackerCalibration :: Tracker -> Calibration
@@ -189,10 +203,11 @@ data Look
 -- | Handle one frame's stripes, seen at the given time. Pending requests
 -- wait for a frame where the clip is tracked.
 step :: Instant -> [Stripe] -> Tracker -> (Tracker, Outcome, [Event])
-step now stripes t = case makeOut known now from shown of
-    Left (why, held) -> unseenFrame look why held t
-    Right (chosen, sighting) -> seenFrame look chosen sighting t
+step now stripes t = case made of
+    Left (why, rivals) -> unseenFrame look why rivals t{trDoubt = doubt}
+    Right (chosen, sighting) -> seenFrame look chosen sighting t{trDoubt = doubt}
   where
+    (doubt, made) = makeOut known now from shown
     look = Look now blobs shown from known
     blobs = findBlobs stripes
     from = stillPredicting now (trTrail t)
@@ -205,6 +220,9 @@ step now stripes t = case makeOut known now from shown of
             , knownClip = trClip t
             , knownReach = Reach (appliedPivot (learnersPivot (trLearners t))) (centrePose (trCentre t))
             , knownSizes = trSizes t
+            , knownShowed = trShowed t
+            , knownMadeOut = trMadeOut t
+            , knownDoubt = trDoubt t
             , knownLast = recentPose <$> trailRecent (trTrail t)
             }
 
@@ -213,21 +231,21 @@ reflectorsAt :: Known -> Pose -> [(Double, Double)]
 reflectorsAt known pose = toList (seenAt (knownCamera known) (knownClip known) pose <$> reflectors)
 
 -- | What is kept, and told, of a frame the clip wasn't made out in, for
--- the reason given, with any pose passed over.
-unseenFrame :: Look -> Why -> Maybe Held -> Tracker -> (Tracker, Outcome, [Event])
-unseenFrame (Look now blobs shown from known) why held t =
+-- the reason given, with what each hypothesis about it scored.
+unseenFrame :: Look -> Why -> [Rival] -> Tracker -> (Tracker, Outcome, [Event])
+unseenFrame (Look now blobs shown from known) why rivals t =
     ( t
         { trLearners = lostSightOf (trLearners t)
         , trStill = (trStill t){stillLights = lights}
         , trTrail = Trail untracked (trailLeft from)
         , trBlobs = roles (shownMask shown) [] blobs
         }
-    , Lost (length (shownVisible shown)) (length (shownMasked shown)) why held
+    , Lost (length (shownVisible shown)) (length (shownMasked shown)) why rivals
     , news
     )
   where
     (lights, news) = learnUnseen now blobs clipIn (trStill t)
-    clipIn mask = either (const []) (map at . snd) (findAfresh known (sortBlobs mask blobs))
+    clipIn mask = map at (maskedClip known now (sortBlobs mask blobs))
     -- Something tracked a moment ago in a light just learnt was the
     -- light, and isn't followed.
     untracked = case trailRecent (trTrail t) of
@@ -237,10 +255,12 @@ unseenFrame (Look now blobs shown from known) why held t =
 -- | What is kept, and told, of a frame the clip was made out in, in the
 -- way and as the sighting given.
 seenFrame :: Look -> Chosen -> Sighting -> Tracker -> (Tracker, Outcome, [Event])
-seenFrame (Look now blobs shown from known) chosen@(Chosen way _) (Sighting seenPose fit sights unused hidden judged) t =
+seenFrame (Look now blobs shown from known) chosen@(Chosen way _ _ _) (Sighting seenPose fit sights unused hidden judged) t =
     ( t
         { trTrail = Trail (if wasLight then Nothing else Just recent) left
         , trSizes = sizes
+        , trShowed = Just (presences sights, now)
+        , trMadeOut = Just now
         , trCentre = asked
         , trLearners = learners
         , trStill = (trStill t){stillLights = lights}
@@ -266,11 +286,18 @@ seenFrame (Look now blobs shown from known) chosen@(Chosen way _) (Sighting seen
     confirmed = standing now since
     (lights, news) = learnSeen now (clipView k m confirmed seenPose sights (biggestAt sizes (centrePose (trCentre t)))) blobs (trStill t)
     wasLight = confirmed == Unconfirmed && inNewLight news (reflectorsAt known seenPose) lights
-    clear = clarity (trSizes t) blobs seenPose sights
+    -- What was expected of the reflectors at the pose seen, and what was
+    -- learnt of their sizes, as of this frame, before it.
+    expected = expecting known now seenPose
+    before = expectSizes expected
+    clear = clarity before blobs seenPose sights
     Told pose centre fix evidence = tellApart k m pivot now clear seenPose sights (Centre (centrePose (trCentre t)) believed)
     correcting = fix /= MirrorNeither
-    recent = Recent pose now (if showing (trSizes t) (metres seenPose) sights == AllShowing then now else maybe now recentAllSeen lastTracked) since
-    sizes = resized (maybe (seconds 0) (\r -> now .-. recentTime r) lastTracked) (metres pose) <$> trSizes t <*> sights
+    recent = Recent pose now (if showing expected sights == AllShowing then now else maybe now recentAllSeen lastTracked) since
+    -- A reflector seen as a blob of its own teaches its size. One sharing
+    -- a blob has its share guessed, not seen, so teaches nothing, as one
+    -- unseen does.
+    sizes = (\size sight -> case sight of Just s | sightKind s /= Merged -> learntFrom (metres pose) (sightPixels s) size; _ -> size) <$> before <*> sights
     ((asked, restarted), requested) = mapAccumL (carryOut now pose) (centre, if correcting then startOver (trLearners t) else trLearners t) (trPending t)
     ref = fromMaybe pose (centrePose asked)
     -- What was believed of a pose left behind was believed of the centre

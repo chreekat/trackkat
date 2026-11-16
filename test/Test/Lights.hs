@@ -4,7 +4,7 @@ module Test.Lights (tests, simulations) where
 
 import Control.Monad (forM_)
 import Data.List (inits, mapAccumL, sort, sortOn, tails, (\\))
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (fromMaybe)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
@@ -51,7 +51,7 @@ simulations = group "Lights" $ do
         maybe False (< 3.5) coldStart && all nearFire (ignored coldRows) && length (ignored coldRows) == 1
     checkShowing "then followed" (show (summed (after 3.5 cold))) $ lostCount (after 3.5 cold) == 0 && fst (worstError cold) < 1.5
     checkShowing "the masked fire reported" (show (take 1 (seens (after 3.5 cold)))) $ all ((> 0) . seenMasked) (seens (after 3.5 cold))
-    checkShowing "without the mask, never found" (show coldUnmasked) $ isNothing coldUnmasked
+    checkShowing "without the mask, found at once all the same: the three that are the clip, of the blobs in view" (show coldUnmasked) $ coldUnmasked == Just 0
     let roles = [(role, distance (blobX b, blobY b) fireAt < 30) | (b, role) <- trackerBlobs coldTracker]
     checkShowing "the last frame's blobs: the reflectors, and the fire masked" (show roles) $
         length [() | (ReflectorBlob, _) <- roles] == 3 && and [role == MaskedBlob | (role, True) <- roles] && all (\(role, byFire) -> byFire || role == ReflectorBlob) roles

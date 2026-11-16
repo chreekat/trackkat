@@ -264,8 +264,8 @@ at the end, so a recording can tell you your clip's shape.
 Something bright behind you that stays put, such as a lamp or a lit fire,
 shows to the camera as a blob much like a reflector. While trackkat follows
 the clip it ignores such blobs anyway, but to find the clip afresh, when it
-starts or after losing it, it needs exactly three big blobs, and a fire
-makes a fourth. So trackkat learns lights that stay within a few pixels for
+starts or after losing it, it has to tell which three blobs are the clip,
+and a fire and its flames make that harder. So trackkat learns lights that stay within a few pixels for
 three seconds, with any flickering bits around them, and from then on
 ignores blobs there, except where it expects the clip (your head can pass
 in front of the light). It learns them while it has lost the clip too, but

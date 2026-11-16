@@ -40,6 +40,7 @@ module TrackKat.World (
     -- * The world
     World (..),
     world,
+    frameTime,
 ) where
 
 -- Note [One world]
@@ -224,15 +225,11 @@ data World = World
     -- a pixel, and the clip's shape and tabs to the rest
     , headStepTurn :: Degrees
     , headStepMove :: Millimetres
-    -- ^ the most a pose followed from one frame to the next turns, and its
-    -- pivot moves: not how fast a head goes (that is 'headTurnSpeed' and
-    -- 'headMoveSpeed', and this is 1800 degrees and nearly 5 m a second at
-    -- 'frameRate') but an allowance, set below what blobs matched to the
-    -- wrong reflectors make a head seem to do
-    , headTurnRate :: DegreesPerSecond
-    , headMoveRate :: MillimetresPerSecond
-    -- ^ how much more that allowance is for each second between two
-    -- sightings of the clip
+    -- ^ the most the pose games see turns, and moves, from one frame to
+    -- the next before it is taken for a jump: not how fast a head goes
+    -- (that is 'headTurnSpeed' and 'headMoveSpeed', and this is 1800
+    -- degrees and nearly 5 m a second at 'frameRate') but an allowance
+    -- well beyond it
     , headTurnSpeed :: DegreesPerSecond
     , headMoveSpeed :: MillimetresPerSecond
     -- ^ the spreads of how fast a head turns, and its pivot moves: a quick
@@ -262,7 +259,38 @@ data World = World
     , sameSizeFactor :: Double
     -- ^ blobs of one reflector differ in size by up to this factor, as the
     -- head leans and turns over a few seconds: within it, two blobs may be
-    -- the same thing
+    -- the same thing; and the spread, as a factor, of one of a clip's
+    -- reflectors' size beside another's
+    , reflectorPixels :: Double
+    -- ^ the pixels a reflector lights at 1 m, about, before any has been
+    -- seen: on the user's camera the lower ones light some 245 and the top
+    -- one 180
+    , reflectorPixelsFactor :: Double
+    -- ^ the spread of that, as a factor, from clip to clip and from one
+    -- setting of the camera to another
+    , sizeNoise :: Double
+    -- ^ the spread of a blob's pixels from one frame to the next, as a
+    -- fraction of them, the reflector and its distance the same
+    , sizeMemory :: Seconds
+    -- ^ the time over which what was learnt of a reflector's size fades,
+    -- the reflector unseen
+    , partShowing :: Double
+    -- ^ the chance that a reflector in sight shows only part of itself:
+    -- dimming at a slant, or half behind something
+    , inPieces :: Double
+    -- ^ the chance that a reflector in sight shows as two blobs
+    , strayBlobs :: Double
+    -- ^ how many blobs that aren't the clip's reflectors a frame shows, on
+    -- average, anywhere in the picture, besides still lights masked
+    , reflectorShowsFor :: Seconds
+    , reflectorHidesFor :: Seconds
+    -- ^ how long at a time, on average, one of the clip's reflectors shows,
+    -- the clip in view, and how long it then stays out of sight: fading at
+    -- a slant, or behind a hand or another reflector
+    , clipInViewFor :: Seconds
+    , clipAwayFor :: Seconds
+    -- ^ how long at a time, on average, the clip is in the camera's view,
+    -- and how long it then stays away
     }
     deriving (Show)
 
@@ -277,8 +305,6 @@ world =
         , centroidNoise = pixels 1
         , headStepTurn = degrees 15
         , headStepMove = millimetres 40
-        , headTurnRate = perSecond 100
-        , headMoveRate = perSecond 200
         , headTurnSpeed = perSecond 300
         , headMoveSpeed = perSecond 500
         , headTurnSpread = degrees 40
@@ -290,4 +316,19 @@ world =
         , neckWithin = millimetres 300
         , headStillFor = seconds 300
         , sameSizeFactor = 1.5
+        , reflectorPixels = 200
+        , reflectorPixelsFactor = 6
+        , sizeNoise = 0.1
+        , sizeMemory = seconds 10
+        , partShowing = 0.01
+        , inPieces = 0.05
+        , strayBlobs = 1
+        , reflectorShowsFor = seconds 10
+        , reflectorHidesFor = seconds 0.5
+        , clipInViewFor = seconds 60
+        , clipAwayFor = seconds 10
         }
+
+-- | The time from one frame to the next, at the world's 'frameRate'.
+frameTime :: World -> Seconds
+frameTime w = Quantity (1 / inPerSecond (frameRate w))

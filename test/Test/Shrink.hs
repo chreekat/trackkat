@@ -17,12 +17,14 @@ import TrackKat.Config
 import TrackKat.Frame (Blob (..), Stripe (..), frameHeight, frameWidth)
 import TrackKat.Idle (Use (..))
 import TrackKat.Linear (V3 (..), norm)
-import TrackKat.Match (Kind (..), Sight (..), Size (..), Three (..), noSize)
+import TrackKat.Match (Kind (..), Sight (..), Three (..))
 import TrackKat.Protocol (Command (..))
 import TrackKat.Response
 import TrackKat.ServedGame (HeadTracking (..), ServedGame (..))
 import TrackKat.Term (LogOdds (..), Score (..), impossible, possible)
 import TrackKat.Tracker.Outcome (Way (..))
+import TrackKat.Tracker.Presence (Presence (..))
+import TrackKat.Tracker.Sizes (Size (..), unlearnt)
 import TrackKat.Updater (Looking (..))
 import TrackKat.World (clockAt, seconds)
 
@@ -71,7 +73,7 @@ tests =
         , shrinksWell "a stray blob" (Stray (roundBlob (0, 0) 6)) (\(Stray b) -> blobOf 400 b)
         , shrinksWell "stray blobs" (Strays []) (\(Strays blobs) -> all (blobOf 400) blobs)
         , shrinksWell "the reflectors' blobs" (ReflectorBlobs (pure (roundBlob (0, 0) 6))) (\(ReflectorBlobs blobs) -> all (blobOf 500) blobs)
-        , shrinksWell "the reflectors' sizes" (Sizes (pure noSize)) (\(Sizes sizes) -> sizes == pure noSize || all (\s -> sizeLatest s >= 1 && sizeLatest s <= 3000 && sizeUsual s >= 0.05 * sizeLatest s && sizeUsual s <= 2 * sizeLatest s) sizes)
+        , shrinksWell "the reflectors' sizes" (Sizes (pure unlearnt)) (\(Sizes sizes) -> sizes == pure unlearnt || all (\s -> sizeEvidence s >= 0 && sizeEvidence s <= log 3000 && sizeWeight s >= 1 && sizeWeight s <= exp 12) sizes)
         , shrinksWell "the reflectors' sights" (ReflectorSights (pure (Sight (0, 0) 6 Whole))) (\(ReflectorSights sights) -> all (sightOf 500) sights)
         , shrinksWell "settings a file can say" (Sayable defaultConfig{recenterBindings = [], pauseBindings = []}) (\(Sayable c) -> parseConfig (renderConfig c) == Right c)
         , shrinksWell "a vector" (V3 0 0 0) (upTo 1000)
@@ -103,7 +105,8 @@ tests =
         , shrinksWell "a game served" (ServedGame 1 Nothing 0 Nothing TrackingStopped) (\g -> servedProcess g >= 1 && maybe True (\profile -> profile >= 0 && profile <= 65535) (servedProfile g))
         , shrinksWell "why an update is looked for" Due (const True)
         , shrinksWell "how clearly the reflectors show" Clear (const True)
-        , shrinksWell "a way the clip was made out" Followed (const True)
+        , shrinksWell "a way the clip came to be where it is" Continued (const True)
+        , shrinksWell "whether something that comes and goes is there" Present (const True)
         ]
   where
     straight = Points [(1, 1)]

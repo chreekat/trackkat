@@ -2,12 +2,12 @@
 
 Roughly in order.
 
-- Straighten tracking's heuristics, the last two steps of four (see
-  [docs/heuristics.md](docs/heuristics.md), which lists every number and
-  nineteen contradictions among them): choose among a frame's candidates by
-  their terms' scores, with the gates that have bitten softened into
-  likelihoods and one term for a blob's size; then one way of remembering,
-  evidence that fades at a stated rate, in place of six.
+- Straighten tracking's heuristics, what is left of it (see
+  [docs/heuristics.md](docs/heuristics.md), "What comes next"): follow two
+  poses with the odds between them, in place of the one sum of doubt;
+  carry how sure the pose is from frame to frame, so that how long two
+  reflectors are followed is a term and not a rule; then one way of
+  remembering, evidence that fades at a stated rate, in place of six.
 - Show why the clip is out of sight in the window, not only the log: the
   Clip light's "Out of sight (3 of 3)" has no room for "too far to the side
   of where you recentered" (`describeWhy`), so it wants a second line or
@@ -26,8 +26,10 @@ Roughly in order.
   It happens in simulation (the clip worn pitched 30 degrees forward, the
   head pitched 20 and glancing) even with the tape drawn exactly as the
   tracker models it, so it is the tracking near the meeting of the poses,
-  not the model of the tape. The mirror-image tests in `Test.Clips` leave
-  those clips out until it is fixed.
+  not the model of the tape. Since poses are chosen by score it slips for
+  far fewer frames (the scorecard in `Test.Scorecard` has 10 wrong of 1441
+  where it had 175), but it slips. The mirror-image tests in `Test.Clips`
+  leave those clips out until it is fixed.
 - On tabs, the clip's lean is more than a hint for the mirror image: it says
   which way the tape faces from the triangle. In simulation, a post 30
   degrees more upright than configured leaves the mirror image uncorrected
@@ -120,11 +122,12 @@ that tests found false. None is fixed.
   0.16 mm off at under 1e-3 px.
 - `parseVersion "0.1" < parseVersion "0.1.0"`.
 - `matches` considers only the first 8 blobs, in the order given.
-- Finding the clip by layout: a pose found needn't fit the blobs, a pose
-  refound is taken without weighing the clip still where it was, the clip
-  still where it was can be impossible with every reflector in place after
-  1 s, and a reflector's usual size can fall below its latest. These are
-  contradictions 16 to 19 in [docs/heuristics.md](docs/heuristics.md).
+- The most a way of making out the clip is reckoned to score, before it is
+  solved, is right only to within a slack (`Tracker.Choose.boundSlack`):
+  what the sizes say is reckoned at a few distances, not all.
+- One frame of the clip's three blobs, with nothing else known, is at
+  some poses less than nine times likelier the clip than not, nearer than
+  about 400 mm, and isn't taken until it is.
 - A settings reload that changes nothing still rebinds hotkeys and
   re-shows settings.
 - Keys and buttons are only looked at when frames arrive, so they do nothing
