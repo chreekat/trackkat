@@ -3356,6 +3356,30 @@ static int create_windows(void)
     return 1;
 }
 
+/* A mouse button going down anywhere but in the binding list being edited
+ * ends the edit, as moving the keyboard on does: much of the window takes
+ * no keyboard, so a click there would otherwise leave the list open. */
+static void click_away(const MSG *msg)
+{
+    switch (msg->message) {
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
+    case WM_NCLBUTTONDOWN:
+    case WM_NCRBUTTONDOWN:
+    case WM_NCMBUTTONDOWN:
+    case WM_NCXBUTTONDOWN:
+        break;
+    default:
+        return;
+    }
+    HWND focus = GetFocus();
+    for (int i = 0; i < LISTS; i++)
+        if (focus && focus == field_ctl[F_RECENTER + i] && msg->hwnd != focus)
+            SetFocus(main_hwnd);
+}
+
 static DWORD WINAPI gui_thread(LPVOID unused)
 {
     (void)unused;
@@ -3370,6 +3394,7 @@ static DWORD WINAPI gui_thread(LPVOID unused)
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        click_away(&msg);
         /* Gives the windows Tab between controls, Enter to save and Esc to hide. */
         if (IsDialogMessageW(main_hwnd, &msg) || IsDialogMessageW(log_hwnd, &msg))
             continue;
