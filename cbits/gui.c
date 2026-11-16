@@ -2619,7 +2619,8 @@ static void build_window(void)
     }
 
     /* Each binding list in a column under its switch. A box never wraps, so
-     * that a line is a binding; a long one scrolls sideways as it is edited. */
+     * that a line is a binding; a long one scrolls sideways as it is edited, and
+     * the smaller type shows more of it. */
     static const wchar_t *const headings[LISTS] = {L"RECENTER", L"PAUSE", L"TRIM", L"AIM"};
     static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM, ID_ADD_AIM};
     int column_w = SWITCH_W - 8;
@@ -2632,7 +2633,7 @@ static void build_window(void)
                                        ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN,
                                    S(x), S(BIND_Y + 44), S(column_w), S(64), main_hwnd,
                                    (HMENU)(INT_PTR)(ID_FIELD + F_RECENTER + i), inst, NULL);
-        SendMessageW(box, WM_SETFONT, (WPARAM)ui_font, FALSE);
+        SendMessageW(box, WM_SETFONT, (WPARAM)small_font, FALSE);
         edit_proc = (WNDPROC)SetWindowLongPtrW(box, GWLP_WNDPROC, (LONG_PTR)list_box_proc);
         field_ctl[F_RECENTER + i] = tip(box, list_tips[i]);
         add_button[i] = tip(control(L"BUTTON", L"Add…", WS_TABSTOP | BS_PUSHBUTTON, x, BIND_Y + 112, 100, 24, add_ids[i]),
