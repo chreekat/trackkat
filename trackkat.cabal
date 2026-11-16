@@ -170,6 +170,7 @@ test-suite tests
     Test.Recording
     Test.Release
     Test.Response
+    Test.Scorecard
     Test.Session
     Test.ServedGame
     Test.Shape
