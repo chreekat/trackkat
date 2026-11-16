@@ -32,6 +32,7 @@ import TrackKat.Install (configFile, findPaths)
 #endif
 import TrackKat.Number (parseCount, parseNumber, renderNumber)
 import TrackKat.Pose
+import TrackKat.Recorder
 import TrackKat.Recording
 import TrackKat.Shape
 import TrackKat.Term (Tally, renderFindings, renderTally, tallyLast, tallyRejected)
@@ -237,21 +238,24 @@ run opts args config cam = do
                 , startCalibration = FreshCalibration
                 , startClock = clock
                 }
-    case (optRecord opts, startTracker start) of
+    case (optRecord opts, startTracking start) of
         (_, Left err) -> hPutStrLn stderr ("can't track with these settings: " ++ err) >> exitFailure
-        (Nothing, Right tracker) -> track opts cam notRecording tracker
-        (Just path, Right tracker) -> do
-            putStrLn ("# recording to " ++ path ++ "; m Enter marks when something goes wrong")
-            withRecorder path start (\rec -> track opts cam rec tracker)
+        (Nothing, Right tracking) -> track opts cam notRecording tracking
+        (Just path, Right tracking) ->
+            withRecorder path start (putStrLn . ("# recording stopped: " ++)) $ \case
+                Left err -> hPutStrLn stderr ("can't record to " ++ path ++ ": " ++ err) >> exitFailure
+                Right rec -> do
+                    putStrLn ("# recording to " ++ path ++ "; m Enter marks when something goes wrong")
+                    track opts cam rec tracking
 
 -- | Track the camera's frames from the given tracker, recording them.
-track :: Options -> Camera -> Recorder -> Tracker -> IO ()
-track opts cam rec tracker0 = do
+track :: Options -> Camera -> Recorder -> Tracking -> IO ()
+track opts cam rec tracking0 = do
     putStrLn "# tracking; Enter recenters, c Enter calibrates level, m Enter marks, Ctrl-C stops"
     lastPrint <- newIORef 0
     frames <- newIORef (0 :: Int)
-    tracker <- newIORef tracker0
-    told <- newIORef (nothingTold tracker0)
+    tracking <- newIORef tracking0
+    told <- newIORef (nothingTold (trackingTracker tracking0))
     -- What the user did since the last frame, newest first.
     inputs <- newIORef []
     marks <- newIORef (0 :: Int)
@@ -274,8 +278,9 @@ track opts cam rec tracker0 = do
     let trackFrame n stripes = do
             now <- getMonotonicTimeNSec
             pending <- atomicModifyIORef' inputs (\is -> ([], reverse is))
-            (t', outcome, events) <- trackLive rec pending now n stripes =<< readIORef tracker
-            writeIORef tracker $! t'
+            (tracking', outcome, events) <- trackLive rec pending now n stripes =<< readIORef tracking
+            writeIORef tracking $! tracking'
+            let t' = trackingTracker tracking'
             mapM_ (putStrLn . describeEvent (trackerCentre t')) events
             mapM_ putStrLn =<< atomicModifyIORef' told (\was -> let (now', said) = tell opts t' outcome was in (now', said))
             pure (outcome, trackerBlobs t')
@@ -317,7 +322,13 @@ replayFile opts path = do
     let recorded = recStart recording
     config <- orFail (parseConfig (unlines [n ++ " = " ++ v | (n, v) <- startSettings recorded]))
     let used = config{clip = fromMaybe (clip config) (optClip opts), lightMasking = fromMaybe (lightMasking config) (optMasking opts)}
-        start = recorded{startSettings = settingValues (renderConfig used)}
+        -- The settings the command line gives, which the recording's own,
+        -- at its start or saved later, give way to.
+        given = [named | named@(name, _) <- settingValues (renderConfig used), name `elem` (["clip" | Just _ <- [optClip opts]] ++ ["ignore lights" | Just _ <- [optMasking opts]])]
+        start = recorded{startSettings = [(name, fromMaybe value (lookup name given)) | (name, value) <- startSettings recorded]}
+        kept e = case e of
+            InputEntry _ (Setting name _) -> name `notElem` map fst given
+            _ -> True
     mapM_ (putStrLn . ("# " ++)) (startNotes recorded)
     putStrLn $
         "# clip "
@@ -326,7 +337,7 @@ replayFile opts path = do
             ++ case lightMasking used of
                 MaskLights -> ", ignoring still lights"
                 NoMasking -> ", not ignoring still lights"
-    replayed <- orFail (replay recording{recStart = start})
+    replayed <- orFail (replay recording{recStart = start, recEntries = filter kept (recEntries recording)})
     let at t line = printf "%10.3f  %s" (secondsSince start t) line :: String
         -- As live: a frame's line ten times a second, counting the frames
         -- since the last. Returns the last frame's tracker.
@@ -348,7 +359,10 @@ replayFile opts path = do
             (InputEntry t (Press Recenter), _) -> putStrLn (at t "# Enter pressed") >> go printed was latest rest
             (InputEntry t (Press Calibrate), _) -> putStrLn (at t "# c Enter pressed") >> go printed was latest rest
             (InputEntry t (Mark m), _) -> putStrLn (at t ("# mark " ++ show m)) >> go printed was latest rest
+            (InputEntry t ClearCalibration, _) -> putStrLn (at t "# calibration cleared") >> go printed was latest rest
+            (InputEntry t (Setting name value), _) -> putStrLn (at t ("# setting " ++ name ++ " = " ++ value)) >> go printed was latest rest
             (CorruptEntry t why, _) -> putStrLn (at t ("# corrupt packet: " ++ why)) >> go printed was latest rest
+            (NoteEntry t text, _) -> putStrLn (at t ("# " ++ text)) >> go printed was latest rest
             (Unreadable n why, _) -> hPutStrLn stderr (path ++ ": line " ++ show n ++ ": " ++ why ++ "; stopping there") >> pure latest
     final <- go (-1 / 0, 0 :: Int) (either (const (Told Nothing [])) nothingTold (startTracker start)) Nothing replayed
     -- What the recording says of the clip's shape, sure or not, and what

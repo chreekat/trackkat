@@ -19,27 +19,32 @@ module TrackKat.Recording (
 
     -- * Time
     secondsSince,
+    clockSeconds,
+    trackerTime,
 
-    -- * Tracking live
+    -- * Trackers and their settings
+    trackerFor,
+    resettled,
+    Tracking,
+    trackingTracker,
+    startTracking,
     startTracker,
-    Recorder,
-    notRecording,
-    record,
-    withRecorder,
     liveFrame,
-    trackLive,
+
+    -- * What a session does
+    Did (..),
+    Tape,
+    startTape,
+    taped,
 
     -- * Replaying
     Replayed (..),
     replay,
 ) where
 
-import Control.Concurrent.Async (link, wait, withAsync)
-import Control.Concurrent.Chan (newChan, readChan, writeChan)
-import Control.Exception (IOException, displayException, finally, try)
-import Control.Monad (when)
+import Control.Exception (IOException, displayException, try)
 import qualified Data.ByteString as B
-import Data.ByteString.Builder (Builder, char7, hPutBuilder, intDec, integerDec, string7, stringUtf8, word8Dec)
+import Data.ByteString.Builder (Builder, char7, intDec, integerDec, string7, stringUtf8, word8Dec)
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Char (intToDigit, isDigit, isSpace)
@@ -47,10 +52,9 @@ import Data.List (dropWhileEnd)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8Lenient)
 import Data.Word (Word64, Word8)
-import System.IO (BufferMode (..), IOMode (..), hFlush, hSetBinaryMode, hSetBuffering, withFile)
 
-import TrackKat.Calibration (defaultCalibration, parseCalibration)
-import TrackKat.Config (Config (..), clipModel, parseConfig)
+import TrackKat.Calibration (Calibration, defaultCalibration, parseCalibration)
+import TrackKat.Config (Config (..), clipModel, parseConfig, settingValues)
 import TrackKat.Frame (Stripe (..))
 import TrackKat.Number (parseExact, parseNatural, renderExact)
 import TrackKat.Pose (Intrinsics (..))
@@ -62,7 +66,7 @@ import TrackKat.World (Instant, clockAt)
 -- A recording is text, one line per frame, so it can be read, diffed and
 -- cut down by hand. It starts with what the tracker was made from:
 --
---   trackkat recording 1
+--   trackkat recording 2
 --   # tirprobe 0.1.142+3f9c2e1 --record problem.txt     (comments: notes)
 --   camera 660.2235… 320.0 240.0     (focal length and centre, in pixels,
 --                                     each in the fewest digits that read
@@ -81,6 +85,9 @@ import TrackKat.World (Instant, clockAt)
 --   12.351234567 calibrate
 --   12.351234567 mark 1
 --   12.360000000 corrupt bad header checksum
+--   12.400000000 clear calibration
+--   12.400000000 setting clip = 70 105 105
+--   12.400000000 note camera connected
 --
 -- A frame has the camera's frame counter and its stripes, each as line,
 -- start, points, sum of brightness times x from the start, and sum of
@@ -91,11 +98,22 @@ import TrackKat.World (Instant, clockAt)
 -- whole nanoseconds, as the clock gives them, so the tracker is given the
 -- same time on replay to the last bit.
 --
+-- The last three are what trackkat does that tirprobe doesn't, each
+-- applying before the frame after it: the calibration cleared, to track
+-- afresh from none; a setting saved with a new value, as trackkat.conf
+-- wrote it; and a note, which changes nothing, as of the camera going
+-- away and coming back. Version 1 had none of the three, and is read
+-- still.
+--
 -- A new kind of line or header, or a change to one, needs a new version.
 
--- | The version of the format written, and the only one read.
+-- | The version of the format written.
 formatVersion :: Int
-formatVersion = 1
+formatVersion = 2
+
+-- | The versions read.
+versionsRead :: [Integer]
+versionsRead = [1, 2]
 
 -- | What the tracker was made from, and when the recording started.
 data Start = Start
@@ -123,6 +141,11 @@ data Input
     = Press Request
     | -- | Something just went wrong; marks are numbered from 1.
       Mark Int
+    | -- | The calibration cleared, to track afresh from none.
+      ClearCalibration
+    | -- | A setting saved with a new value: its name and the value, as
+      -- trackkat.conf writes them.
+      Setting String String
     deriving (Eq, Show)
 
 -- | A line of a recording after its start. Times are nanoseconds on the
@@ -134,6 +157,8 @@ data Entry
       InputEntry !Word64 Input
     | -- | when a packet from the camera couldn't be read, and why
       CorruptEntry !Word64 String
+    | -- | when something worth knowing happened that changes no tracking
+      NoteEntry !Word64 String
     | -- | a line that couldn't be read, by number from 1, and why; as when
       -- the program writing it was killed. Nothing follows.
       Unreadable Int String
@@ -146,10 +171,14 @@ data Recording = Recording
     }
     deriving (Eq, Show)
 
--- | The tracker's time for nanoseconds on the monotonic clock: the moment
--- 'GHC.Clock.getMonotonicTime' tells as as many seconds.
+-- | Nanoseconds on the monotonic clock in seconds, as
+-- 'GHC.Clock.getMonotonicTime' tells them.
+clockSeconds :: Word64 -> Double
+clockSeconds ns = fromIntegral ns / 1e9
+
+-- | The tracker's time for nanoseconds on the monotonic clock.
 trackerTime :: Word64 -> Instant
-trackerTime ns = clockAt (fromIntegral ns / 1e9)
+trackerTime = clockAt . clockSeconds
 
 -- | Seconds since a recording's start.
 secondsSince :: Start -> Word64 -> Double
@@ -164,7 +193,7 @@ renderStart s =
         [string7 "trackkat recording " <> intDec formatVersion <> nl]
             ++ [stringUtf8 ("# " ++ n) <> nl | n <- startNotes s]
             ++ [string7 "camera " <> string7 (unwords (map renderExact [focal k, cx k, cy k])) <> nl]
-            ++ [stringUtf8 ("setting " ++ n ++ " =" ++ (if null v then "" else " " ++ v)) <> nl | (n, v) <- startSettings s]
+            ++ [stringUtf8 (settingLine n v) <> nl | (n, v) <- startSettings s]
             ++ [stringUtf8 ("calibration " ++ l) <> nl | l <- calibrationLines (startCalibration s)]
             ++ [string7 "clock " <> integerDec (toInteger (startClock s)) <> nl]
   where
@@ -180,7 +209,10 @@ renderEntry s = \case
     InputEntry t (Press Recenter) -> time t <> string7 " recenter" <> nl
     InputEntry t (Press Calibrate) -> time t <> string7 " calibrate" <> nl
     InputEntry t (Mark m) -> time t <> string7 " mark " <> intDec m <> nl
+    InputEntry t ClearCalibration -> time t <> string7 " clear calibration" <> nl
+    InputEntry t (Setting n v) -> time t <> char7 ' ' <> stringUtf8 (oneLine (settingLine n v)) <> nl
     CorruptEntry t why -> time t <> string7 " corrupt " <> stringUtf8 (oneLine why) <> nl
+    NoteEntry t text -> time t <> string7 " note " <> stringUtf8 (oneLine text) <> nl
     Unreadable n why -> stringUtf8 ("# line " ++ show n ++ ": " ++ oneLine why) <> nl
   where
     time t =
@@ -195,46 +227,16 @@ renderEntry s = \case
 nl :: Builder
 nl = char7 '\n'
 
--- | Something to give each entry to, to record it, or not.
-newtype Recorder = Recorder
-    { record :: Entry -> IO ()
-    -- ^ Hand an entry over to be written; this doesn't wait for the file.
-    }
-
--- | Records nothing.
-notRecording :: Recorder
-notRecording = Recorder (const (pure ()))
-
--- | Record to a file, replacing it, starting with the given start: the
--- action is given a recorder. Entries are written, buffered, by a thread
--- of their own, so that recording doesn't hold up the caller; the file is
--- flushed at each mark, and complete however the action exits.
-withRecorder :: FilePath -> Start -> (Recorder -> IO a) -> IO a
-withRecorder path start act = withFile path WriteMode $ \h -> do
-    hSetBinaryMode h True
-    hSetBuffering h (BlockBuffering (Just 65536))
-    hPutBuilder h (renderStart start)
-    hFlush h
-    entries <- newChan
-    let writer =
-            readChan entries >>= \case
-                Nothing -> hFlush h
-                Just e -> do
-                    hPutBuilder h (renderEntry start e)
-                    when (isMark e) (hFlush h)
-                    writer
-    withAsync writer $ \w -> do
-        link w
-        act (Recorder (writeChan entries . Just)) `finally` (writeChan entries Nothing >> wait w)
-  where
-    isMark (InputEntry _ (Mark _)) = True
-    isMark _ = False
+-- | A setting's line, in a recording's start or after it.
+settingLine :: String -> String -> String
+settingLine n v = "setting " ++ n ++ " =" ++ (if null v then "" else " " ++ v)
 
 -- * Reading
 
 -- | Read a recording. The start must be complete; a line after it that
 -- can't be read, or is cut short, without the newline that ends every
--- line, ends the entries with 'Unreadable'. Entries are read as
+-- line, or that gives a setting a value it can't have, ends the entries
+-- with 'Unreadable'. Entries are read as
 -- they are used, so a long recording can be replayed without holding it
 -- all.
 parseRecording :: BL.ByteString -> Either String Recording
@@ -243,10 +245,10 @@ parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
     (_, Nothing) : _ -> Left "cut short: not a trackkat recording"
     (_, Just first) : rest
         | ["trackkat", "recording", version] <- BL.words first
-        , parseNatural (BL.unpack version) == Just (toInteger formatVersion) ->
+        , maybe False (`elem` versionsRead) (parseNatural (BL.unpack version)) ->
             header emptyHeader rest
         | take 2 (BL.words first) == ["trackkat", "recording"] ->
-            Left ("a version " ++ BL.unpack (BL.unwords (drop 2 (BL.words first))) ++ " recording; this reads version " ++ show formatVersion)
+            Left ("a version " ++ BL.unpack (BL.unwords (drop 2 (BL.words first))) ++ " recording; this reads versions up to " ++ show formatVersion)
         | otherwise -> Left "not a trackkat recording: it should start with \"trackkat recording\""
   where
     header h [] = finish h []
@@ -260,7 +262,7 @@ parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
                 ("camera", spec)
                     | Just [f, x, y] <- traverse parseExact (words spec) -> header h{hIntrinsics = Just (Intrinsics f x y)} rest
                 ("setting", spec)
-                    | (name, '=' : value) <- break (== '=') spec -> header h{hSettings = hSettings h ++ [(trim name, trim value)]} rest
+                    | Just named <- parseSetting spec -> header h{hSettings = hSettings h ++ [named]} rest
                 ("calibration", ' ' : line) -> header h{hCalibration = hCalibration h ++ [line]} rest
                 ("clock", spec)
                     | Just c <- parseNatural (trim spec), c <= toInteger (maxBound :: Word64) -> header h{hClock = Just (fromInteger c)} rest
@@ -277,16 +279,20 @@ parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
                     , startClock = clock
                     }
         _ <- startTracker start
-        pure (Recording start (entries clock ls))
+        pure (Recording start (entries clock (startSettings start) ls))
     startsTimed (c : _) = isDigit c || c == '-'
     startsTimed [] = False
     trim = dropWhileEnd isSpace . dropWhile isSpace
-    entries _ [] = []
-    entries _ ((n, Nothing) : _) = [Unreadable n "cut short"]
-    entries clock ((n, Just l) : rest)
-        | BL.all isSpace l || BL.isPrefixOf "#" l = entries clock rest
+    -- The entries, given the settings as the lines before them leave them.
+    entries _ _ [] = []
+    entries _ _ ((n, Nothing) : _) = [Unreadable n "cut short"]
+    entries clock settings ((n, Just l) : rest)
+        | BL.all isSpace l || BL.isPrefixOf "#" l = entries clock settings rest
         | otherwise = case parseEntry clock (BL.toStrict l) of
-            Right e -> e : entries clock rest
+            Right e@(InputEntry _ (Setting name value)) -> case parseSettings (set name value settings) of
+                Right _ -> e : entries clock (set name value settings) rest
+                Left why -> [Unreadable n why]
+            Right e -> e : entries clock settings rest
             Left why -> [Unreadable n why]
 
 -- | A text's lines, each but one cut short at the end of the text.
@@ -327,12 +333,25 @@ parseEntry clock line = do
         ["recenter"] -> Right (InputEntry at (Press Recenter))
         ["calibrate"] -> Right (InputEntry at (Press Calibrate))
         ["mark", m] | Just (k, "") <- B8.readInt m -> Right (InputEntry at (Mark k))
-        "corrupt" : _ -> Right (CorruptEntry at (utf8 (B8.drop 1 (B8.dropWhile (/= ' ') (B8.dropWhile (== ' ') rest)))))
+        ["clear", "calibration"] -> Right (InputEntry at ClearCalibration)
+        "setting" : _ | Just (name, value) <- parseSetting (utf8 (afterWord rest)) -> Right (InputEntry at (Setting name value))
+        "corrupt" : _ -> Right (CorruptEntry at (utf8 (afterWord rest)))
+        "note" : _ -> Right (NoteEntry at (utf8 (afterWord rest)))
         _ -> Left ("unknown line: " ++ B8.unpack (B8.take 40 line))
   where
+    -- What follows the first word, and a space, of a line after its time.
+    afterWord = B8.drop 1 . B8.dropWhile (/= ' ') . B8.dropWhile (== ' ')
     parseStripe s = case traverse B8.readInt (B8.split ',' s) of
         Just [(a, ""), (b, ""), (c, ""), (d, ""), (e, "")] -> Right (Stripe a b c d e)
         _ -> Left ("bad stripe " ++ show (B8.unpack s))
+
+-- | A setting's name and value from what follows @setting@ on its line.
+parseSetting :: String -> Maybe (String, String)
+parseSetting spec = case break (== '=') spec of
+    (name, '=' : value) -> Just (trim name, trim value)
+    _ -> Nothing
+  where
+    trim = dropWhileEnd isSpace . dropWhile isSpace
 
 -- | Nanoseconds from seconds to the nanosecond, like @12.345678901@.
 parseTime :: B.ByteString -> Maybe Integer
@@ -350,36 +369,125 @@ readRecording path = either (Left . displayException @IOException) parseRecordin
 
 -- * Tracking
 
--- | Carry out something the user did.
-applyInput :: Input -> Tracker -> Tracker
-applyInput (Press r) = request r
-applyInput (Mark _) = id
+-- | A tracker of the clip settings give, masking still lights or not as
+-- they say, starting from a calibration.
+trackerFor :: Intrinsics -> Config -> Calibration -> Tracker
+trackerFor k config = newTracker k (clipModel (clip config)) (lightMasking config)
+
+-- | A tracker taken from tracking by some settings to tracking by others.
+resettled :: Config -> Config -> Tracker -> Tracker
+resettled old new = reshaped . masked
+  where
+    masked
+        | lightMasking new /= lightMasking old = setMasking (lightMasking new)
+        | otherwise = id
+    reshaped
+        | clip new /= clip old = setModel (clipModel (clip new))
+        | otherwise = id
+
+-- | A tracker with the camera and the settings it tracks by: what a
+-- recording's entries are carried out on.
+data Tracking = Tracking
+    { trackingCamera :: Intrinsics
+    , trackingSettings :: [(String, String)]
+    -- ^ trackkat.conf's settings, by name, as last given
+    , trackingConfig :: Config
+    -- ^ what those settings say
+    , trackingTracker :: !Tracker
+    }
+
+-- | The settings that names and values give, as trackkat.conf writes them.
+parseSettings :: [(String, String)] -> Either String Config
+parseSettings settings = either (Left . ("settings: " ++)) Right (parseConfig (unlines [n ++ " = " ++ v | (n, v) <- settings]))
+
+-- | Settings with one given a value, at the end if it wasn't among them.
+set :: String -> String -> [(String, String)] -> [(String, String)]
+set name value settings
+    | any ((== name) . fst) settings = [(n, if n == name then value else v) | (n, v) <- settings]
+    | otherwise = settings ++ [(name, value)]
+
+-- | Carry out something the user did. A setting given a value it can't
+-- have changes nothing.
+applyInput :: Input -> Tracking -> Tracking
+applyInput input t = case input of
+    Press r -> t{trackingTracker = request r (trackingTracker t)}
+    Mark _ -> t
+    ClearCalibration -> t{trackingTracker = trackerFor (trackingCamera t) (trackingConfig t) defaultCalibration}
+    Setting name value ->
+        let settings = set name value (trackingSettings t)
+         in case parseSettings settings of
+                Right config -> t{trackingSettings = settings, trackingConfig = config, trackingTracker = resettled (trackingConfig t) config (trackingTracker t)}
+                Left _ -> t
+
+-- | Tracking as a recording's start describes it, unless its settings or
+-- calibration can't be read.
+startTracking :: Start -> Either String Tracking
+startTracking s = do
+    config <- parseSettings (startSettings s)
+    calibration <- case startCalibration s of
+        FreshCalibration -> Right defaultCalibration
+        SavedCalibration text -> either (Left . ("calibration: " ++)) Right (parseCalibration text)
+    pure (Tracking (startIntrinsics s) (startSettings s) config (trackerFor (startIntrinsics s) config calibration))
 
 -- | A tracker as a recording's start describes it, unless its settings or
 -- calibration can't be read.
 startTracker :: Start -> Either String Tracker
-startTracker s = do
-    config <- either (Left . ("settings: " ++)) Right (parseConfig (unlines [n ++ " = " ++ v | (n, v) <- startSettings s]))
-    calibration <- case startCalibration s of
-        FreshCalibration -> Right defaultCalibration
-        SavedCalibration text -> either (Left . ("calibration: " ++)) Right (parseCalibration text)
-    pure (newTracker (startIntrinsics s) (clipModel (clip config)) (lightMasking config) calibration)
+startTracker = fmap trackingTracker . startTracking
 
 -- | Carry out what the user did since the last frame, then track a frame
 -- seen at the given time on the monotonic clock, with its counter: the
 -- entries that say so, which 'replay' repeats, and what tracking comes to.
-liveFrame :: [(Word64, Input)] -> Word64 -> Word8 -> [Stripe] -> Tracker -> ([Entry], (Tracker, Outcome, [Event]))
+liveFrame :: [(Word64, Input)] -> Word64 -> Word8 -> [Stripe] -> Tracking -> ([Entry], (Tracking, Outcome, [Event]))
 liveFrame inputs at n stripes t =
     ( [InputEntry pressed i | (pressed, i) <- inputs] ++ [FrameEntry at n stripes]
-    , step (trackerTime at) stripes (foldl (flip applyInput) t (map snd inputs))
+    , (given{trackingTracker = t'}, outcome, events)
     )
+  where
+    given = foldl (flip applyInput) t (map snd inputs)
+    (t', outcome, events) = step (trackerTime at) stripes (trackingTracker given)
 
--- | Track a frame live (see 'liveFrame'), recording it.
-trackLive :: Recorder -> [(Word64, Input)] -> Word64 -> Word8 -> [Stripe] -> Tracker -> IO (Tracker, Outcome, [Event])
-trackLive rec inputs at n stripes t = do
-    let (entries, tracked) = liveFrame inputs at n stripes t
-    mapM_ (record rec) entries
-    pure tracked
+-- * What a session does
+
+-- | Something a session of trackkat did with its tracker, or that
+-- happened to it, for a recording to say.
+data Did
+    = -- | gave the tracker a frame
+      GaveFrame [Stripe]
+    | -- | asked the tracker for something
+      Requested Request
+    | -- | cleared the calibration, tracking afresh from none
+      ClearedCalibration
+    | -- | took up the settings file as saved: its text
+      TookSettings String
+    | -- | was asked to mark the moment, the marks numbered from 1
+      Marked Int
+    | -- | dropped a packet from the camera as corrupt, and why
+      DroppedCorrupt String
+    | -- | something worth a note that changes no tracking
+      Noted String
+    deriving (Eq, Show)
+
+-- | The settings as a recording of a session last said them.
+newtype Tape = Tape [(String, String)]
+
+-- | A recording that has said only its start.
+startTape :: Start -> Tape
+startTape = Tape . startSettings
+
+-- | The entries that say what a session did at a time on the monotonic
+-- clock, a frame having the given counter: settings are said just where
+-- the file gives them another value than the recording last said.
+taped :: Word64 -> Word8 -> Did -> Tape -> (Tape, [Entry])
+taped at n did tape@(Tape said) = case did of
+    GaveFrame stripes -> (tape, [FrameEntry at n stripes])
+    Requested r -> (tape, [InputEntry at (Press r)])
+    ClearedCalibration -> (tape, [InputEntry at ClearCalibration])
+    TookSettings text ->
+        let now = settingValues text
+         in (Tape now, [InputEntry at (Setting name value) | (name, value) <- now, lookup name said /= Just value])
+    Marked m -> (tape, [InputEntry at (Mark m)])
+    DroppedCorrupt why -> (tape, [CorruptEntry at why])
+    Noted text -> (tape, [NoteEntry at text])
 
 -- * Replaying
 
@@ -387,16 +495,16 @@ trackLive rec inputs at n stripes t = do
 -- frame showed, and what happened.
 data Replayed = Replayed Entry (Maybe (Tracker, Outcome, [Event]))
 
--- | Replay a recording through the tracker, as 'trackLive' tracked it,
+-- | Replay a recording through the tracker, as it was tracked live,
 -- unless its start can't be read.
 replay :: Recording -> Either String [Replayed]
-replay r = (\t0 -> from t0 (recEntries r)) <$> startTracker (recStart r)
+replay r = (\t0 -> from t0 (recEntries r)) <$> startTracking (recStart r)
   where
     from _ [] = []
     from t (e : es) = case e of
         FrameEntry at _ stripes ->
-            let (t', o, evs) = step (trackerTime at) stripes t
-             in t' `seq` Replayed e (Just (t', o, evs)) : from t' es
+            let (t', o, evs) = step (trackerTime at) stripes (trackingTracker t)
+             in t' `seq` Replayed e (Just (t', o, evs)) : from t{trackingTracker = t'} es
         InputEntry _ i -> Replayed e Nothing : from (applyInput i t) es
         _ -> Replayed e Nothing : from t es
 

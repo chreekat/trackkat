@@ -1,23 +1,33 @@
+{-# LANGUAGE LambdaCase #-}
+
 -- | Recording and replaying (see "TrackKat.Recording"): a session recorded
 -- as tirprobe records one replays to the very same outcomes, events and
 -- poses, and the recordings of real problems in 'recordingRegressions'
--- replay as they should.
+-- replay as they should; and writing a recording never holds up whoever
+-- records (see "TrackKat.Recorder").
 module Test.Recording (simulations, properties) where
 
+import Control.Concurrent (forkFinally)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
+import Control.Exception (throwIO)
+import Control.Monad (replicateM, replicateM_)
 import qualified Data.ByteString as B
-import Data.ByteString.Builder (toLazyByteString)
+import Data.ByteString.Builder (Builder, toLazyByteString)
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BL
+import Data.Char (isAlphaNum)
 import Data.Either (isLeft)
-import Data.List (isInfixOf, nub)
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import Data.List (isInfixOf, mapAccumL, nub)
 import Data.Word (Word64, Word8)
 import System.Directory (getTemporaryDirectory, removePathForcibly)
 import System.FilePath ((</>))
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup, withResource)
-import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck
 
-import Test.Gen (earlier, genConfig, shrinkParts)
+import Test.Gen (earlier, genConfig, shrinkFrom, shrinkParts)
 import Test.Instances ()
 import Test.Simulation (clipBent, headSeen)
 import TrackKat.Calibration
@@ -25,6 +35,7 @@ import TrackKat.Config
 import TrackKat.Frame
 
 import TrackKat.Pose
+import TrackKat.Recorder
 import TrackKat.Recording
 import TrackKat.Synth
 import TrackKat.Tracker
@@ -63,8 +74,8 @@ simulations =
                             _ -> False
                         Left _ -> False
                 ]
-        , testCase "another version of recording is refused" $
-            assertBool "" (isLeft (parseRecording (BL.fromStrict (C.pack "trackkat recording 2\n"))))
+        , testCase "a later version of recording is refused" $
+            assertBool "" (isLeft (parseRecording (BL.fromStrict (C.pack "trackkat recording 3\n"))))
         , testGroup
             "recordings of real problems"
             [ testCase (file ++ ": " ++ name) $ do
@@ -86,22 +97,27 @@ reading session holds = do
     either (assertFailure . ("the recording reads back: " ++)) (holds live) (parseRecording whole)
 
 -- | Track 'recordedSession' live, recording it to a file as tirprobe does:
--- what each frame stepped to, and the file's bytes.
+-- what each frame stepped to, and the file's bytes. The session is of
+-- fewer entries than a recorder's 'backlog', so that however slowly they
+-- are written, none is dropped.
 recordSession :: IO ([String], BL.ByteString)
 recordSession = do
     tmp <- getTemporaryDirectory
     let path = tmp </> "trackkat-test-recording.txt"
-    t0 <- either (\err -> ioError (userError ("the session's start: " ++ err))) pure (startTracker sessionStart)
-    live <- withRecorder path sessionStart $ \rec -> do
+    t0 <- orFail "the session's start: " (startTracking sessionStart)
+    live <- withRecorder path sessionStart (const (pure ())) $ \opened -> do
+        rec <- orFail "the session's file: " opened
         let go _ [] = pure []
             go t ((at, n, stripes, inputs, corrupt) : rest) = do
                 mapM_ (record rec . CorruptEntry at) corrupt
                 (t', o, evs) <- trackLive rec inputs at n stripes t
-                (stepped t' o evs :) <$> go t' rest
+                (stepped (trackingTracker t') o evs :) <$> go t' rest
         go t0 recordedSession
     whole <- B.readFile path
     removePathForcibly path
     pure (live, BL.fromStrict whole)
+  where
+    orFail what = either (\err -> ioError (userError (what ++ err))) pure
 
 -- | What the synthetic session's tracker is made from.
 sessionStart :: Start
@@ -208,13 +224,127 @@ properties =
                                         .&&. length (recEntries back) === wholeLines + (if cutShort then 1 else 0)
         , testProperty "a session replays from its recording to what it came to live" $
             \(Glances session) ->
-                case startTracker sessionStart of
+                case startTracking sessionStart of
                     Left err -> counterexample err False
                     Right t0 ->
                         let (entries, live) = tracked t0 session
                          in case replay =<< parseRecording (written (Recording sessionStart entries)) of
                                 Left err -> counterexample err False
                                 Right replayed -> [stepped t o evs | Replayed _ (Just (t, o, evs)) <- replayed] === live
+        , testProperty "a recording said to be of the first version, which had no settings saved, calibration cleared or notes, reads the same" $
+            \(Recorded r) ->
+                let whole = written r
+                    older = BL.fromStrict (C.pack "trackkat recording 1") <> BL.dropWhile (/= 10) whole
+                 in fmap recEntries (parseRecording older) === fmap recEntries (parseRecording whole)
+        , testProperty "a setting given a value it can't have ends what is read of a recording" $
+            \(Recorded r) ->
+                let at = startClock (recStart r)
+                    unread = fmap recEntries (parseRecording (written r{recEntries = recEntries r ++ [InputEntry at (Setting "clip" "1 1 5"), InputEntry at (Press Recenter)]}))
+                 in fmap (take (length (recEntries r))) unread === Right (recEntries r)
+                        .&&. fmap (length . drop (length (recEntries r))) unread === Right 1
+        , testProperty "replayed, a setting given a value it can't have changes nothing" $
+            \(Glances session) ->
+                let entries = either (const []) (\t0 -> fst (tracked t0 session)) (startTracking sessionStart)
+                    outcomes es = fmap (\rs -> [stepped t o evs | Replayed _ (Just (t, o, evs)) <- rs]) (replay (Recording sessionStart es))
+                 in outcomes (InputEntry sessionClock (Setting "clip" "1 1 5") : entries) === outcomes entries
+        , testProperty "a recorder writes a recording's start and what it is given, in order, and ends whole" $
+            \(Recorded r) -> ioProperty $ do
+                (sink, text) <- collecting (pure ())
+                told <- newIORef []
+                ending <- withRecorderTo sink (recStart r) (\why -> modifyIORef' told (why :)) $ \rec -> do
+                    mapM_ (record rec) (recEntries r)
+                    finish rec
+                (,,) <$> text <*> readIORef told <*> pure ending >>= \got -> pure (got === (written r, [], Whole))
+        , testCase "a recorder whose sink takes nothing in holds no one up: past its backlog it stops, saying so once, and ends short" $ do
+            gate <- newEmptyMVar
+            (sink, text) <- collecting (readMVar gate)
+            told <- newIORef []
+            let start = sessionStart
+                entries = [InputEntry (sessionClock + fromIntegral i) (Mark i) | i <- [1 .. backlog + 5]]
+            done <- timeout 60000000 $ withRecorderTo sink start (\why -> modifyIORef' told (why :)) $ \rec -> do
+                mapM_ (record rec) entries
+                standing <- soFar rec
+                putMVar gate ()
+                (,) standing <$> finish rec
+            done @?= Just (Partial, Partial)
+            readIORef told >>= (@?= ["the disk can't keep up"])
+            got <- text
+            fmap recEntries (parseRecording got)
+                @?= Right (take backlog entries ++ [NoteEntry (sessionClock + fromIntegral (backlog + 1)) "the recording stops here: the disk couldn't keep up"])
+        , testCase "a recorder whose sink fails, as a full disk does, stops there, saying why once, and ends short" $ do
+            writes <- newIORef (0 :: Int)
+            (sink, text) <- collecting $ do
+                n <- atomicModifyIORef' writes (\n -> (n + 1, n))
+                if n >= 3 then throwIO (userError "no space left") else pure ()
+            told <- newIORef []
+            done <- timeout 60000000 $ withRecorderTo sink sessionStart (\why -> modifyIORef' told (why :)) $ \rec -> do
+                mapM_ (\i -> record rec (InputEntry sessionClock (Mark i))) [1 .. 10]
+                finish rec
+            done @?= Just Partial
+            readIORef told >>= \whys -> assertBool (show whys) (map ("no space left" `isInfixOf`) whys == [True])
+            got <- text
+            fmap recEntries (parseRecording got) @?= Right [InputEntry sessionClock (Mark i) | i <- [1, 2]]
+        , testCase "a file that can't be written to is no recorder, and says why" $ do
+            tmp <- getTemporaryDirectory
+            said <- withRecorder (tmp </> "trackkat-test-no-such-folder" </> "recording.txt") sessionStart (const (pure ())) $ \case
+                Left why -> pure (Just why)
+                Right _ -> pure Nothing
+            assertBool (show said) (maybe False (not . null) said)
+        , testCase "steps of a session taken by several threads at once are recorded in the order taken" $ do
+            (sink, text) <- collecting (pure ())
+            taken <- newIORef 0
+            ending <- withRecorderTo sink sessionStart (const (pure ())) $ \rec -> do
+                session <- newSessionRecorder sessionStart rec
+                threads <- replicateM 4 $ do
+                    done <- newEmptyMVar
+                    _ <-
+                        forkFinally
+                            (replicateM_ 200 (recordStep session sessionClock 0 (atomicModifyIORef' taken (\n -> (n + 1, ((), [Marked (n + 1)]))))))
+                            (putMVar done)
+                    pure done
+                mapM_ (\done -> takeMVar done >>= either throwIO pure) threads
+                finish rec
+            ending @?= Whole
+            got <- text
+            fmap recEntries (parseRecording got) @?= Right [InputEntry sessionClock (Mark i) | i <- [1 .. 800]]
+        , testProperty "what a session did is recorded as it was done, its settings said just where the file gives them another value" $
+            \(Recorded r) ->
+                let start = recStart r
+                    at = startClock start
+                    settings = startSettings start
+                    text values = unlines [name ++ " = " ++ value | (name, value) <- values]
+                    changed = [(name, if name == "ignore lights" then (if value == "on" then "off" else "on") else value) | (name, value) <- settings]
+                    did =
+                        [ TookSettings (text settings)
+                        , GaveFrame []
+                        , Requested Recenter
+                        , TookSettings (text changed)
+                        , TookSettings (text changed)
+                        , ClearedCalibration
+                        , Marked 1
+                        , DroppedCorrupt "too short"
+                        , Noted "camera connected"
+                        ]
+                 in concat (snd (mapAccumL (flip (taped at 7)) (startTape start) did))
+                        === [ FrameEntry at 7 []
+                            , InputEntry at (Press Recenter)
+                            , InputEntry at (Setting "ignore lights" (if lookup "ignore lights" settings == Just "on" then "off" else "on"))
+                            , InputEntry at ClearCalibration
+                            , InputEntry at (Mark 1)
+                            , CorruptEntry at "too short"
+                            , NoteEntry at "camera connected"
+                            ]
+        , testProperty "recordings are named by when they began, so as to sort by it, in letters any file system takes" $
+            \(Began a) (Began b) ->
+                let name (date, time) = recordingName date time
+                 in compare (name a) (name b) === compare a b
+                        .&&. counterexample (name a) (all (\c -> isAlphaNum c || c `elem` "-.") (name a))
+        , testCase "what the log says of a recording and of marks" $ do
+            describeRecording "C:\\r.txt" @?= "Recording to C:\\r.txt: about 6 MB a minute, until trackkat quits."
+            describeStopped "the disk can't keep up" @?= "Recording stopped: the disk can't keep up. Tracking goes on."
+            map (`describeMark` 3) [Just Whole, Just Partial, Nothing]
+                @?= ["Mark 3 recorded.", "No mark: the recording has stopped.", "No mark: start trackkat with --record to record."]
+            assertBool "" (all ((<= 80) . length) (describeStopped "" : describeRecording "" : map (`describeMark` 3) [Just Whole, Just Partial, Nothing]))
         ]
   where
     camera start = let k = startIntrinsics start in (focal k, cx k, cy k)
@@ -222,15 +352,43 @@ properties =
     tracked t ((inputs, at, n, stripes) : rest) =
         let (entries, (t', o, evs)) = liveFrame inputs at n stripes t
             (more, came) = tracked t' rest
-         in (entries ++ more, stepped t' o evs : came)
+         in (entries ++ more, stepped (trackingTracker t') o evs : came)
+
+-- | A sink that keeps what it is given, once the action given has let it
+-- be written, and what it has kept so far.
+collecting :: IO () -> IO (Sink, IO BL.ByteString)
+collecting before = do
+    kept <- newIORef (mempty :: Builder)
+    pure (Sink (\text -> before >> modifyIORef' kept (<> text)) (pure ()) (pure ()), toLazyByteString <$> readIORef kept)
+
+-- | When a recording began: a date and a time of day, this century.
+-- Simplest the century's first midnight, and simpler with any part so.
+newtype Began = Began ((Integer, Int, Int), (Int, Int, Int))
+    deriving (Show)
+
+instance Arbitrary Began where
+    arbitrary = do
+        date <- (,,) <$> chooseInteger (2000, 2099) <*> chooseInt (1, 12) <*> chooseInt (1, 31)
+        Began . (,) date <$> ((,,) <$> chooseInt (0, 23) <*> chooseInt (0, 59) <*> chooseInt (0, 59))
+    shrink (Began b) =
+        Began
+            <$> shrinkParts
+                [ \((y, m, d), t) -> [((2000, m, d), t) | y /= 2000]
+                , \((y, m, d), t) -> [((y, m', d), t) | m' <- shrinkFrom 1 m]
+                , \((y, m, d), t) -> [((y, m, d'), t) | d' <- shrinkFrom 1 d]
+                , \(date, (h, m, sec)) -> [(date, (h', m, sec)) | h' <- shrink h]
+                , \(date, (h, m, sec)) -> [(date, (h, m', sec)) | m' <- shrink m]
+                , \(date, (h, m, sec)) -> [(date, (h, m, sec')) | sec' <- shrink sec]
+                ]
+                b
 
 -- | A recording's text.
 written :: Recording -> BL.ByteString
 written r = toLazyByteString (renderStart (recStart r) <> foldMap (renderEntry (recStart r)) (recEntries r))
 
 -- | A recording of anything: notes, any camera, settings a settings file
--- can say, and frames, presses, marks and corrupt packets at times around
--- the clock's. Simplest of no entries or notes, with the default camera
+-- can say, and frames, presses, marks, corrupt packets, settings saved,
+-- the calibration cleared and notes at times around the clock's. Simplest of no entries or notes, with the default camera
 -- and no calibration; and simpler with one of those so, or fewer. (Its
 -- settings and its clock are left as they are.)
 newtype Recorded = Recorded Recording
@@ -245,6 +403,7 @@ genRecording = do
     notes <- listOf text
     k <- Intrinsics <$> arbitrary <*> arbitrary <*> arbitrary
     settings <- settingValues . renderConfig <$> genConfig
+    saved <- settingValues . renderConfig <$> genConfig
     calibration <- elements [FreshCalibration, SavedCalibration (renderCalibration defaultCalibration)]
     clock <- chooseBoundedIntegral (0, maxBound `div` 2)
     let time = (clock +) <$> chooseBoundedIntegral (0, 3600 * 1000000000)
@@ -254,6 +413,9 @@ genRecording = do
                 , InputEntry <$> time <*> elements [Press Recenter, Press Calibrate]
                 , InputEntry <$> time <*> (Mark <$> arbitrary)
                 , CorruptEntry <$> time <*> text
+                , InputEntry <$> time <*> (uncurry Setting <$> elements saved)
+                , InputEntry <$> time <*> pure ClearCalibration
+                , NoteEntry <$> time <*> text
                 ]
     Recording (Start notes k settings calibration clock) <$> scale (`div` 4) (listOf entry)
   where

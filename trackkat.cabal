@@ -36,6 +36,7 @@ library
     TrackKat.Number
     TrackKat.Pose
     TrackKat.Protocol
+    TrackKat.Recorder
     TrackKat.Recording
     TrackKat.Release
     TrackKat.Response
