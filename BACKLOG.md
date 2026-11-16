@@ -127,6 +127,17 @@ that tests found false. None is fixed.
 - One frame of the clip's three blobs, with nothing else known, is at
   some poses less than nine times likelier the clip than not, nearer than
   about 400 mm, and isn't taken until it is.
+- Before any size is learnt, a blob just where a reflector should be, a
+  ninth the size of the other two or less, ranks below that reflector
+  unseen and the blob a stray. `alikeness` counts a blob as all of its
+  reflector by how likely that is of the blob alone (`readWhole`), which
+  against a size known only to within six times is all but sure; so the
+  small blob pays a gaussian's tail for being unlike the others, 7 nats at
+  a tenth their size, where the three reckoned together make it a
+  reflector showing in part, 5 nats at `partShowing`'s chance. What a
+  small blob teaches (`learntFrom`) and how much its place counts
+  (`sightWeight`, by the size expected before any is learnt) are reckoned
+  of the blob alone likewise.
 - A settings reload that changes nothing still rebinds hotkeys and
   re-shows settings.
 - Keys and buttons are only looked at when frames arrive, so they do nothing

@@ -20,6 +20,7 @@ import TrackKat.Tracker (findBlobs)
 import TrackKat.Tracker.Account (metres)
 import TrackKat.Tracker.Reflectors (Expect (..))
 import TrackKat.Tracker.Sizes (unlearnt)
+import TrackKat.World (World (..), inPixels, world)
 
 tests :: TestTree
 tests = group "Match" $ do
@@ -49,14 +50,14 @@ properties :: TestTree
 properties =
     testGroup
         "properties"
-        [ testProperty "the clip seen just where it is predicted is the best ranked match, each reflector a blob of its own" $
-            \scene -> forAnyOrder (blobsOf scene{sceneOff = []}) $ \blobs ->
+        [ testProperty "the clip seen where it is predicted, to a centre's noise, its reflectors alike in size, is the best ranked match, each reflector a blob of its own" $
+            \(AsExpected scene) -> forAnyOrder (blobsOf scene) $ \blobs ->
                 case matches (expectedAt (scenePose scene)) shiftSpread blobs of
                     [] -> counterexample "no match" False
                     best : _ ->
                         counterexample (show best) $
                             conjoin
-                                [ fmap (fmap sightAt) (toList (matchSights best)) === map Just (predicted scene)
+                                [ fmap (fmap sightAt) (toList (matchSights best)) === [Just (blobX b, blobY b) | b <- take 3 (blobsOf scene)]
                                 , property (all (maybe False ((== Whole) . sightKind)) (toList (matchSights best)))
                                 , matchUnused best === length (sceneStrays scene)
                                 ]
@@ -175,6 +176,25 @@ instance Arbitrary SeenClip where
             , \scene -> [scene{sceneSizes = [30, 30, 30]} | sceneSizes scene /= [30, 30, 30]]
             , \scene -> [simpler | placing <- shrinkSeen trackedRange clipBent (scenePlacing scene), let simpler = scene{scenePlacing = placing}, laidOut simpler]
             ]
+
+-- | A scene with the clip seen as the world has one seen: each
+-- reflector's blob within the world's 'centroidNoise' of where its
+-- reflector is, and no one of the three more than the world's
+-- 'sameSizeFactor' times another in size. Simpler as its scene is.
+newtype AsExpected = AsExpected SeenClip
+    deriving (Show)
+
+instance Arbitrary AsExpected where
+    arbitrary = do
+        scene <- arbitrary
+        off <- vectorOf 3 ((\far turn -> (spread * sqrt far * cos turn, spread * sqrt far * sin turn)) <$> choose (0, 1) <*> choose (0, 2 * pi))
+        least <- chooseInt (30, floor (300 / sameSizeFactor world))
+        others <- vectorOf 2 (chooseInt (least, floor (fromIntegral least * sameSizeFactor world)))
+        sizes <- shuffle (least : others)
+        pure (AsExpected scene{sceneOff = off, sceneSizes = sizes})
+      where
+        spread = inPixels (centroidNoise world)
+    shrink (AsExpected scene) = AsExpected <$> shrink scene
 
 -- | Whether a scene's reflectors are 40 pixels or more apart in the
 -- picture, and its strays 60 or more from each.
