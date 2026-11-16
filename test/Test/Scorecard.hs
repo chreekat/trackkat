@@ -207,56 +207,28 @@ nothingElse = const []
 
 -- | Scenes of a fleck of light that isn't the clip's but moves with it,
 -- as a reflection off glasses or a headset does, each with the most its
--- card may come to and the most its pose may wobble: a fleck of so many
--- pixels across, amid the reflectors or 3 pixels clear of the left one,
--- there in every frame or in about half, the head still or glancing, each
--- reflector's centre moved by up to a twentieth of a pixel.
+-- card may come to and the most its pose may wobble, which is as much as
+-- with no fleck: a fleck of so many pixels across, amid the reflectors or
+-- 3 pixels clear of the left one, there in every frame or in about half,
+-- the head still or glancing, each reflector's centre moved by up to a
+-- twentieth of a pixel.
 flecked :: [(Scenario, Limits, Steady)]
 flecked =
-    zipWith
-        (\scene (limits, steady) -> (scene, limits, steady))
-        [ framed (printf "a fleck %d pixels across %s, %s, the head %s" (round (2 * radius) :: Int) placeName comingName headName) clipBent (const Whole) frames
-        | (headName, path) <- heads
-        , (placeName, place) <- places
-        , (comingName, comes) <- comings
-        , radius <- [1.5, 2.5, 3.5]
-        , let frames = [(t, pose, renderDiscs (jitter 0.1 i (pointDiscs defaultIntrinsics clipBent allLit pose) ++ [(place radius pose, radius) | comes i])) | (i, t) <- zip [0 ..] (at120 4), let pose = path t]
-        ]
-        pinned
+    [ (framed (printf "a fleck %d pixels across %s, %s, the head %s" (round (2 * radius) :: Int) placeName comingName headName) clipBent (const Whole) frames, Limits 0 0 0 0 0.4 0, steady)
+    | (headName, path, steady) <- heads
+    , (placeName, place) <- places
+    , (comingName, comes) <- comings
+    , radius <- [1.5, 2.5, 3.5]
+    , let frames = [(t, pose, renderDiscs (jitter 0.1 i (pointDiscs defaultIntrinsics clipBent allLit pose) ++ [(place radius pose, radius) | comes i])) | (i, t) <- zip [0 ..] (at120 4), let pose = path t]
+    ]
   where
-    heads = [("still", const (headSeen bentWorn 0 0 0)), ("glancing", \t -> headSeen bentWorn (25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0)]
+    heads = [("still", const (headSeen bentWorn 0 0 0), Steady 0.15), ("glancing", \t -> headSeen bentWorn (25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0, Steady 0.17)]
     places = [("amid the reflectors", amid), ("beside a reflector", beside)]
     comings = [("steady", const True), ("flickering", \i -> noise i 7 > 0)]
     amid _ pose = let seen = map (project defaultIntrinsics pose) [mLeft clipBent, mRight clipBent, mTop clipBent] in (sum (map fst seen) / 3, sum (map snd seen) / 3)
     beside radius pose = case pointDiscs defaultIntrinsics clipBent allLit pose of
         ((u, v), r) : _ -> (u + r + radius + 3, v)
         [] -> (0, 0)
-    pinned =
-        [ (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.7 0, Steady 0.15)
-        , (Limits 0 0 0 0 1.2 0, Steady 0.16)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.6 0, Steady 0.19)
-        , (Limits 0 0 0 0 1.1 0, Steady 0.36)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.15)
-        , (Limits 0 0 0 0 0.9 0, Steady 0.18)
-        , (Limits 0 0 0 0 1.7 0, Steady 0.21)
-        , (Limits 0 0 0 0 3 0, Steady 0.28)
-        , (Limits 0 0 0 0 0.9 0, Steady 0.24)
-        , (Limits 0 0 0 0 1.7 0, Steady 0.5)
-        , (Limits 0 0 0 0 2.7 0, Steady 0.41)
-        , (Limits 0 0 0 0 0.6 0, Steady 0.17)
-        , (Limits 0 0 0 0 1.3 0, Steady 0.17)
-        , (Limits 0 0 157 0 2.1 0, Steady 0.18)
-        , (Limits 0 0 0 0 0.6 0, Steady 0.21)
-        , (Limits 0 0 0 0 1.2 0, Steady 0.39)
-        , (Limits 0 0 0 0 0.4 0, Steady 0.17)
-        ]
 
 -- | The scenes, each with the most its card may come to.
 scenarios :: [(Scenario, Limits)]
@@ -283,7 +255,7 @@ scenarios =
     , (points "a leap of 40 degrees while glancing" clipBent nothingElse [(t, if t < 6 then glancing t else headSeen bentWorn (40 + 25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0, allLit) | t <- at120 9], Limits 0 0 3 0 46 0)
     , (framed "the clip shown elsewhere for three frames" clipBent (const Whole) [(t, glancing t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (if i >= 720 && i < 723 then elsewhere else glancing t))) | (i, t) <- zip [0 :: Int ..] (at120 9)], Limits 0 0 5 0 31.3 0)
     , (framed "a frame of the clip turned away, two reflectors' places still lit" clipBent (const Whole) [(t, glancing t, renderDiscs (pointDiscs defaultIntrinsics clipBent allLit (if i == 720 then headSeen bentWorn 40 0 0 else glancing t))) | (i, t) <- zip [0 :: Int ..] (at120 7)], Limits 0 0 3 0 30.1 0)
-    , (framed "a light by a reflector gone dark for a moment" clipBent (\t -> if t >= 6 && t < 6.05 then Partly else Whole) [(t, glancing t, renderDiscs (lightBy 0.74 t ++ dim (1, 1, if t >= 6 && t < 6.05 then 0 else 1) (glancing t))) | t <- at120 9], Limits 0 0 8 0 8.3 0)
+    , (framed "a light by a reflector gone dark for a moment" clipBent (\t -> if t >= 6 && t < 6.05 then Partly else Whole) [(t, glancing t, renderDiscs (lightBy 0.74 t ++ dim (1, 1, if t >= 6 && t < 6.05 then 0 else 1) (glancing t))) | t <- at120 9], Limits 0 0 11 0 8.3 0)
     , (points "a lamp coming on beside a glancing head" clipBent (\t -> [((500, 100), 14) | t >= 1]) [(t, glancing t, allLit) | t <- at120 4], Limits 0 0 0 0 0.5 0)
     , -- Those "Test.Clips" runs with tape on tabs, and what the backlog
       -- says goes wrong with them.

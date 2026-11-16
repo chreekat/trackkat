@@ -140,10 +140,13 @@ distance2 (a, b) (c, d) = (a - c) ^ (2 :: Int) + (b - d) ^ (2 :: Int)
 pixels :: Blob -> Double
 pixels = fromIntegral . blobPoints
 
--- | Two blobs close enough to be pieces of one reflector: nearer than the
--- diameter of a disc of their combined area.
+-- | Two blobs that may be pieces of one reflector: each one's centre
+-- inside the reflector they would make, a disc of their combined area
+-- about the centre of both.
 together :: Blob -> Blob -> Bool
-together a b = distance2 (blobX a, blobY a) (blobX b, blobY b) <= 4 * (pixels a + pixels b) / pi
+together a b = all inside [a, b]
+  where
+    inside piece = distance2 (blobX piece, blobY piece) (sightAt (rejoin a b)) <= (pixels a + pixels b) / pi
 
 -- | Two blobs taken as one: their brightness-weighted centroid.
 rejoin :: Blob -> Blob -> Sight

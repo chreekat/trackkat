@@ -293,7 +293,7 @@ What a reflector's blob looks like.
 | `Match.bigEnoughForTwo` | area² > bigger × both | a shared blob no bigger is perhaps one reflector, for how long a pose is told (`showingSeconds`) | the geometric mean, on the log scale sizes are compared on | (7) |
 | `Tracker.Sizes.sharedReading` | from the bigger to both | a blob two reflectors share is as likely any size between (term `size`) | two discs overlap by any amount | |
 | `Match.reach` | 1.5 × the two radii; 10 px a radius unknown | two reflectors predicted this close may share a blob | touching, and half again for movement | |
-| `Match.together` | the diameter of a disc of both areas | two blobs this close may be pieces of one reflector | geometry | |
+| `Match.together` | the radius of a disc of both areas, from the centre of both | two blobs each with its centre this close may be pieces of one reflector | geometry: a piece of a disc has its centre inside it | |
 | `Match.maxBlobs` | 8 | blobs considered | tuned | |
 | `Match.matches` options | 4 a reflector; 2 blobs for a shared pair; 1 for the third | candidates tried | tuned | |
 | `Tracker.Layout.clipSearch`, `maskedSearch` | 5, 4 | blobs searched for the clip by layout, and masked blobs tried in place of blobs missing | tuned: bounds on a frame's work | |
