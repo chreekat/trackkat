@@ -154,6 +154,9 @@ tests = group "Config" $ do
     check "head view setting" $
         map (fmap headView . parseConfig . ("head view = " ++)) ["virtual", "physical", "camera"]
             == map Right [VirtualView, PhysicalView, CameraView]
+    check "the tracker is the old one unless asked for" $
+        map (fmap chosenTracker . parseConfig) ["", "tracker = old", "tracker = new"] == [Right OldTracker, Right OldTracker, Right NewTracker]
+    check "bad tracker" $ parseConfig "tracker = newest" == Left "line 1: tracker is old or new"
     check "bad head view" $ parseConfig "head view = side" == Left "line 1: head view is virtual, physical, or camera"
     let withCamera = defaultConfig{headView = CameraView}
     check "head view round-trips" $ parseConfig (renderConfig withCamera) == Right withCamera

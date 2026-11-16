@@ -36,7 +36,7 @@ import TrackKat.Recorder
 import TrackKat.Recording
 import TrackKat.Shape
 import TrackKat.Term (Tally, renderFindings, renderTally, tallyLast, tallyRejected)
-import TrackKat.Tracker
+import TrackKat.Trackers
 import qualified TrackKat.USB as USB
 
 data Options = Options
@@ -49,6 +49,8 @@ data Options = Options
     , optFocal :: Double
     , optMasking :: Maybe Masking
     -- ^ from @--no-mask@, or else trackkat.conf's
+    , optTracker :: Maybe WhichTracker
+    -- ^ from @--tracker@, or else trackkat.conf's
     , optRecord :: Maybe FilePath
     , optReplay :: Maybe FilePath
     , optEveryFrame :: Bool
@@ -60,9 +62,9 @@ usage =
     unlines
         [ "usage: tirprobe [--blobs] [--clip LR,LT,RT] [--focal F] [--threshold N]"
         , "                [--ir 5|6|7] [--no-status-led] [--no-mask] [--raw]"
-        , "                [--record FILE] [--explain]"
+        , "                [--tracker old|new] [--record FILE] [--explain]"
         , "       tirprobe --replay FILE [--blobs] [--every-frame] [--clip LR,LT,RT]"
-        , "                [--no-mask] [--explain]"
+        , "                [--no-mask] [--tracker old|new] [--explain]"
         , "       tirprobe --list"
         , ""
         , "Shows head pose relative to where you were when you last pressed Enter."
@@ -72,9 +74,10 @@ usage =
         , "which way is up and where your neck pivots, but starts afresh each"
         , "time: it doesn't read or write trackkat.calibration."
         , ""
-        , "The clip's shape and whether to ignore still lights come from trackkat's"
-        , "settings, %APPDATA%\\trackkat\\trackkat.conf, as trackkat uses them,"
-        , "unless --clip or --no-mask says otherwise. tirprobe never writes it."
+        , "The clip's shape, whether to ignore still lights, and which tracker"
+        , "tracks come from trackkat's settings, %APPDATA%\\trackkat\\trackkat.conf,"
+        , "as trackkat uses them, unless --clip, --no-mask, or --tracker says"
+        , "otherwise. tirprobe never writes it."
         , ""
         , "  --blobs           show the raw blob positions instead of the pose,"
         , "                    marking those masked as part of a still light"
@@ -88,6 +91,8 @@ usage =
         , "  --no-status-led   leave the green lights off"
         , "  --no-mask         don't learn and ignore bright lights that stay put,"
         , "                    whatever trackkat.conf's ignore lights says"
+        , "  --tracker old|new track with the old tracker, or the new one being"
+        , "                    tried, whatever trackkat.conf's tracker says"
         , "  --raw             also hex-dump every USB transfer"
         , "  --record FILE     write every frame the camera sends to FILE, with"
         , "                    the settings used and when Enter, c Enter, and"
@@ -95,8 +100,8 @@ usage =
         , "                    replayed exactly; about 6 MB a minute"
         , "  --replay FILE     track a recording instead of the camera, printing"
         , "                    what tirprobe printed, each line after the time"
-        , "                    in seconds; --clip and --no-mask change what the"
-        , "                    recording used"
+        , "                    in seconds; --clip, --no-mask, and --tracker"
+        , "                    change what the recording used"
         , "  --every-frame     with --replay, print every frame's line, not ten"
         , "                    a second"
         , "  --explain         after each frame's line, what tracking judged it"
@@ -125,6 +130,9 @@ parseArgs ("--clip" : spec : r) o
         parseArgs r o{optClip = Just cl}
     | otherwise = Left "--clip wants three distances in mm, like 134,129,129, that form a triangle"
 parseArgs ("--no-mask" : r) o = parseArgs r o{optMasking = Just NoMasking}
+parseArgs ("--tracker" : "old" : r) o = parseArgs r o{optTracker = Just OldTracker}
+parseArgs ("--tracker" : "new" : r) o = parseArgs r o{optTracker = Just NewTracker}
+parseArgs ("--tracker" : _) _ = Left "--tracker wants old or new"
 parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLights = False}}
 parseArgs ("--threshold" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
 parseArgs ("--ir" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){irBrightness = v}}
@@ -134,7 +142,7 @@ main :: IO ()
 main = do
     hSetBuffering stdout LineBuffering
     args <- getArgs
-    opts <- case parseArgs args (Options defaultSettings False False False Nothing (focal defaultIntrinsics) Nothing Nothing Nothing False False) of
+    opts <- case parseArgs args (Options defaultSettings False False False Nothing (focal defaultIntrinsics) Nothing Nothing Nothing Nothing False False) of
         Right o -> pure o
         Left err -> hPutStrLn stderr (err ++ "\n\n" ++ usage) >> exitFailure
     let logger = putStrLn . ("# " ++)
@@ -147,6 +155,14 @@ main = do
     (config, source) <- userConfig
     let clipUsed = fromMaybe (clip config) (optClip opts)
         masking = fromMaybe (lightMasking config) (optMasking opts)
+        which = fromMaybe (chosenTracker config) (optTracker opts)
+    logger $
+        "tracker "
+            ++ nameTracker which
+            ++ case (optTracker opts, source) of
+                (Just _, _) -> " from --tracker"
+                (Nothing, FromFile path) -> " from " ++ path
+                (Nothing, NoFile why) -> " (default; " ++ why ++ ")"
     logger $
         "clip "
             ++ describeClip clipUsed
@@ -157,7 +173,7 @@ main = do
     case (optMasking opts, source) of
         (Nothing, FromFile path) | masking == NoMasking -> logger ("not ignoring still lights: ignore lights = off in " ++ path)
         _ -> pure ()
-    let used = config{clip = clipUsed, lightMasking = masking}
+    let used = config{clip = clipUsed, lightMasking = masking, chosenTracker = which}
     (USB.withContext $ \ctx -> withCamera ctx logger (optSettings opts) (run opts args used))
         `catch` \e -> do
             hPutStrLn stderr (explain e)
@@ -194,7 +210,7 @@ listAll ctx = do
 data Source = FromFile FilePath | NoFile String
 
 -- | trackkat's settings, read from where trackkat reads them, for its clip
--- shape and still-light masking; the defaults if there are none, or they
+-- shape, its still-light masking, and its tracker; the defaults if there are none, or they
 -- don't parse. trackkat.conf is only read, never created.
 userConfig :: IO (Config, Source)
 #if defined(mingw32_HOST_OS)
@@ -213,6 +229,11 @@ userConfig =
 userConfig = pure (defaultConfig, NoFile "trackkat.conf is read only on Windows")
 #endif
 
+-- | A tracker as --tracker names it.
+nameTracker :: WhichTracker -> String
+nameTracker OldTracker = "old"
+nameTracker NewTracker = "new"
+
 -- | A clip's distances as --clip takes them.
 describeClip :: ClipShape -> String
 describeClip cl = let (lr, lt, rt) = clipDistances cl in intercalate "," (map renderNumber [lr, lt, rt])
@@ -222,8 +243,8 @@ splitOn c str = case break (== c) str of
     (a, []) -> [a]
     (a, _ : rest) -> a : splitOn c rest
 
--- | Track with the given settings' clip shape and still-light masking,
--- recording if asked to.
+-- | Track by the given settings' tracker, clip shape, and still-light
+-- masking, recording if asked to.
 run :: Options -> [String] -> Config -> Camera -> IO ()
 run opts args config cam = do
     clock <- getMonotonicTimeNSec
@@ -321,14 +342,35 @@ replayFile opts path = do
     recording <- orFail =<< readRecording path
     let recorded = recStart recording
     config <- orFail (parseConfig (unlines [n ++ " = " ++ v | (n, v) <- startSettings recorded]))
-    let used = config{clip = fromMaybe (clip config) (optClip opts), lightMasking = fromMaybe (lightMasking config) (optMasking opts)}
+    let used =
+            config
+                { clip = fromMaybe (clip config) (optClip opts)
+                , lightMasking = fromMaybe (lightMasking config) (optMasking opts)
+                , chosenTracker = fromMaybe (chosenTracker config) (optTracker opts)
+                }
         -- The settings the command line gives, which the recording's own,
         -- at its start or saved later, give way to.
-        given = [named | named@(name, _) <- settingValues (renderConfig used), name `elem` (["clip" | Just _ <- [optClip opts]] ++ ["ignore lights" | Just _ <- [optMasking opts]])]
-        start = recorded{startSettings = [(name, fromMaybe value (lookup name given)) | (name, value) <- startSettings recorded]}
+        given =
+            [ named
+            | named@(name, _) <- settingValues (renderConfig used)
+            , name `elem` (["clip" | Just _ <- [optClip opts]] ++ ["ignore lights" | Just _ <- [optMasking opts]] ++ ["tracker" | Just _ <- [optTracker opts]])
+            ]
+        start =
+            recorded
+                { startSettings =
+                    [(name, fromMaybe value (lookup name given)) | (name, value) <- startSettings recorded]
+                        ++ [named | named@(name, _) <- given, name `notElem` map fst (startSettings recorded)]
+                }
         kept e = case e of
             InputEntry _ (Setting name _) -> name `notElem` map fst given
             _ -> True
+    putStrLn $
+        "# tracker "
+            ++ nameTracker (chosenTracker used)
+            ++ case (optTracker opts, lookup "tracker" (startSettings recorded)) of
+                (Just _, _) -> " from --tracker"
+                (Nothing, Just _) -> " as recorded"
+                (Nothing, Nothing) -> ", the recording being from before it would say"
     mapM_ (putStrLn . ("# " ++)) (startNotes recorded)
     putStrLn $
         "# clip "
@@ -381,9 +423,9 @@ nothingTold :: Tracker -> Told
 nothingTold = Told Nothing . trackerWindows
 
 -- | Lines on what changed with a frame: the clip lost, or lost for another
--- reason than it was; the clip made out otherwise than by continuing the
--- last pose where it predicted its reflectors; and, if explaining, each
--- window of turning not learnt from, with what ruled it out.
+-- reason than it was; the clip made out otherwise than tracking mostly
+-- goes (see 'explainUnusual'); and, if explaining, each window of turning
+-- not learnt from, with what ruled it out.
 tell :: Options -> Tracker -> Outcome -> Told -> (Told, [String])
 tell opts tracker outcome (Told was windows) = (Told why windows', lost ++ found ++ ruledOut)
   where
@@ -391,13 +433,13 @@ tell opts tracker outcome (Told was windows) = (Told why windows', lost ++ found
         Lost{outWhy = w} -> Just w
         Tracked{} -> Nothing
     lost = case (was, outcome) of
-        (before, Lost{outBlobs = n, outWhy = w, outRivals = rivals})
+        (before, Lost{outBlobs = n, outWhy = w})
             | maybe True (not . sameWhy w) before ->
-                ["# lost, with " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ": " ++ explainWhy w ++ explainRivals (take 3 rivals)]
+                ["# lost, with " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ": " ++ explainWhy w]
         _ -> []
     found = case outcome of
-        Tracked{outChosen = chosen@(Chosen way source _ _)} | way /= Continued || source /= ByPrediction -> ["# " ++ explainChosen chosen]
-        _ -> []
+        Tracked{outHow = how} -> maybe [] (\said -> ["# " ++ said]) (explainUnusual how)
+        Lost{} -> []
     windows' = trackerWindows tracker
     ruledOut =
         [ "# a window of turning not used for the " ++ what ++ ": " ++ renderFindings (tallyLast now')
@@ -428,9 +470,9 @@ describeEvent _ (LightMoved p how) = "# " ++ describeLightMoved p how
 
 -- | A frame's line; if explaining, with what tracking judged it by.
 showOutcome :: Options -> Outcome -> String
-showOutcome opts (Lost n masked why rivals) =
-    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ (if optExplain opts then "   " ++ explainWhy why ++ explainRivals (take 3 rivals) else "")
-showOutcome opts (Tracked hp dist err seen judged chosen) =
+showOutcome opts (Lost n masked why) =
+    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ (if optExplain opts then "   " ++ explainWhy why else "")
+showOutcome opts (Tracked hp dist err seen how) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
         (yaw hp)
@@ -442,7 +484,7 @@ showOutcome opts (Tracked hp dist err seen judged chosen) =
         dist
         err
         ++ describeSeen seen
-        ++ (if optExplain opts then "   " ++ explainChosen chosen ++ ": " ++ renderFindings judged else "")
+        ++ (if optExplain opts then "   " ++ explainHow how else "")
 
 -- | A frame's blobs, those masked as part of a still light marked.
 summary :: (Integral a) => a -> Double -> [(Blob, BlobRole)] -> String

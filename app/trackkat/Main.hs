@@ -45,7 +45,7 @@ import TrackKat.Release
 import TrackKat.ServedGame
 import TrackKat.Session
 import TrackKat.Stats
-import TrackKat.Tracker (Outcome (..))
+import TrackKat.Trackers (Outcome (..))
 import qualified TrackKat.USB as USB
 import TrackKat.Updater (Looking (..), answered, begun, dueLook, newUpdater, offerNotice)
 import qualified TrackKat.Updater as Updater
@@ -134,6 +134,7 @@ run start window recorded after = do
             (Mouse, e) -> say ("Can't watch the mouse for buttons (error " ++ show e ++ ").")
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say (describeBindings config)
+        say (describeTracker (chosenTracker config))
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
         (calibration, told, learnt) <- loadCalibration (clipModel (clip config)) calibrationFile
         withRecording recorded paths settings learnt $ \recording -> do

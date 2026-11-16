@@ -59,7 +59,7 @@ import TrackKat.Config (Config (..), clipModel, parseConfig, settingValues)
 import TrackKat.Frame (Stripe (..))
 import TrackKat.Number (parseExact, parseNatural, renderExact)
 import TrackKat.Pose (Intrinsics (..), defaultIntrinsics)
-import TrackKat.Tracker
+import TrackKat.Trackers
 import TrackKat.World (Instant, clockAt)
 
 -- Note [Recording format]
@@ -370,14 +370,18 @@ readRecording path = either (Left . displayException @IOException) parseRecordin
 
 -- * Tracking
 
--- | A tracker of the clip settings give, masking still lights or not as
--- they say, starting from a calibration.
+-- | The tracker settings ask for, of the clip they give, masking still
+-- lights or not as they say, starting from a calibration.
 trackerFor :: Intrinsics -> Config -> Calibration -> Tracker
-trackerFor k config = newTracker k (clipModel (clip config)) (lightMasking config)
+trackerFor k config = newTracker (chosenTracker config) k (clipModel (clip config)) (lightMasking config)
 
--- | A tracker taken from tracking by some settings to tracking by others.
-resettled :: Config -> Config -> Tracker -> Tracker
-resettled old new = reshaped . masked
+-- | A tracker taken from tracking by some settings to tracking by others,
+-- for a camera. Where they ask for the other tracker, it takes over (see
+-- Note [Two trackers] in "TrackKat.Trackers"). Taking settings one at a
+-- time comes to the same as taking them together, as a recording says
+-- them.
+resettled :: Intrinsics -> Config -> Config -> Tracker -> Tracker
+resettled k old new = switched . reshaped . masked
   where
     masked
         | lightMasking new /= lightMasking old = setMasking (lightMasking new)
@@ -385,6 +389,9 @@ resettled old new = reshaped . masked
     reshaped
         | clip new /= clip old = setModel (clipModel (clip new))
         | otherwise = id
+    switched t
+        | chosenTracker new /= whichTracker t = takeOver t (trackerFor k new (trackerCalibration t))
+        | otherwise = t
 
 -- | A tracker with the camera and the settings it tracks by: what a
 -- recording's entries are carried out on.
@@ -417,7 +424,7 @@ applyInput input t = case input of
     Setting name value ->
         let settings = set name value (trackingSettings t)
          in case parseSettings settings of
-                Right config -> t{trackingSettings = settings, trackingConfig = config, trackingTracker = resettled (trackingConfig t) config (trackingTracker t)}
+                Right config -> t{trackingSettings = settings, trackingConfig = config, trackingTracker = resettled (trackingCamera t) (trackingConfig t) config (trackingTracker t)}
                 Left _ -> t
 
 -- | Tracking as a recording's start describes it, unless its settings or

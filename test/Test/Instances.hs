@@ -10,7 +10,7 @@ import Test.Tasty.QuickCheck
 import TrackKat.Belief (Belief, Chance, chance, inChance)
 import TrackKat.Branch (Clarity (..))
 import TrackKat.CommandLine (Start (..))
-import TrackKat.Config (Binding, HeadView (..), KeyOrButton)
+import TrackKat.Config (Binding, HeadView (..), KeyOrButton, WhichTracker (..))
 import TrackKat.Frame (Blob, Stripe (..), frameHeight, frameWidth)
 import TrackKat.Idle (Use (..))
 import TrackKat.Linear (V3)
@@ -204,6 +204,10 @@ instance Arbitrary HeadView where
 -- | A game with any process and window Windows could give it; simplest
 -- the first process and window with no more known and tracking stopped,
 -- and simpler with less known of it, and smaller numbers.
+instance Arbitrary WhichTracker where
+    arbitrary = elements [OldTracker, NewTracker]
+    shrink = earlier [OldTracker, NewTracker]
+
 instance Arbitrary ServedGame where
     arbitrary =
         ServedGame

@@ -42,7 +42,7 @@ import TrackKat.Recording
 import TrackKat.Session (Effect (Record), Session (..), newSession)
 import qualified TrackKat.Session as Session
 import TrackKat.Synth
-import TrackKat.Tracker
+import TrackKat.Trackers
 
 simulations :: TestTree
 simulations =
@@ -96,6 +96,9 @@ simulations =
             removePathForcibly path
             fmap replayedTo (replay =<< parseRecording (BL.fromStrict whole)) @?= Right live
             assertBool (show live) (length live == 6)
+        , testCase "a recording is replayed by the tracker it says, and by the old one if it doesn't say, as those made before there were two" $
+            let saying said = sessionStart{startSettings = [named | named@(name, _) <- startSettings sessionStart, name /= "tracker"] ++ [("tracker", which) | Just which <- [said]]}
+             in map (fmap whichTracker . startTracker . saying) [Nothing, Just "old", Just "new"] @?= [Right OldTracker, Right OldTracker, Right NewTracker]
         , testCase "a later version of recording is refused" $
             assertBool "" (isLeft (parseRecording (BL.fromStrict (C.pack "trackkat recording 3\n"))))
         , testGroup

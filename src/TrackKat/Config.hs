@@ -7,6 +7,7 @@ module TrackKat.Config (
     Updates (..),
     Startup (..),
     HeadView (..),
+    WhichTracker (..),
     defaultConfig,
     parseConfig,
     readSettings,
@@ -66,6 +67,7 @@ data Config = Config
     , updates :: Updates
     , startup :: Startup
     , lightMasking :: Masking
+    , chosenTracker :: WhichTracker
     , headView :: HeadView
     }
     deriving (Eq, Show)
@@ -74,6 +76,12 @@ data Config = Config
 -- games see it, the head as the camera measures it with the clip on it, or
 -- the camera's picture.
 data HeadView = VirtualView | PhysicalView | CameraView
+    deriving (Eq, Show)
+
+-- | Which tracker tracks: the one as it was, or the one that scores every
+-- hypothesis about a frame by one account (see Note [Two trackers] in
+-- "TrackKat.Trackers").
+data WhichTracker = OldTracker | NewTracker
     deriving (Eq, Show)
 
 -- | Whether an installed trackkat looks for, and fetches, newer versions.
@@ -131,7 +139,8 @@ clipModel (ClipShape _ m) = m
 -- gains tuned in DCS; strong smoothing; aiming that turns the view half as far
 -- again as the head, smoothed more strongly still; the headset clip
 -- trackkat was developed with, its post as it is now bent; trackkat's own
--- NPClient; still lights ignored; the head view as games see it.
+-- NPClient; still lights ignored; the old tracker; the head view as games
+-- see it.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -163,6 +172,7 @@ defaultConfig =
         , updates = UpdatesOn
         , startup = NoStartAtLogin
         , lightMasking = MaskLights
+        , chosenTracker = OldTracker
         , headView = VirtualView
         }
   where
@@ -288,6 +298,7 @@ setting (c, d@(Dials k a)) name value =
             "updates" -> (\u -> (c{updates = u}, d)) <$> parseUpdates value
             "startup" -> (\st -> (c{startup = st}, d)) <$> parseStartup value
             "ignore lights" -> (\l -> (c{lightMasking = l}, d)) <$> parseMasking value
+            "tracker" -> (\w -> (c{chosenTracker = w}, d)) <$> parseWhich value
             "head view" -> (\v -> (c{headView = v}, d)) <$> parseHeadView value
             _ -> Left ("unknown setting " ++ show name)
   where
@@ -435,6 +446,10 @@ renderConfig c =
         , "# they don't stop trackkat finding the clip."
         , "ignore lights = " ++ renderMasking (lightMasking c)
         , ""
+        , "# tracker = new: try the reworked tracking, which is still being"
+        , "# proven. tracker = old: track as trackkat did before it."
+        , "tracker = " ++ renderWhich (chosenTracker c)
+        , ""
         , "# head view: what the window shows of your head: virtual, physical, or camera."
         , "head view = " ++ renderHeadView (headView c)
         ]
@@ -472,6 +487,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                    , ("updates", renderUpdates (updates c))
                    , ("startup", renderStartup (startup c))
                    , ("ignore lights", renderMasking (lightMasking c))
+                   , ("tracker", renderWhich (chosenTracker c))
                    ]
     -- A smoothing's settings, by what its names begin with; turned off, its
     -- knobs do nothing, so they are no change.
@@ -523,6 +539,15 @@ parseMasking _ = Left "ignore lights is on or off"
 renderMasking :: Masking -> String
 renderMasking MaskLights = "on"
 renderMasking NoMasking = "off"
+
+parseWhich :: String -> Either String WhichTracker
+parseWhich "old" = Right OldTracker
+parseWhich "new" = Right NewTracker
+parseWhich _ = Left "tracker is old or new"
+
+renderWhich :: WhichTracker -> String
+renderWhich OldTracker = "old"
+renderWhich NewTracker = "new"
 
 parseHeadView :: String -> Either String HeadView
 parseHeadView "virtual" = Right VirtualView

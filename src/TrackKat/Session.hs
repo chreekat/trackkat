@@ -22,6 +22,7 @@ module TrackKat.Session (
     -- * In words
     status,
     noCalibration,
+    describeTracker,
 ) where
 
 import Text.Printf (printf)
@@ -39,7 +40,7 @@ import TrackKat.Pose
 import TrackKat.Recording (Did (..), resettled, trackerFor)
 import TrackKat.Response
 import TrackKat.Shape
-import TrackKat.Tracker (
+import TrackKat.Trackers (
     Absence,
     BlobRole,
     Outcome (..),
@@ -61,8 +62,9 @@ import TrackKat.Tracker (
     trackerLights,
     trackerModel,
     trackerShape,
+    whichTracker,
  )
-import qualified TrackKat.Tracker as Tracker
+import qualified TrackKat.Trackers as Tracker
 import TrackKat.World (Instant)
 
 -- Note [What a session promises]
@@ -83,6 +85,12 @@ import TrackKat.World (Instant)
 --
 --  * A settings file saved with nothing changed leaves the session as it
 --    was and logs nothing.
+--
+--  * The tracker is the one the settings ask for. Settings saved that ask
+--    for the other have it take over (see Note [Two trackers] in
+--    "TrackKat.Trackers") with the calibration as it was, which is logged;
+--    the view is shaped afresh from the next frame, and the pause, the
+--    trim, and aiming are as they were.
 --
 --  * Aiming is on from when it is asked for until it is ended or the view
 --    is recentered, whatever else happens: the view is aimed from the next
@@ -385,8 +393,12 @@ frame now stripes s =
 -- it was starts afresh: what its being held down began ends, and nothing
 -- more comes of a press of it under way.
 settingsSaved :: String -> Config -> Session -> (Session, [Effect])
-settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSettings = new, sTracker = resettled old new (sTracker s), sGestures = watched}
+settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSettings = new, sTracker = taken, sShaper = shaper, sGestures = watched}
   where
+    taken = resettled defaultIntrinsics old new (sTracker s)
+    switched = whichTracker taken /= whichTracker (sTracker s)
+    -- Another tracker's poses are a jump the shaper must not smooth.
+    shaper = if switched then newShaper else sShaper s
     applied =
         [Record (TookSettings text), BindHotkeys new]
             ++ [PointGames (npclient new) | npclient new /= npclient old]
@@ -394,9 +406,15 @@ settingsSaved text new s = (applied ++) <$> steps (concatMap asked ended) s{sSet
             -- Clicking through the head view saves it; that is no news.
             ++ [say (describeChanges old new) | new /= old{headView = headView new}]
             ++ [say "Tracking the clip's new shape; recentering." | clip new /= clip old]
+            ++ [say (describeTracker (whichTracker taken)) | switched]
             ++ [ShowSettings text]
     old = sSettings s
     (watched, ended) = forget (\k -> boundTo new k /= boundTo old k) (sGestures s)
+
+-- | Which tracker is tracking, for the log.
+describeTracker :: WhichTracker -> String
+describeTracker OldTracker = "Tracking with the old tracker."
+describeTracker NewTracker = "Tracking with the new tracker."
 
 -- | A trim as the console and log show it.
 describeTrim :: Trim -> String
@@ -469,7 +487,7 @@ status outcome sending games =
             Tracked{outPose = hp, outSeen = seen} ->
                 printf "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+4.0f  y %+4.0f  z %+4.0f mm" (yaw hp) (pitch hp) (roll hp) (tx hp) (ty hp) (tz hp)
                     ++ describeSeen seen
-            Lost n masked why _ ->
+            Lost n masked why ->
                 "lost the clip (" ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ "): " ++ describeWhy why
         , case sending of
             Holding _ -> "   PAUSED"

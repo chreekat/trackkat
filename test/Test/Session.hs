@@ -25,7 +25,7 @@ import TrackKat.Recording (Did (..), trackerTime)
 import TrackKat.Response
 import TrackKat.Session
 import TrackKat.Synth (rotYXZ, squareStripes)
-import TrackKat.Tracker (Outcome (..), trackerCalibration)
+import TrackKat.Trackers (Outcome (..), trackerCalibration, whichTracker)
 import TrackKat.World (clockAt, inSeconds)
 
 tests :: TestTree
@@ -87,6 +87,25 @@ tests =
                     , "Aiming ended."
                     , "Aiming: sensitivity reduced for finer control."
                     , "Aiming ended."
+                    ]
+        , testCase "what the log says of going over to the new tracker, and back" $
+            userLines
+                ( effectsOf
+                    [ Connect
+                    , See 0 0
+                    , Save defaultConfig{chosenTracker = NewTracker}
+                    , See 1 0
+                    , Save defaultConfig{chosenTracker = NewTracker, headView = CameraView}
+                    , Save defaultConfig
+                    , See 2 0
+                    ]
+                )
+                @?= [ "Tracking."
+                    , "Recentered."
+                    , "Settings reloaded: tracker = new"
+                    , "Tracking with the new tracker."
+                    , "Settings reloaded: tracker = old"
+                    , "Tracking with the old tracker."
                     ]
         , testCase "aiming, a turn of the head turns the view a quarter as far, as the default curves have it" $
             let turned aiming = yaw (sLatest (reached ([Connect, See 0 0] ++ [Ask ToAim | aiming == Aiming] ++ [See 0 0] ++ replicate 240 (See 4 0))))
@@ -186,7 +205,30 @@ tests =
                         .&&. userLines effects
                             === [describeChanges old new | new /= old{headView = headView new}]
                                 ++ ["Tracking the clip's new shape; recentering." | clip new /= clip old]
+                                ++ [describeTracker (chosenTracker new) | chosenTracker new /= chosenTracker old]
                                 ++ ["Aiming ended." | sAim after /= sAim before]
+        , testProperty "the tracker is the one the settings ask for, whatever happens" $
+            \(Moves moves) ->
+                checkCoverage . cover 30 (or [chosenTracker (sSettings after) == NewTracker | (_, _, after, _) <- trace moves]) "the new tracker asked for" $
+                    conjoin
+                        [ counterexample (show event) $ whichTracker (sTracker after) === chosenTracker (sSettings after)
+                        | (_, event, after, _) <- trace moves
+                        ]
+        , testProperty "settings that ask for the other tracker have it take over, which is logged: with the calibration as it was, the pause, the trim, and aiming as they were, and the view shaped afresh from the next frame" $
+            \(Moves moves) ->
+                let before = reached moves
+                    old = sSettings before
+                    asked = old{chosenTracker = case chosenTracker old of OldTracker -> NewTracker; NewTracker -> OldTracker}
+                    happened = moves ++ [Save asked, See 0 0]
+                 in case (reverse (trace happened), reverse (events happened)) of
+                        ((_, _, shown, _) : (_, _, after, effects) : _, FrameArrived now _ : _) ->
+                            whichTracker (sTracker after) === chosenTracker asked
+                                .&&. unchanged before after
+                                .&&. userLines effects === [describeChanges old asked, describeTracker (chosenTracker asked)]
+                                .&&. case sOutcome shown of
+                                    Just Tracked{outPose = hp} | sSending shown == Following -> sLatest shown === fst (shape (response asked) (sTrim after) (sAim after) now hp newShaper)
+                                    _ -> property True
+                        _ -> property False
         , testProperty "games asking to recenter count just when they have since the last look" $
             \(Moves moves) game ->
                 let before = reached moves
@@ -444,6 +486,8 @@ instance Arbitrary Moves where
 
 -- | Simplest a frame showing nothing; and simpler with a head turned
 -- less, fewer keys going down or up, and settings nearer the defaults.
+-- Settings that ask for the new tracker are saved often enough that what
+-- is promised of a session is tried of both trackers.
 instance Arbitrary Move where
     arbitrary =
         frequency
@@ -454,6 +498,7 @@ instance Arbitrary Move where
             , (2, pure Wait)
             , (5, Ask <$> elements [ToRecenter, ToPause, ToPause, ToTrim, ToTrim, ToAim, ToAim, ToCalibrate, ToClear, ToMark])
             , (1, Save <$> genConfig)
+            , (1, pure (Save defaultConfig{chosenTracker = NewTracker}))
             , (1, (\(OnBench config) -> Save config) <$> arbitrary)
             , (1, elements [Seek, Connect, Stop "The camera stopped.", Corrupt])
             ]

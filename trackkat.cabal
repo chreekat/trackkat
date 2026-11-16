@@ -78,6 +78,7 @@ library
     TrackKat.Tracker.Sizes
     TrackKat.Tracker.Still
     TrackKat.Tracker.Trail
+    TrackKat.Trackers
     TrackKat.Updater
     TrackKat.Visibility
     TrackKat.USB
@@ -234,6 +235,7 @@ test-suite tests
     Test.Tracker.Sizes
     Test.Tracker.Step
     Test.Tracker.Trail
+    Test.Trackers
     Test.Updater
     Test.Visibility
     Test.World

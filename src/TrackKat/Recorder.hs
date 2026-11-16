@@ -50,7 +50,7 @@ import System.IO (BufferMode (..), IOMode (..), hClose, hFlush, hSetBuffering, o
 import TrackKat.Frame (Stripe)
 import TrackKat.Number (renderNatural)
 import TrackKat.Recording
-import TrackKat.Tracker (Event, Outcome)
+import TrackKat.Trackers (Event, Outcome)
 
 -- Note [Recording never holds up tracking]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

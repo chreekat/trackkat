@@ -119,5 +119,9 @@ startup = off
 # they don't stop trackkat finding the clip.
 ignore lights = on
 
+# tracker = new: try the reworked tracking, which is still being
+# proven. tracker = old: track as trackkat did before it.
+tracker = old
+
 # head view: what the window shows of your head: virtual, physical, or camera.
 head view = virtual

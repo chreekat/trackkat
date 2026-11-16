@@ -30,6 +30,8 @@ module TrackKat.Tracker (
     trackerWindows,
     Request (..),
     request,
+    trackerPending,
+    takingOver,
     setModel,
     setMasking,
     Event (..),
@@ -179,6 +181,16 @@ setMasking masking t
 -- | Ask for something, after anything already asked for.
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
+
+-- | What has been asked for and not yet carried out, oldest first.
+trackerPending :: Tracker -> [Request]
+trackerPending = trPending
+
+-- | A tracker taking over from another: centred where that one was, if it
+-- was centred, the clip then at the pose given; and asked for what that
+-- one was still asked for.
+takingOver :: Maybe Pose -> [Request] -> Tracker -> Tracker
+takingOver centre pending t = t{trCentre = (trCentre t){centrePose = centre}, trPending = pending}
 
 -- | Track a differently shaped clip from the next frame, recentering then,
 -- since the model's axes move with its shape.

@@ -104,6 +104,7 @@ tests =
         , shrinksWell "a view of the head" VirtualView (const True)
         , shrinksWell "a game served" (ServedGame 1 Nothing 0 Nothing TrackingStopped) (\g -> servedProcess g >= 1 && maybe True (\profile -> profile >= 0 && profile <= 65535) (servedProfile g))
         , shrinksWell "why an update is looked for" Due (const True)
+        , shrinksWell "which tracker" OldTracker (const True)
         , shrinksWell "how clearly the reflectors show" Clear (const True)
         , shrinksWell "a way the clip came to be where it is" Continued (const True)
         , shrinksWell "whether something that comes and goes is there" Present (const True)

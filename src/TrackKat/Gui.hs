@@ -59,7 +59,7 @@ import TrackKat.Frame (Blob (..))
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..), Trim (..))
-import TrackKat.Tracker (BlobRole (..))
+import TrackKat.Trackers (BlobRole (..))
 
 foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()

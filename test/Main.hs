@@ -46,6 +46,7 @@ import qualified Test.Shrink
 import qualified Test.Stats
 import qualified Test.Term
 import qualified Test.Tracker
+import qualified Test.Trackers
 import qualified Test.Updater
 import qualified Test.Visibility
 import qualified Test.World
@@ -75,6 +76,7 @@ main = do
                 , Test.Belief.tests
                 , Test.Lights.tests
                 , Test.Tracker.tests
+                , Test.Trackers.tests
                 , Test.Calibration.tests
                 , Test.Visibility.tests
                 , Test.Response.tests
@@ -101,6 +103,7 @@ main = do
             , testGroup
                 "simulation"
                 [ Test.Tracker.simulations
+                , Test.Trackers.simulations
                 , Test.Following.simulations
                 , Test.Branch.simulations
                 , Test.Lights.simulations

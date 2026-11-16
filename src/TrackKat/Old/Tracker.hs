@@ -28,6 +28,8 @@ module TrackKat.Old.Tracker (
     trackerWindows,
     Request (..),
     request,
+    trackerPending,
+    takingOver,
     setModel,
     setMasking,
     Event (..),
@@ -101,10 +103,11 @@ import TrackKat.World (Instant, seconds, (.-.))
 -- nothing here is to be improved, only deleted, with "Test.Old" and the
 -- setting, once the new tracker has taken its place.
 --
--- It is the code as it was but for its modules' names, and for taking
--- from elsewhere what moved: how a reflector was seen, from
--- "TrackKat.Sight", and two of the world's figures, from
--- "TrackKat.Old.World". What both trackers share (the lights, the
+-- It is the code as it was but for its modules' names; for taking from
+-- elsewhere what moved: how a reflector was seen, from "TrackKat.Sight",
+-- and two of the world's figures, from "TrackKat.Old.World"; and for
+-- 'trackerPending' and 'takingOver', by which one tracker takes over
+-- from the other. What both trackers share (the lights, the
 -- learners' arithmetic, poses, terms) is as the old tracker had it, or
 -- only added to. That it tracks as it did is held by its simulations'
 -- figures and its scorecard ("Test.Old.Scorecard").
@@ -183,6 +186,16 @@ setMasking masking t
 -- | Ask for something, after anything already asked for.
 request :: Request -> Tracker -> Tracker
 request r t = t{trPending = trPending t ++ [r]}
+
+-- | What has been asked for and not yet carried out, oldest first.
+trackerPending :: Tracker -> [Request]
+trackerPending = trPending
+
+-- | A tracker taking over from another: centred where that one was, if it
+-- was centred, the clip then at the pose given; and asked for what that
+-- one was still asked for.
+takingOver :: Maybe Pose -> [Request] -> Tracker -> Tracker
+takingOver centre pending t = t{trCentre = (trCentre t){centrePose = centre}, trPending = pending}
 
 -- | Track a differently shaped clip from the next frame, recentering then,
 -- since the model's axes move with its shape.
