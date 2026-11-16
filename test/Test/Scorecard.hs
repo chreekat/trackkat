@@ -223,12 +223,16 @@ flecked =
     ]
   where
     heads = [("still", const (headSeen bentWorn 0 0 0), Steady 0.15), ("glancing", \t -> headSeen bentWorn (25 * sin (2 * pi * t / 2.5)) (10 * sin (2 * pi * t / 3.7)) 0, Steady 0.17)]
-    places = [("amid the reflectors", amid), ("beside a reflector", beside)]
+    places = [("amid the reflectors", const amid), ("beside a reflector", beside)]
     comings = [("steady", const True), ("flickering", \i -> noise i 7 > 0)]
-    amid _ pose = let seen = map (project defaultIntrinsics pose) [mLeft clipBent, mRight clipBent, mTop clipBent] in (sum (map fst seen) / 3, sum (map snd seen) / 3)
     beside radius pose = case pointDiscs defaultIntrinsics clipBent allLit pose of
         ((u, v), r) : _ -> (u + r + radius + 3, v)
         [] -> (0, 0)
+
+-- | The middle of where a pose puts the bent clip's reflectors in the
+-- picture.
+amid :: Pose -> (Double, Double)
+amid pose = let seen = map (project defaultIntrinsics pose) [mLeft clipBent, mRight clipBent, mTop clipBent] in (sum (map fst seen) / 3, sum (map snd seen) / 3)
 
 -- | The scenes, each with the most its card may come to.
 scenarios :: [(Scenario, Limits)]
@@ -276,6 +280,7 @@ scenarios =
     , (points "a still light as big as a reflector while another is hidden for half a second" clipBent (const [((200, 150), 9)]) [(t, glancing t, (1, if t >= 2 && t < 2.5 then 0 else 1, 1)) | t <- at120 5], Limits 0 0 0 0 4.3 0)
     , (points "two reflectors and a stray, the clip not seen before" clipBent (const [((340, 288), 3)]) [(t, face, (1, if t < 1 then 0 else 1, 1)) | t <- at120 2], Limits 0 0 0 0 0.5 0)
     , (unmasked (points "two strays coming on beside a glancing head, lights not masked" clipBent (\t -> [((90, 400), 8) | t >= 1] ++ [((560, 90), 9) | t >= 2]) [(t, glancing t, allLit) | t <- at120 6]), Limits 0 0 0 0 0.7 0)
+    , (framed "a fleck by the right reflector as the other two run together" clipBent (const Whole) [(t, pose, renderDiscs (fleckBy pose : pointDiscs defaultIntrinsics clipBent allLit pose)) | (t, pose, _) <- take 961 (sweeping bentWorn)], Limits 0 0 98 0 48.9 0)
     , (framed "glancing with centres a pixel out" clipBent (const Whole) [(t, pose, renderDiscs (jitter 2 i (pointDiscs defaultIntrinsics clipBent allLit pose))) | (i, t) <- zip [0 ..] (at120 6), let pose = glancing t], Limits 0 0 0 0 4.1 0)
     , (points "leaving the picture at its edge, and back" clipBent nothingElse [(t, pose, lit) | t <- at120 6, let (pose, lit) = leaving t], Limits 0 0 0 0 0.8 0)
     , (framed "glancing by a lit fire" clipBent (const Whole) [(t, pose, renderDiscs (heads ++ occluded heads (fireDiscs fireAt i))) | (i, t) <- zip [0 ..] (at120 10), let pose = raised (headSeen bentWorn (25 * sin (2 * pi * t / 3)) (8 * sin (2 * pi * t / 5)) 0); heads = pointDiscs defaultIntrinsics clipBent allLit pose], Limits 0 0 0 0 0.5 0)
@@ -290,6 +295,9 @@ scenarios =
     phoneAt d = [(project defaultIntrinsics (Pose (poseR face) (d *^ normalize (poseT face))) p, 5) | p <- [mLeft clipBent, mRight clipBent, mTop clipBent]]
     leantTo d = let Pose r p = face in Pose r (d *^ normalize p)
     fleck pose = let (u, v) = project defaultIntrinsics pose (mTop clipBent) in ((u + 4, v + 9), 2.5)
+    -- A fleck 7 pixels across that moves with the clip, by its right
+    -- reflector when squarely seen.
+    fleckBy pose = let (u, v) = amid pose in ((u + 45, v + 10), 3.5)
     sweeping wornAt = [(t, headSeen wornAt (40 * sin (2 * pi * t / 7)) (25 * sin (2 * pi * t / 5.3)) (20 * sin (2 * pi * t / 4.1)), allLit) | t <- at120 20]
     tabSweep wear = [(t, headPose userCamera wear (40 * sin (2 * pi * t / 7)) (25 * sin (2 * pi * t / 5.3)) (20 * sin (2 * pi * t / 4.1)), allLit) | t <- framesAt 60 20]
     fastTurn t = headSeen bentWorn (-40 + 200 * max 0 (min 0.4 (t - 1))) 0 0
