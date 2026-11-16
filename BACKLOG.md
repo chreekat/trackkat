@@ -111,7 +111,6 @@ that tests found false. None is fixed.
   steadiness, empty or sub-0.0001 Points, joystick names ending in "(n)".
 - `parseNumber` is not correctly rounded and accepts "--5"; `renderNumber`
   can write "-0".
-- A recording cut inside its first entry line is refused whole.
 - A Points curve can turn back by one ulp at a knot.
 - `Belief.weighed` given a score that is impossible both ways, alike and
   unalike, gives no belief but not-a-numbers; nothing gives it one today,

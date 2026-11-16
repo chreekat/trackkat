@@ -235,12 +235,11 @@ properties =
                                 , recEntries back === recEntries r
                                 , written back === written r
                                 ]
-        , testProperty "a recording cut short after its first entry is read up to its last whole line" $
+        , testProperty "a recording cut short after its start is read up to its last whole line" $
             \(Recorded r) ->
                 let whole = written r
                     start = BL.length (toLazyByteString (renderStart (recStart r)))
-                    first = BL.length (toLazyByteString (foldMap (renderEntry (recStart r)) (take 1 (recEntries r))))
-                 in forAllShrink (choose (start + first, BL.length whole)) (earlier [BL.length whole, start + first]) $ \cut ->
+                 in forAllShrink (choose (start, BL.length whole)) (earlier [BL.length whole, start]) $ \cut ->
                         let kept = BL.take cut whole
                             wholeLines = length (BL.elemIndices 10 (BL.drop start kept))
                             cutShort = cut > start && BL.last kept /= 10

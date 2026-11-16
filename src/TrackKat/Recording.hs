@@ -237,9 +237,8 @@ settingLine n v = "setting " ++ n ++ " =" ++ (if null v then "" else " " ++ v)
 -- | Read a recording. The start must be complete; a line after it that
 -- can't be read, or is cut short, without the newline that ends every
 -- line, or that gives a setting a value it can't have, ends the entries
--- with 'Unreadable'. Entries are read as
--- they are used, so a long recording can be replayed without holding it
--- all.
+-- with 'Unreadable'. Entries are read as they are used, so a long
+-- recording can be replayed without holding it all.
 parseRecording :: BL.ByteString -> Either String Recording
 parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
     [] -> Left "empty: not a trackkat recording"
@@ -253,7 +252,8 @@ parseRecording text = case zip [1 :: Int ..] (wholeLines text) of
         | otherwise -> Left "not a trackkat recording: it should start with \"trackkat recording\""
   where
     header h [] = finish h []
-    header _ ((n, Nothing) : _) = Left ("line " ++ show n ++ ": cut short")
+    -- The clock ends the start, so a line cut short after it is an entry.
+    header h ls@((n, Nothing) : _) = maybe (Left ("line " ++ show n ++ ": cut short")) (const (finish h ls)) (hClock h)
     header h ls@((n, Just l) : rest) = case utf8 (BL.toStrict l) of
         ('#' : note) -> header h{hNotes = hNotes h ++ [dropWhile (== ' ') note]} rest
         str
