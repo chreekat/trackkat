@@ -51,16 +51,16 @@ tooltip saying what it does.
 ![trackkat's window, numbered](docs/window.png)
 
 1. The version, and whether it is up to date; **Check for updates** looks now. Amber, with **Restart to update** once a new version is ready, or **Install trackkat** while it runs from where you unzipped it.
-2. The head view; click it to switch between three, and it stays on the one you left it on. **Virtual**: your head as games see it, with what the camera sees in the corner. **Physical**: your own head as measured, dotted yellow, turning about your neck; once calibration is learnt, the clip on it, each reflector hollow while out of sight. **Camera**: the camera's whole picture, the clip's reflectors blue, other bright things amber, still lights ignored grey.
+2. The head view; click it to switch between three, and it stays on the one you left it on. **Virtual**: your head as games see it, with what the camera sees in the corner. **Physical**: your own head as measured, dotted yellow, turning about your neck; once calibration is learned, the clip on it, each reflector hollow while out of sight. **Camera**: the camera's whole picture, the clip's reflectors blue, other bright things amber, still lights ignored gray.
 3. Each axis: your head, what games see after the curves, and a bar.
 4. Rest the mouse on anything for help.
-5. Camera, clip and games (by name): green is good.
+5. Camera, clip, and games (by name): green is good.
 6. **Recenter**: where you face now becomes straight ahead; clears trim and ends aiming.
 7. **Pause**: games see your head held still until you press it again. Lit amber while paused, with where the view is held.
 8. **Trim**: the current view, where it looks and where it has moved to, becomes the new forward; recenter to disengage. Lit blue while trimmed, with where.
 9. **Aim**: reduced sensitivity for finer control, to lay a gunsight on something by head, until you press it again. Lit blue while aiming.
 10. Latency and other figures, for bug reports.
-11. Keys and buttons for each switch above, one to a line; here a HOTAS button that trims when pressed, aims while held and recenters when pressed twice. Click a list to edit it.
+11. Keys and buttons for each switch above, one to a line; here a HOTAS button that trims when pressed, aims while held, and recenters when pressed twice. Click a list to edit it.
 12. **Add…**: press a key, joystick button, or middle or side mouse button to add it.
 13. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
 14. **Curves as text**, for curves of any shape.
@@ -68,7 +68,7 @@ tooltip saying what it does.
 16. Smoothing: steadiness against jitter, responsiveness against lag.
 17. **Lean follows the view**, or the screen.
 18. **Ignore still lights**: a lamp or a fire behind you doesn't stop trackkat finding the clip; see [still lights](docs/details.md#still-lights).
-19. What trackkat has learnt about your camera and neck.
+19. What trackkat has learned about your camera and neck.
 20. A cover: lift it for **Calibrate now** (after moving the camera, turn your head left and right for five seconds) and **Clear calibration** (start afresh).
 21. The log's latest line; **Copy log** for bug reports.
 22. **Open log**: the whole log, and trackkat's version, in a window of its own.
@@ -117,12 +117,12 @@ Either way they apply at once, while you play.
 
   ![trackdemo looking around its cockpit, driven by a scripted pose](docs/trackdemo.gif)
 
-More on installing and updating, trim, aim, calibration, the tray icon and when
+More on installing and updating, trim, aim, calibration, the tray icon, and when
 trackkat quits by itself: [docs/details.md](docs/details.md).
 
 ## Building
 
-Needs GHC 9.14, cabal and libusb-1.0 headers; dependencies are frozen in
+Needs GHC 9.14, cabal, and libusb-1.0 headers; dependencies are frozen in
 `cabal.project.freeze`. `cabal build all --enable-tests && cabal test`. On
 Windows, see `.github/workflows/build.yml` for pointing cabal at libusb.
 
@@ -143,6 +143,6 @@ random cases each run; one that fails says how to try its case again, as
 ## Credits
 
 The USB protocol is ported from [linuxtrack](https://github.com/uglyDwarf/linuxtrack)
-(MIT licence, © 2009 Tulthix, uglyDwarf), which reverse-engineered it.
+(MIT license, © 2009 Tulthix, uglyDwarf), which reverse-engineered it.
 The table of games that need their head tracking data scrambled comes from
-[OpenTrack](https://github.com/opentrack/opentrack)'s game list (ISC licence).
+[OpenTrack](https://github.com/opentrack/opentrack)'s game list (ISC license).

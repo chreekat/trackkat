@@ -360,12 +360,12 @@ renderConfig c =
         , "responsiveness = " ++ renderNumber rs
         , ""
         , "# Response curves: how far the view turns or moves as your head does,"
-        , "# the same both sides of centre. Most simply a multiplier, as 1:6: the"
+        , "# the same both sides of center. Most simply a multiplier, as 1:6: the"
         , "# view turns 6 degrees for each degree your head turns, so turning"
         , "# 30 degrees looks straight behind you."
         , "#"
         , "# Draw any shape by defining more input:output points: degrees for yaw,"
-        , "# pitch and roll, mm for x, y and z. Straight lines join the points,"
+        , "# pitch, and roll, mm for x, y, and z. Straight lines join the points,"
         , "# starting from 0:0, and carry on past the last one. For example, a"
         , "# deadzone then 1:1 is 0.5:0 1.5:1."
         , "#"
@@ -402,7 +402,7 @@ renderConfig c =
         , "aim responsiveness = " ++ renderNumber aimRs
         , ""
         , "# clip: the headset clip's triangle of reflectors, in mm, measured"
-        , "# centre to centre, with left and right as you wear it: your left to"
+        , "# center to center, with left and right as you wear it: your left to"
         , "# your right along the headband, your left to the top, then your"
         , "# right to the top. If the clip's post gets bent, measure it again"
         , "# and change this, or the view will be off."
@@ -423,11 +423,11 @@ renderConfig c =
         , "startup = " ++ renderStartup (startup c)
         , ""
         , "# ignore lights = on: bright lights that stay put, such as a lamp or a"
-        , "# fire behind you, are learnt in a few seconds and ignored, so that"
+        , "# fire behind you, are learned in a few seconds and ignored, so that"
         , "# they don't stop trackkat finding the clip."
         , "ignore lights = " ++ renderMasking (lightMasking c)
         , ""
-        , "# head view: what the window shows of your head: virtual, physical or camera."
+        , "# head view: what the window shows of your head: virtual, physical, or camera."
         , "head view = " ++ renderHeadView (headView c)
         ]
   where
@@ -519,7 +519,7 @@ parseHeadView :: String -> Either String HeadView
 parseHeadView "virtual" = Right VirtualView
 parseHeadView "physical" = Right PhysicalView
 parseHeadView "camera" = Right CameraView
-parseHeadView _ = Left "head view is virtual, physical or camera"
+parseHeadView _ = Left "head view is virtual, physical, or camera"
 
 renderHeadView :: HeadView -> String
 renderHeadView VirtualView = "virtual"
@@ -530,7 +530,7 @@ renderHeadView CameraView = "camera"
 parseClip :: String -> Either String ClipShape
 parseClip value = case traverse parseNumber (words (map (\ch -> if ch == ',' then ' ' else ch) value)) of
     Just [lr, lt, rt] -> maybe (Left "the clip's three distances don't make a triangle") Right (clipShape lr lt rt)
-    _ -> Left "clip is three distances in mm, as you wear it: left to right, left to top and right to top, like 70 110 110"
+    _ -> Left "clip is three distances in mm, as you wear it: left to right, left to top, and right to top, like 70 110 110"
 
 renderClip :: ClipShape -> String
 renderClip cl = let (lr, lt, rt) = clipDistances cl in unwords (map renderNumber [lr, lt, rt])
@@ -692,7 +692,7 @@ parseKeyOrButton s = case joystickButton (trim s) of
                 Just (canonical, _) -> Right (Key (heldInOrder mods) canonical)
                 Nothing
                     | map toLower k `elem` ["mouseleft", "mouseright", "mouse1", "mouse2"] ->
-                        Left "the mouse buttons to bind are MouseMiddle, Mouse4 and Mouse5"
+                        Left "the mouse buttons to bind are MouseMiddle, Mouse4, and Mouse5"
                     | otherwise -> Left ("unknown key " ++ show k)
   where
     splitPlus str = case break (== '+') str of

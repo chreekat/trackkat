@@ -1057,7 +1057,7 @@ static void draw_head(HDC dc, int left, int top, int size)
         text_at(dc, bold_font, C_AMBER, left, note, size, S(20), DT_CENTER, L"PAUSED");
     else if (head_view == VIEW_PHYSICAL && !seen.clip_shown)
         text_wrapped(dc, small_font, C_DIM, left + S(8), top + size - S(48), size - S(16), S(32),
-                     L"The clip shows once trackkat has learnt your neck.");
+                     L"The clip shows once trackkat has learned your neck.");
     else if (head_view == VIEW_PHYSICAL) {
         wchar_t buf[64];
         describe_unseen(buf, 64);
@@ -2329,7 +2329,7 @@ static void draw_heading(const DRAWITEMSTRUCT *d)
     SetBkMode(dc, TRANSPARENT);
     if (d->hwndItem == calibration_title) {
         int x = text_run(dc, bold_font, RGB(74, 74, 74), 0, r.bottom, L"Calibration");
-        text_run(dc, ui_font, RGB(95, 95, 95), x, r.bottom, L" · learnt as you play");
+        text_run(dc, ui_font, RGB(95, 95, 95), x, r.bottom, L" · learned as you play");
         return;
     }
     wchar_t text[32];
@@ -2411,17 +2411,17 @@ static void live_tips(void)
     tip_area(live_hwnd, 2, x0, 0, x0 + S(130), rows,
              L"Your head as the camera measures it, from where you recentered");
     tip_area(live_hwnd, 3, x0 + S(130), 0, bar_l - S(4), rows,
-             L"What games get: your head after smoothing, the curves and any trim");
+             L"What games get: your head after smoothing, the curves, and any trim");
     tip_area(live_hwnd, 4, bar_l, 0, right, rows,
              L"Blue: where games see each axis in its range. Yellow tick: your head");
     tip_area(live_hwnd, 5, S(8), lights, S(8) + w, lights + S(18),
-             L"Green: camera in use. Grey: looking for it. Red: can't use it, and why");
+             L"Green: camera in use. Gray: looking for it. Red: can't use it, and why");
     tip_area(live_hwnd, 6, S(8) + w, lights, S(8) + 2 * w, lights + S(18),
              L"Whether the camera sees the clip's reflectors; out of sight, the view holds");
     tip_area(live_hwnd, 7, S(8) + 2 * w, lights, right, lights + S(18),
              L"Games reading your head through trackkat, by name where it is known");
     tip_area(live_hwnd, 8, S(8), S(STATS_Y), right, S(PANEL_H),
-             L"The last second's latency, frame gaps, stripes and GCs, for bug reports");
+             L"The last second's latency, frame gaps, stripes, and GCs, for bug reports");
 }
 
 /* What the strip's help says: about the offer, when it makes one. */
@@ -2753,8 +2753,8 @@ static void build_window(void)
 
     /* The calibration, and under its cover the two buttons that change it. */
     static const wchar_t calibration_tip[] =
-        L"What trackkat has learnt: how the camera is tipped, where your neck pivots";
-    calibration_title = tip(control(L"STATIC", L"Calibration · learnt as you play", SS_OWNERDRAW, 22, CAL_Y + 2,
+        L"What trackkat has learned: how the camera is tipped, where your neck pivots";
+    calibration_title = tip(control(L"STATIC", L"Calibration · learned as you play", SS_OWNERDRAW, 22, CAL_Y + 2,
                                     COVER_X - 34, 18, 0),
                             calibration_tip);
     calibration_text = tip(control(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 22, CAL_Y + 21, COVER_X - 34, 32, 0),
@@ -2768,7 +2768,7 @@ static void build_window(void)
             L"Click, then turn your head left and right for five seconds, to learn level");
     cover_buttons[1] = tip(control(L"BUTTON", L"Clear calibration", WS_TABSTOP | BS_PUSHBUTTON, COVER_X + 116,
                                    CAL_Y + 22, 106, 26, ID_CLEAR_CALIBRATION),
-                           L"Forget what trackkat has learnt; it learns again as you turn your head");
+                           L"Forget what trackkat has learned; it learns again as you turn your head");
     cover_frame = control(L"STATIC", L"", SS_ETCHEDFRAME, COVER_X, CAL_Y + 14, COVER_W, 40, 0);
     lift_cover(0);
 

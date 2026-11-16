@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Games find trackkat through NaturalPoint's NPClient interface. Most work straight away; the ones that don't usually need their game id, a key, or different signs for an axis. Check that `trackdemo` follows your head first: if it doesn't, it's not the game.
+        Games find trackkat through NaturalPoint's NPClient interface. Most work right away; the ones that don't usually need their game id, a key, or different signs for an axis. Check that `trackdemo` follows your head first: if it doesn't, it's not the game.
   - type: input
     id: game
     attributes:

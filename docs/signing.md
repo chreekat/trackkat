@@ -11,7 +11,7 @@ The **Sign** step of `.github/workflows/build.yml` runs on pushes to `main`
 once the repository is set up for it, and is skipped until then. The build
 uploads the unsigned files as the `trackkat-windows` artifact; SignPath
 signs them and hands them back, and they replace the unsigned ones before
-the zip, its SHA-256 and the release are made.
+the zip, its SHA-256, and the release are made.
 
 ## SignPath Foundation
 
@@ -21,10 +21,10 @@ checking that what it signs was built by CI from the project's public
 repository.
 
 1. **Apply** at <https://signpath.org/apply>. Its conditions, in short: an
-   OSI-approved licence (trackkat's is MIT), a project that is maintained
+   OSI-approved license (trackkat's is MIT), a project that is maintained
    and has been released, no proprietary code of your own, and builds made
    by CI from the public repository. You must publish a code signing policy
-   (a page or a README section naming who may commit, review and approve
+   (a page or a README section naming who may commit, review, and approve
    signing; SignPath gives a template) and use multi-factor authentication
    on GitHub and SignPath.
 2. Once accepted, in SignPath (<https://app.signpath.io>), in the
@@ -39,7 +39,7 @@ repository.
      which says which files in the artifact to sign.
    - The Foundation provides the **signing policy** (`release-signing`):
      each request waits for an approver to approve it in SignPath, by web
-     or e-mail. The step waits up to an hour.
+     or email. The step waits up to an hour.
    - Under your user's profile, or as a CI user, create an **API token**
      with permission to submit signing requests for the policy.
 3. In the repository's **Settings → Secrets and variables → Actions**:

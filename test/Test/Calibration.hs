@@ -222,13 +222,13 @@ simulations = group "Calibration" $ do
             moved < 3 && abs (yaw hp - y) < 0.5 && abs (pitch hp - p) < 0.5 && abs (roll hp) < 0.5
     let unlearnt = relativePose cameraLevel (appliedPivot (newLearner headset defaultCalibration)) straight (headAt neckAt 30 0 0)
     checkShowing "without learning, turning moves" (show unlearnt) $ norm (V3 (tx unlearnt) (ty unlearnt) (tz unlearnt)) > 20
-    checkShowing "level described" (describeLevel c) $ take 13 (describeLevel c) == "Level learnt:"
-    checkShowing "pivot described" (describePivot (Just straight) c) $ take 18 (describePivot (Just straight) c) == "Neck pivot learnt:"
+    checkShowing "level described" (describeLevel c) $ take 14 (describeLevel c) == "Level learned:"
+    checkShowing "pivot described" (describePivot (Just straight) c) $ take 19 (describePivot (Just straight) c) == "Neck pivot learned:"
     -- Nothing learnt, as after clearing the calibration, is said so.
     forM_ [Nothing, Just straight] $ \centre ->
         checkShowing "nothing learnt described" (show centre) $
             [describeLevel defaultCalibration, describePivot centre defaultCalibration]
-                == ["Level: not learnt yet; turn your head left and right.", "Neck pivot: not learnt yet; turn your head left and right."]
+                == ["Level: not learned yet; turn your head left and right.", "Neck pivot: not learned yet; turn your head left and right."]
     -- The window's shorter lines say the same, and fit its width.
     checkShowing "level described briefly" (describeLevelBriefly c) $
         take 14 (describeLevelBriefly c) == "Camera tipped " && length (describeLevelBriefly c) <= 90

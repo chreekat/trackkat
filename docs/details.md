@@ -11,15 +11,15 @@ admin, adds it to the Start menu and to Settings → Apps, points games at its
 NPClient there, and switches to the installed copy. If a copy as new is
 installed already, the window offers to switch to it instead.
 
-Settings, calibration and `npclient.log` live in `%APPDATA%\trackkat`, for
+Settings, calibration, and `npclient.log` live in `%APPDATA%\trackkat`, for
 any copy, installed or not, so installing and updating leave them alone.
 Settings files beside `trackkat.exe`, where older versions kept them, are
 moved there once.
 
 Each build has a version, such as `0.1.142 (3f9c2e1)`: the build's number and
-its commit. The window's title, the log window and the start of the log
+its commit. The window's title, the log window, and the start of the log
 show it. An installed trackkat looks for a newer build when it starts and
-every four hours, downloads it in the background, checks its SHA-256 and
+every four hours, downloads it in the background, checks its SHA-256, and
 unpacks it beside the others. The strip across the top of the window then
 turns amber and offers **Restart to update**, as does the tray menu;
 otherwise the new version starts the next time trackkat does. If it can't
@@ -38,18 +38,17 @@ log in. Games start trackkat themselves anyway, except in
 [anti-cheat mode](#anti-cheat).
 
 To uninstall, use Settings → Apps → trackkat. It quits trackkat, removes its
-shortcut, apps entry, start at login and its NPClient pointer, and its
-folders; files a running game holds go when you next log in. It asks
+shortcut, apps entry, start at login, NPClient pointer, and folders; files a running game holds go when you next log in. It asks
 whether to keep your settings. `trackkat.exe --uninstall --quiet` keeps them
 without asking.
 
 ## Tray icon
 
 trackkat shows a cat in the system tray, its eyes green while tracking,
-amber while the clip is out of sight, grey while looking for the camera,
+amber while the clip is out of sight, gray while looking for the camera,
 red without one. Its tooltip says whether a game is connected or trackkat
 is paused. Click it to open trackkat's window; right-click it to recenter, pause,
-trim or quit. Quitting from the tray menu turns the camera's lights off and
+trim, or quit. Quitting from the tray menu turns the camera's lights off and
 lets it go.
 
 ## Started by hand, or by a game
@@ -82,7 +81,7 @@ Quitting: no game or window used trackkat for 60 s.
 
 If the camera is unplugged, or the PC sleeps, trackkat waits and picks it up
 again when it comes back. Joysticks plugged in while it runs, or that come
-back after sleep, work straight away.
+back after sleep, work right away.
 
 ## The window
 
@@ -90,13 +89,13 @@ The tooltips in trackkat's window are kept to a phrase each; this is the
 rest of what there is to say.
 
 **Head and games see.** The head column is your head as the camera measures
-it, from the centre you set by recentering: degrees turned, mm moved. The
-games-see column is what games get, after smoothing, the curves and any
+it, from the center you set by recentering: degrees turned, mm moved. The
+games-see column is what games get, after smoothing, the curves, and any
 trim; while paused, or with the clip out of sight, it holds still. In each
 bar, blue is where games see that axis, out to the end of its range (behind
 you, straight up, 300 mm), and the yellow tick is your head.
 
-**Lights.** Camera is green when trackkat has the camera, grey while it
+**Lights.** Camera is green when trackkat has the camera, gray while it
 looks for it, and red, with the reason, when it can't use it. Clip says
 whether the camera sees all three reflectors. Games names a game reading
 your head, by its program's name when trackkat can read it; the camera's
@@ -117,7 +116,7 @@ waits for the next key, joystick button, or middle or side mouse button
 pressed over the window, and adds it; click it again to stop waiting.
 Delete a line to remove one.
 
-**Saving.** Switches and sliders are written to `trackkat.conf` straight
+**Saving.** Switches and sliders are written to `trackkat.conf` right
 away, text when you leave its box or press Enter. Only what you changed is
 rewritten, so your own edits and comments in the file stay. The line beside
 **Response** says whether the last save worked, and if not, why.
@@ -159,9 +158,9 @@ restart trackkat in a moment; games keep their head tracking.
 ## Recentering
 
 Recenter (F12, or a game's own "recenter TrackIR" binding) makes the way you
-face straight ahead. Recentering while the clip is out of sight centres the
+face straight ahead. Recentering while the clip is out of sight centers the
 view at once; the pose you hold when the clip comes back becomes the new
-centre.
+center.
 
 ## Trim
 
@@ -213,7 +212,7 @@ Bind a key or button to `aim` with `hold` after it to aim just while it is
 held down, or without to turn aiming on, then off. The AIM switch in the
 window does the same, and lights blue while aiming; the log says when it
 begins and ends. Aiming's curves and smoothing are the `aim yaw`, `aim
-pitch`, `aim roll`, `aim smoothing`, `aim steadiness` and `aim
+pitch`, `aim roll`, `aim smoothing`, `aim steadiness`, and `aim
 responsiveness` settings in `trackkat.conf`: a curve takes how far your head
 has turned since aiming began to how far the view turns.
 
@@ -234,7 +233,7 @@ In the window, type `hold` or `double` after a key or button in its list.
 A key bound only as a press acts the moment it goes down, as it always has.
 One that also has a hold or a double waits until the press can be nothing
 else: until it comes up, if it has a hold, and until 0.3 seconds have gone
-by with no second press, if it has a double. Recenter, pause and trim on a
+by with no second press, if it has a double. Recenter, pause, and trim on a
 hold act once, when the 0.3 seconds are up; aim on a hold lasts until the
 button comes up. A key bound with modifiers, such as `Ctrl+F9 hold`, goes
 down with just those held, and comes up when the key itself does.
@@ -249,7 +248,7 @@ it left off:
   axes would mix some of a left-right turn into roll. trackkat takes up to
   be the axis your head turns about when you glance left and right, told
   apart from the axes it nods and tilts about; slow drifts don't count.
-- **Where your neck pivots.** The clip sits in front of, above and to one
+- **Where your neck pivots.** The clip sits in front of, above, and to one
   side of the point your head turns about, so turning your head also moves
   the clip. trackkat finds the point that stays still while you turn (and
   your body doesn't) and measures movement there, so that turning your head
@@ -262,21 +261,21 @@ apply slowly enough not to move the view, and trackkat logs a line when one
 is worth mentioning:
 
 ```
-Level learnt: camera tipped 14.2 degrees down and 1.3 to its right, from 900 degrees of head turning.
-Neck pivot learnt: 95 mm below the clip, 80 behind it and 60 to its right, from 40 head turns.
+Level learned: camera tipped 14.2 degrees down and 1.3 to its right, from 900 degrees of head turning.
+Neck pivot learned: 95 mm below the clip, 80 behind it, and 60 to its right, from 40 head turns.
 ```
 
 To calibrate level at once, lift the cover beside the calibration in
 trackkat's window and click **Calibrate now**, then turn your head left and
 right for five seconds. **Clear calibration**, under the same cover, forgets
-what was learnt. Delete `trackkat.calibration` to start afresh; it explains
+what was learned. Delete `trackkat.calibration` to start afresh; it explains
 its own format.
 
 Click the head view to switch it between three views; trackkat keeps the
 one you left it on as `head view` in `trackkat.conf`. **Virtual** shows
 your head as games see it. **Physical** shows, dotted yellow, your own head
-as the camera measures it, turning about your neck pivot (the grey dot);
-once both are learnt, with the clip where the learnt pivot puts it, a
+as the camera measures it, turning about your neck pivot (the gray dot);
+once both are learned, with the clip where the learned pivot puts it, a
 reflector out of sight drawn hollow and named below.
 **Camera** shows the camera's whole picture, each blob at its size and
 shape.
@@ -296,9 +295,9 @@ of it. It goes only by turning seen clearly, each reflector a blob of its
 own rather than run together or in pieces, as they are when seen at a
 slant; it needs turning through different poses, fidgeting while looking
 one way counting for no more than one glance; and it is slower to believe
-a pose that would have your head turned further from your centre than
+a pose that would have your head turned further from your center than
 heads usually turn. Within a second or two
-of glancing about it corrects a mirror image, keeping your centre where it
+of glancing about it corrects a mirror image, keeping your center where it
 was, and logs:
 
 ```
@@ -307,7 +306,7 @@ Corrected a mirror-image pose.
 
 trackkat learns nothing while it isn't sure which pose is your head's, or
 while it doesn't see the reflectors clearly. A
-calibration learnt from mirror images, whose neck pivot is in front of the
+calibration learned from mirror images, whose neck pivot is in front of the
 clip, is forgotten when trackkat starts, with a line in the log saying so.
 
 ### The clip's shape
@@ -362,7 +361,7 @@ seen, while the clip was tracked elsewhere, or for longer than a head is
 held still. The second line comes once the light has been out of sight for
 45 seconds, the third when a light turns out to have been one of the clip's
 reflectors, moving off with it, or going as the clip came into view. The status line notes blobs ignored, such as `+2 masked`, the
-window's head view shows them grey among what the camera sees, its
+window's head view shows them gray among what the camera sees, its
 camera view with the area ignored around each light dashed, and `tirprobe --blobs` marks them `masked`.
 
 So with a fire lit, trackkat finds the clip about three seconds after it
@@ -386,7 +385,7 @@ for that software, which the DLL gets the pose from. So:
 - NaturalPoint's TrackIR software must be installed, but not running: quit
   it, including from the tray. The camera stays on WinUSB.
 - Games can't start trackkat this way, so start trackkat before the game,
-  or tick **Start with Windows**.
+  or check **Start with Windows**.
 - When a game starts head tracking, trackkat's log says so, with the game's
   number:
 

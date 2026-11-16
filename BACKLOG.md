@@ -15,7 +15,7 @@ Roughly in order.
 - Once ignoring still lights has proven itself, make it always on and drop
   the `ignore lights` setting and its checkbox.
 - Split merged blobs of elongated reflectors: `splitMerged` takes each
-  reflector for a round disc, but tape on a curved tab shows wider than tall.
+  reflector for a round disk, but tape on a curved tab shows wider than tall.
   In simulation, looking up 30 degrees while turning, the top reflector runs
   into a lower one, the split is off, and tracking goes 10-20 degrees wrong
   and is lost, for points and tabs alike; round blobs pass the same place.
@@ -34,7 +34,7 @@ Roughly in order.
   on the user's clip and the scalene one, and with the top tab unbent, the
   pose 3-5 degrees and 10-35 mm off. Estimate it, or ask for it.
 - Ground truth from a webcam: record it alongside the camera and estimate the
-  head pose from the face, to check poses, the learnt pivot and level, and the
+  head pose from the face, to check poses, the learned pivot and level, and the
   reflectors' shift.
 - Aim in the window: its curves and smoothing are only in `trackkat.conf`,
   and a binding's `hold` or `double` is typed after it in its list rather
@@ -43,11 +43,11 @@ Roughly in order.
 - For a second kind of clip (e.g. the side-mounted, LED TrackClip PRO),
   once one is in hand to check against:
   - markers named by place on the clip, told apart by the triangle's
-    geometry, not by where they appear in the image (`Model`'s left, right
+    geometry, not by where they appear in the image (`Model`'s left, right,
     and top);
   - one appearance model per kind of marker (point, tape on a curved tab, LED
     that dims off-axis), used alike by the solver, matching, the still-light
-    mask's size rule and the camera view;
+    mask's size rule, and the camera view;
   - the shape estimate as "hold one edge, place the other points";
   - clip presets as data (`clip = trackclip`, `trackclip-pro left`, or
     points and a mounting).
@@ -68,7 +68,7 @@ Roughly in order.
   made poses wrong less often but lost the clip more.
 - Tune the RTS only if the status line's latency and GC figures show a need.
 - Apply the clip shape estimated from movement (see docs/details.md), once
-  it has proven itself on real clips: re-solve its linearisation about the
+  it has proven itself on real clips: re-solve its linearization about the
   estimate (it falls short of a far different shape by about a tenth), keep
   it with the calibration, and offer to write it to `clip`.
 - Find the source of the wiggle after a fast head turn (the view overshoots
@@ -138,7 +138,7 @@ that tests found false. None is fixed.
   aiming.
 - `describeChanges` says a list of bindings emptied as `trim = `, with a
   space after it.
-- Pause after a recenter with the clip out of sight holds the centred
+- Pause after a recenter with the clip out of sight holds the centered
   view, not the pose games last saw.
 - A "Check for updates" click with no network still puts off the next
   automatic look by four hours.

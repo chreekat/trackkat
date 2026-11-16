@@ -362,16 +362,16 @@ branchEvidence br =
 describeEvidence :: Evidence -> String
 describeEvidence (Evidence c tracked reference turned) =
     printf
-        "%s: the tracked pose %.1f%% likely the mirror image, the centre %.1f%%%s"
+        "%s: the tracked pose %.1f%% likely the mirror image, the center %.1f%%%s"
         ( case c of
             MirrorNeither -> "nothing switched" :: String
             MirrorTracked -> "switched the tracked pose"
-            MirrorReference -> "switched the centre"
-            MirrorBoth -> "switched the tracked pose and the centre"
+            MirrorReference -> "switched the center"
+            MirrorBoth -> "switched the tracked pose and the center"
         )
         (100 * inChance tracked)
         (100 * inChance reference)
-        (maybe "" (\(alike, unalike) -> printf "; the head turned %.0f degrees from centre as it was, %.0f with one switched" alike unalike :: String) turned)
+        (maybe "" (\(alike, unalike) -> printf "; the head turned %.0f degrees from center as it was, %.0f with one switched" alike unalike :: String) turned)
 
 -- | Whether the tracked pose is surely the head's, so that what it shows
 -- can be learnt from.

@@ -270,7 +270,7 @@ readStatus cam = do
 
 initialise :: Camera -> IO ()
 initialise cam = do
-    camLog cam "initialising"
+    camLog cam "initializing"
     send cam (Cmd2 0x1A 0x00)
     send cam (Cmd2 0x1A 0x00)
     send cam (Cmd1 0x13)

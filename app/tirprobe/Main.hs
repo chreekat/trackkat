@@ -82,14 +82,14 @@ usage =
         , "                    reflector's post leaning back (default: clip in"
         , "                    trackkat.conf, else 70,110,110)"
         , "  --focal F         camera focal length in pixels (default 660)"
-        , "  --threshold N     pixel brightness cut-off, 30..253 (default 140)"
+        , "  --threshold N     pixel brightness cutoff, 30..253 (default 140)"
         , "  --ir N            IR illuminator brightness, 5..7 (default 7)"
         , "  --no-status-led   leave the green lights off"
         , "  --no-mask         don't learn and ignore bright lights that stay put,"
         , "                    whatever trackkat.conf's ignore lights says"
         , "  --raw             also hex-dump every USB transfer"
         , "  --record FILE     write every frame the camera sends to FILE, with"
-        , "                    the settings used and when Enter, c Enter and"
+        , "                    the settings used and when Enter, c Enter, and"
         , "                    m Enter were pressed, so the tracking can be"
         , "                    replayed exactly; about 6 MB a minute"
         , "  --replay FILE     track a recording instead of the camera, printing"
@@ -101,8 +101,8 @@ usage =
         , "  --explain         after each frame's line, what tracking judged it"
         , "                    by: each term's figure against its limit; and a"
         , "                    line for each window of head turning that the"
-        , "                    neck pivot, the clip's shape or the mirror image"
-        , "                    wasn't learnt from, with what ruled it out"
+        , "                    neck pivot, the clip's shape, or the mirror image"
+        , "                    wasn't learned from, with what ruled it out"
         , "  --list            list all USB devices and whether we can open them"
         , ""
         , "Press Ctrl-C to stop."
@@ -127,7 +127,7 @@ parseArgs ("--no-mask" : r) o = parseArgs r o{optMasking = Just NoMasking}
 parseArgs ("--no-status-led" : r) o = parseArgs r o{optSettings = (optSettings o){statusLights = False}}
 parseArgs ("--threshold" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){threshold = v}}
 parseArgs ("--ir" : n : r) o | Just v <- parseCount n = parseArgs r o{optSettings = (optSettings o){irBrightness = v}}
-parseArgs (a : _) _ = Left ("unrecognised argument: " ++ a)
+parseArgs (a : _) _ = Left ("unrecognized argument: " ++ a)
 
 main :: IO ()
 main = do

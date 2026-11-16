@@ -74,7 +74,7 @@ parseStream bs
                 if n > B.length bs then ([], bs) else emit (reply t (B.take n bs)) (B.drop n bs)
           where
             n = fromIntegral (B.index bs 0)
-        _ -> resync "unrecognised bytes"
+        _ -> resync "unrecognized bytes"
   where
     emit p rest = let (ps, r) = parseStream rest in (p : ps, r)
     resync why = case findFrameHeader 1 (const True) bs of

@@ -11,7 +11,7 @@ body:
     id: model
     attributes:
       label: Camera
-      description: Make, model and revision, as printed on the camera or its box.
+      description: Make, model, and revision, as printed on the camera or its box.
       placeholder: TrackIR 4 Pro
     validations:
       required: true
@@ -35,7 +35,7 @@ body:
     attributes:
       label: tirprobe --raw
       description: |
-        Run `tirprobe --raw > probe.txt` for a few seconds while wearing the clip, then drag probe.txt here. If trackkat doesn't recognise the camera yet, say so; we'll find another way to capture it.
+        Run `tirprobe --raw > probe.txt` for a few seconds while wearing the clip, then drag probe.txt here. If trackkat doesn't recognize the camera yet, say so; we'll find another way to capture it.
   - type: textarea
     id: notes
     attributes:

@@ -159,7 +159,7 @@ pivotTurns = pivotWindows
 -- | What to do to have something learnt, ending a line saying that it
 -- hasn't been yet.
 notLearnt :: String
-notLearnt = "not learnt yet; turn your head left and right."
+notLearnt = "not learned yet; turn your head left and right."
 
 -- | A line for the console about the learnt level, or that none is yet.
 describeLevel :: Calibration -> String
@@ -168,7 +168,7 @@ describeLevel c
     | otherwise =
         let (down, right) = cameraTilt (estimatedLevel c)
          in printf
-                "Level learnt: camera tipped %.1f degrees down and %.1f to its right, from %.0f degrees of head turning."
+                "Level learned: camera tipped %.1f degrees down and %.1f to its right, from %.0f degrees of head turning."
                 down
                 right
                 (levelTurning c)
@@ -183,13 +183,13 @@ describePivot :: Maybe Pose -> Calibration -> String
 describePivot _ c | pivotTurns c <= 0 = "Neck pivot: " ++ notLearnt
 describePivot Nothing c =
     printf
-        "Neck pivot learnt: %.0f mm from the clip, give or take %.0f, from %.0f head turns."
+        "Neck pivot learned: %.0f mm from the clip, give or take %.0f, from %.0f head turns."
         (norm (estimatedPivot c))
         (pivotSpreadAlong c (normalize (estimatedPivot c)))
         (pivotTurns c)
 describePivot (Just centre) c =
     printf
-        "Neck pivot learnt: %.0f mm %s the clip, %.0f %s it and %.0f to your %s, give or take %.0f, %.0f and %.0f mm, from %.0f head turns."
+        "Neck pivot learned: %.0f mm %s the clip, %.0f %s it, and %.0f to your %s, give or take %.0f, %.0f, and %.0f mm, from %.0f head turns."
         (abs y)
         (if y >= 0 then "below" else "above" :: String)
         (abs z)
@@ -379,7 +379,7 @@ screenCalibration m c
     | plausibleCalibration m c = Right c
     | otherwise =
         Left
-            "its neck pivot is in front of the clip, where no neck is: it was learnt from mirror-image poses, with yaw and pitch reversed"
+            "its neck pivot is in front of the clip, where no neck is: it was learned from mirror-image poses, with yaw and pitch reversed"
 
 -- Note [Learning the pivot]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -813,20 +813,20 @@ calibrateLevel lvl l =
 renderCalibration :: Calibration -> String
 renderCalibration c =
     unlines
-        [ "# What trackkat has learnt about how you sit and the camera sits, from"
+        [ "# What trackkat has learned about how you sit and the camera sits, from"
         , "# how your head moves. trackkat keeps it up to date while it tracks;"
         , "# delete this file to start afresh."
         , "#"
         , "# up: which way is up, as a direction in the camera's axes (x to its"
         , "# right, y down, z out of the lens), and the degrees of head turning it"
-        , "# was learnt from, with older turns counting less."
+        , "# was learned from, with older turns counting less."
         , "up = " ++ vector (estimatedUp c)
         , "turning = " ++ renderNumber (upWeight c)
         , "#"
         , "# pivot: the point your neck turns your head about, in mm from the"
         , "# middle of the clip's two lower reflectors, along the clip's axes (x to"
         , "# your left, y down, z back); how many half-second windows of turning it"
-        , "# was learnt from; and how sure of it trackkat is, as the information"
+        , "# was learned from; and how sure of it trackkat is, as the information"
         , "# matrix of its least-squares fit, the inverse of its covariance, per"
         , "# square cm: xx xy xz yy yz zz."
         , "pivot = " ++ vector pivot
@@ -910,7 +910,7 @@ parseCalibration str = do
         ("pivot windows", _) -> Left "pivot windows is a number, at least 0"
         ("pivot information", Just [a, b, d, f, g, j])
             | a > 0, f > 0, j > 0 -> Right s{fInfo = Just (M33 (V3 a b d) (V3 b f g) (V3 d g j))}
-        ("pivot information", _) -> Left "pivot information is six numbers, the first, fourth and sixth positive"
+        ("pivot information", _) -> Left "pivot information is six numbers, the first, fourth, and sixth positive"
         _ -> Left ("unknown setting " ++ show name)
     trim = f . f where f = reverse . dropWhile isSpace
 

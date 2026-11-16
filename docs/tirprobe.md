@@ -6,7 +6,7 @@ USB trace with a bug report. Quit trackkat first: only one program can have
 the camera.
 
 Open a terminal in the folder with `tirprobe.exe` and run `tirprobe`. Wear the
-TrackClip, face the camera and press **Enter** to recenter. About ten times a
+TrackClip, face the camera, and press **Enter** to recenter. About ten times a
 second it prints your head pose relative to that position:
 
 ```
@@ -65,7 +65,7 @@ clip can be tracked, and far smaller than its reflectors have been; then one
 reflector had been out of sight for over a second. With `--explain` every
 line ends with what that frame was judged by, passed or not, and a line says
 what ruled out each half second of head turning that the neck pivot, the
-clip's shape or the mirror image wasn't learnt from. The names and limits
+clip's shape, or the mirror image wasn't learned from. The names and limits
 are listed in [heuristics.md](heuristics.md).
 
 While tracking has a pose from a moment ago it follows the clip from there,
@@ -93,20 +93,20 @@ pose corrected says on what evidence:
 
 ```
 # Ignoring a bright light at (156, 296): it stayed put for 3 seconds, and at 813 pixels is bigger than the clip's reflectors (349).
-# corrected a mirror-image pose: switched the tracked pose: the tracked pose 99.8% likely the mirror image, the centre 51.8%; the head turned 12 degrees from centre as it was, 19 with one switched
+# corrected a mirror-image pose: switched the tracked pose: the tracked pose 99.8% likely the mirror image, the center 51.8%; the head turned 12 degrees from center as it was, 19 with one switched
 ```
 
 ## Recording a problem
 
 When tracking goes wrong in a way you can make happen again, such as the
-view jumping, flipping or drifting, a recording lets the developer replay
+view jumping, flipping, or drifting, a recording lets the developer replay
 it exactly, frame by frame, through trackkat's tracking.
 
 1. Quit trackkat (**Quit trackkat** in its window, or from the tray menu):
    only one program can have the camera.
 2. Open a terminal in the folder with `tirprobe.exe` and run
    `tirprobe --record problem.txt`.
-3. Wear the clip, face the camera and press **Enter** to recenter.
+3. Wear the clip, face the camera, and press **Enter** to recenter.
 4. Do whatever makes it go wrong. The moment it does, type `m` and press
    **Enter**: tirprobe prints `# mark 1` (then `# mark 2`, and so on) and
    the recording notes the moment.
@@ -121,7 +121,7 @@ trackkat.conf. Recording doesn't slow tracking down.
 
 `tirprobe --replay problem.txt` tracks a recording as tirprobe tracked it
 live, on Windows or Linux, printing the same lines, each after the time in
-seconds, and where Enter, `c` Enter and `m` Enter were pressed:
+seconds, and where Enter, `c` Enter, and `m` Enter were pressed:
 
 ```
      12.483  # mark 1
@@ -131,7 +131,7 @@ With `--blobs` it shows the blobs instead, `--every-frame` prints every
 frame rather than ten a second, `--explain` says what each frame was judged
 by, and `--clip` and `--no-mask` track with other settings than those
 recorded. A replay ends with how many windows of head turning the neck
-pivot, the clip's shape and the mirror image were each learnt from, and how
+pivot, the clip's shape, and the mirror image were each learned from, and how
 many were left out, by what ruled them out:
 
 ```
@@ -140,14 +140,14 @@ many were left out, by what ruled them out:
 
 ## Options
 
-- `--clip LR,LT,RT`: your clip's reflector spacing in mm, centre to centre,
+- `--clip LR,LT,RT`: your clip's reflector spacing in mm, center to center,
   with left and right as you wear it: left–right (the two on the headband),
   left–top, right–top. The top reflector's post is assumed to lean back. The
   angles depend on the shape of this triangle, so measure your clip. Default:
   `clip` from trackkat.conf, else `70,110,110`.
 - `--focal F`: camera focal length in pixels (default 660, from the 51.7°
   field of view). Only affects the distance and the size of the angles.
-- `--blobs`: show the blobs instead of the pose: each one's centre in
+- `--blobs`: show the blobs instead of the pose: each one's center in
   pixels, how many pixels it lit, and how long it is for its width, like
   `( 303.6,   95.4)  543px 1.6:1`. A single reflector is round (about 1:1);
   two run together are longer. Blobs ignored as part of a still light end
@@ -161,7 +161,7 @@ many were left out, by what ruled them out:
 - `--replay FILE`: track a recording instead of the camera.
 - `--explain`: end each frame's line with what tracking judged it by, each
   figure against its limit, and say what ruled out each window of head
-  turning not learnt from.
+  turning not learned from.
 - `--raw`: hex-dump every USB transfer; use this when reporting problems:
   `tirprobe --raw > probe.txt`.
 - `--list`: list every USB device and whether it can be opened.

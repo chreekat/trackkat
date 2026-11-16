@@ -61,9 +61,9 @@ tests = group "Config" $ do
     check "mouse button chosen in the window" $ keyFromCodes 0x2 0x05 == Just (Key [Ctrl] "Mouse4")
     forM_ ["MouseLeft", "Ctrl+MouseRight", "mouse1", "Mouse2"] $ \b ->
         checkShowing "left and right mouse buttons refused" (b) $
-            parseBinding b == Left "the mouse buttons to bind are MouseMiddle, Mouse4 and Mouse5"
+            parseBinding b == Left "the mouse buttons to bind are MouseMiddle, Mouse4, and Mouse5"
     check "mouse button refused in a config" $
-        parseConfig "recenter = MouseLeft\n" == Left "line 1: the mouse buttons to bind are MouseMiddle, Mouse4 and Mouse5"
+        parseConfig "recenter = MouseLeft\n" == Left "line 1: the mouse buttons to bind are MouseMiddle, Mouse4, and Mouse5"
     check "empty binding in a list" $ parseBindings "F12, " == Left "empty key binding"
     check "unknown key reported" $ parseConfig "recenter = F99\n" == Left "line 1: unknown key \"F99\""
     check "unknown setting reported" $ parseConfig "\nfoo = F1\n" == Left "line 2: unknown setting \"foo\""
@@ -154,7 +154,7 @@ tests = group "Config" $ do
     check "head view setting" $
         map (fmap headView . parseConfig . ("head view = " ++)) ["virtual", "physical", "camera"]
             == map Right [VirtualView, PhysicalView, CameraView]
-    check "bad head view" $ parseConfig "head view = side" == Left "line 1: head view is virtual, physical or camera"
+    check "bad head view" $ parseConfig "head view = side" == Left "line 1: head view is virtual, physical, or camera"
     let withCamera = defaultConfig{headView = CameraView}
     check "head view round-trips" $ parseConfig (renderConfig withCamera) == Right withCamera
     check "head view change not described" $
