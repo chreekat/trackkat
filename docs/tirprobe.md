@@ -70,8 +70,7 @@ clip can be tracked, and far smaller than its reflectors have been; then one
 reflector had been out of sight for over a second. With `--explain` every
 line ends with what that frame was judged by, passed or not, and a line says
 what ruled out each half second of head turning that the neck pivot, the
-clip's shape, or the mirror image wasn't learned from. The names and limits
-are listed in [heuristics.md](heuristics.md).
+clip's shape, or the mirror image wasn't learned from.
 
 While tracking has a pose from a moment ago it follows the clip from there,
 and when that fails or looks doubtful it also looks for the clip by the
@@ -101,7 +100,7 @@ pose corrected says on what evidence:
 # corrected a mirror-image pose: switched the tracked pose: the tracked pose 99.8% likely the mirror image, the center 51.8%; the head turned 12 degrees from center as it was, 19 with one switched
 ```
 
-### With the new tracker
+## With the new tracker
 
 When the clip is lost the line says how many blobs there were, such as
 `lost: 2 blobs, need 3`. When it is first lost, and whenever the reason
