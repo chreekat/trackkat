@@ -15,6 +15,25 @@ Roughly in order.
   carry how sure the pose is from frame to frame, so that how long two
   reflectors are followed is a term and not a rule; then one way of
   remembering, evidence that fades at a stated rate, in place of six.
+- A fleck of light that isn't the clip's, an eighth the size of a
+  reflector and moving with the clip (a reflection off glasses, or a
+  headset), is taken for a reflector once two of the others run together,
+  and tracking leaves its pose for one up to 48 degrees off for most of a
+  second (the scorecard's "a fleck by the right reflector as the other two
+  run together": 96 frames wrong of 961). With the left and top reflectors
+  sharing a blob, the frame's three blobs say more as three reflectors,
+  the fleck the right one showing an eighth of itself (5.8 nats for its
+  place, less 5.3 for its size; and the shared blob as one reflector,
+  14.0), than as what they are (the shared blob as two reflectors, 12.2;
+  the fleck a stray, nothing): 2.4 nats a frame, which doubt sums in ten
+  frames to the 26 a pose come afresh wants. No frame says otherwise by
+  itself. What does is that the fleck was a stray there in every frame
+  before: remember strays as sizes are remembered, so that a blob where a
+  stray has been says less for a reflector, or follow the second pose
+  (see [docs/heuristics.md](docs/heuristics.md), "What comes next").
+  Weighing doubt's three blobs as each all of its reflector stops it, but
+  then a head looking down, its reflectors in pieces, is corrected onto
+  its mirror image (`Test.Clips`).
 - Show why the clip is out of sight in the window, not only the log: the
   Clip light's "Out of sight (3 of 3)" has no room for "too far to the side
   of where you recentered" (`describeWhy`), so it wants a second line or
@@ -145,6 +164,14 @@ that tests found false. None is fixed.
   small blob teaches (`learntFrom`) and how much its place counts
   (`sightWeight`, by the size expected before any is learnt) are reckoned
   of the blob alone likewise.
+- Two blobs are one reflector's pieces only inside a round disc of their
+  pixels, and tape on a curved tab shows wider than tall: a piece at its
+  end is left a stray. And what the second piece gains (`pieces`) is
+  reckoned as for halves, the least it can be; a chip's centre has a
+  quarter the room.
+- The clip followed onto a light beside a reflector gone dark keeps to
+  the light for a few frames after the reflector shows again, until doubt
+  outweighs the turn back.
 - A settings reload that changes nothing still rebinds hotkeys and
   re-shows settings.
 - Keys and buttons are only looked at when frames arrive, so they do nothing
