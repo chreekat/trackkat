@@ -98,9 +98,10 @@ stand.
    head's speed (`headTurnSpeed`, `headMoveSpeed`) over the time between
    (terms `turning`, `moving`), and nothing gates it: a pose that would
    need a faster head than heads are loses to the same pose come afresh
-   once that is likelier, which a frame on is at about 16° or 27 mm. The
-   rates are gone; the step remains only as what `Response` allows of the
-   pose games see (2).
+   once that is likelier, which a frame on is at about 19° or 31 mm
+   (28 nats: the room between them, and the clip's having left where it
+   was). The rates are gone; the step remains only as what `Response`
+   allows of the pose games see (2).
 2. **`Response` ignores the time between frames.** Its jump limit is 15° and
    40 mm *per frame* whatever the frame rate, while `Tracker`'s grows with
    the gap. At 60 fps `Response` allows half the speed it does at 120.
@@ -417,8 +418,9 @@ the spreads of the pose's six freedoms (`followingRoom`, `anywhereRoom`),
 J how far each freedom moves each reflector seen in the image
 (`Pose.poseInformation`), W their weights and σ `centroidNoise`. It is −6
 nats a frame after a pose and −26 with nothing known, with three
-reflectors seen a metre off, and the 20 between is what makes a pose that
-continues the last likelier than the same pose come afresh: it replaces
+reflectors seen a metre off, and the 19 between, with the 9 of `left`, is
+what makes a pose that continues the last likelier than the same pose
+come afresh: it replaces
 the `afresh` cost of step 2, which was the same ratio reckoned from
 boxes. A reflector unseen fixes less, so costs less room.
 

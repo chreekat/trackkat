@@ -76,7 +76,6 @@ clip being away, and takes the likeliest. A line says so when that wasn't
 the clip carrying on from where it was, its reflectors where predicted:
 
 ```
-# continued by layout 30.2 nats; over continued as predicted 24.13 nats, afresh by layout 12.4 nats
 # afresh by layout 34.76 nats; over continued as predicted 33.59 nats, afresh as predicted 32.9 nats
 # resumed by layout 32.66 nats; over afresh by layout 16.78 nats, resumed as predicted 14.41 nats
 ```
