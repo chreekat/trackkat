@@ -269,9 +269,8 @@ newShaper = Shaper Nothing 0 Nothing Free
 
 -- | Largest change in one frame that a head can make: the world's
 -- 'headStepTurn' and 'headStepMove', about 1800 degrees or 5 m a second.
--- Tracking scores how likely a pose's turn and move are, by a head's
--- speed, and takes what is likeliest; this catches what that lets
--- through on an axis of the pose games see.
+-- The tracker takes the same for a frame's jump (see 'TrackKat.Tracker');
+-- this one catches what gets past it on an axis of the pose games see.
 maxStepDegrees, maxStepMm :: Double
 maxStepDegrees = inDegrees (headStepTurn world)
 maxStepMm = inMillimetres (headStepMove world)

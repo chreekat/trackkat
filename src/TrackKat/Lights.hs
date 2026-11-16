@@ -35,7 +35,7 @@ import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Ord (comparing)
 
 import TrackKat.Frame (Blob (..))
-import TrackKat.Sight (Kind (..), Sight (..))
+import TrackKat.Match (Kind (..), Sight (..))
 import TrackKat.Term
 import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, (.-.))
 import qualified TrackKat.World as World

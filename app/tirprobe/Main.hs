@@ -381,9 +381,9 @@ nothingTold :: Tracker -> Told
 nothingTold = Told Nothing . trackerWindows
 
 -- | Lines on what changed with a frame: the clip lost, or lost for another
--- reason than it was; the clip made out otherwise than by continuing the
--- last pose where it predicted its reflectors; and, if explaining, each
--- window of turning not learnt from, with what ruled it out.
+-- reason than it was; the clip found by layout though a pose predicted
+-- it, in place of following; and, if explaining, each window of turning
+-- not learnt from, with what ruled it out.
 tell :: Options -> Tracker -> Outcome -> Told -> (Told, [String])
 tell opts tracker outcome (Told was windows) = (Told why windows', lost ++ found ++ ruledOut)
   where
@@ -391,12 +391,12 @@ tell opts tracker outcome (Told was windows) = (Told why windows', lost ++ found
         Lost{outWhy = w} -> Just w
         Tracked{} -> Nothing
     lost = case (was, outcome) of
-        (before, Lost{outBlobs = n, outWhy = w, outRivals = rivals})
+        (before, Lost{outBlobs = n, outWhy = w, outHeld = held})
             | maybe True (not . sameWhy w) before ->
-                ["# lost, with " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ": " ++ explainWhy w ++ explainRivals (take 3 rivals)]
+                ["# lost, with " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ": " ++ explainWhy w ++ maybe "" (("; " ++) . explainHeld) held]
         _ -> []
     found = case outcome of
-        Tracked{outChosen = chosen@(Chosen way source _ _)} | way /= Continued || source /= ByPrediction -> ["# " ++ explainChosen chosen]
+        Tracked{outChosen = chosen@(Chosen way _)} | way /= Followed -> maybe [] (\said -> ["# " ++ said]) (explainChosen chosen)
         _ -> []
     windows' = trackerWindows tracker
     ruledOut =
@@ -428,8 +428,8 @@ describeEvent _ (LightMoved p how) = "# " ++ describeLightMoved p how
 
 -- | A frame's line; if explaining, with what tracking judged it by.
 showOutcome :: Options -> Outcome -> String
-showOutcome opts (Lost n masked why rivals) =
-    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ (if optExplain opts then "   " ++ explainWhy why ++ explainRivals (take 3 rivals) else "")
+showOutcome opts (Lost n masked why held) =
+    "lost: " ++ show n ++ " blob" ++ (if n == 1 then "" else "s") ++ ", need 3" ++ (if masked > 0 then ", " ++ describeMasked masked else "") ++ (if optExplain opts then "   " ++ explainWhy why ++ maybe "" (("; " ++) . explainHeld) held else "")
 showOutcome opts (Tracked hp dist err seen judged chosen) =
     printf
         "yaw %+6.1f  pitch %+6.1f  roll %+6.1f   x %+5.0f  y %+5.0f  z %+5.0f mm   distance %4.0f mm  fit %.2f px"
@@ -442,7 +442,7 @@ showOutcome opts (Tracked hp dist err seen judged chosen) =
         dist
         err
         ++ describeSeen seen
-        ++ (if optExplain opts then "   " ++ explainChosen chosen ++ ": " ++ renderFindings judged else "")
+        ++ (if optExplain opts then "   " ++ renderFindings judged ++ maybe "" ("   " ++) (explainChosen chosen) else "")
 
 -- | A frame's blobs, those masked as part of a still light marked.
 summary :: (Integral a) => a -> Double -> [(Blob, BlobRole)] -> String

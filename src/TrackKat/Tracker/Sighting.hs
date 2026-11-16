@@ -1,11 +1,25 @@
--- | What a way of making out the clip in a frame makes of it.
+-- | What every way of making out the clip in a frame goes by, and what
+-- each makes of it.
 module TrackKat.Tracker.Sighting (
+    Known (..),
     Sighting (..),
 ) where
 
-import TrackKat.Pose (Pose)
-import TrackKat.Sight (Sight, Three)
+import TrackKat.Match (Sight, Size, Three)
+import TrackKat.Pose (Intrinsics, Model, Pose)
 import TrackKat.Term (Finding)
+import TrackKat.Tracker.Judge (Reach)
+
+-- | What is known of the camera and the clip going into a frame.
+data Known = Known
+    { knownCamera :: Intrinsics
+    , knownClip :: Model
+    , knownReach :: Reach
+    , knownSizes :: Three Size
+    -- ^ how big each reflector's blob has been lately
+    , knownLast :: Maybe Pose
+    -- ^ the clip's pose as last tracked, however long ago
+    }
 
 -- | The clip made out in a frame.
 data Sighting = Sighting
@@ -19,5 +33,5 @@ data Sighting = Sighting
     , sightingMasked :: Int
     -- ^ blobs ignored as part of a still light
     , sightingJudged :: [Finding]
-    -- ^ what each term of its score found
+    -- ^ what each term that accepted the pose found
     }

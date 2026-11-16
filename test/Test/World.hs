@@ -45,6 +45,6 @@ tests =
             assertBool "a neck is nearer the clip than the farthest it is looked for" $ neckBehindClip w < neckWithin w
             assertBool "blobs of one reflector differ" $ sameSizeFactor w > 1
             -- The fastest a head goes is at two spreads of its speed.
-            assertBool "the step allowed of the pose games see allows the fastest head" $
+            assertBool "a followed pose's step allows the fastest head" $
                 inDegrees (headStepTurn w) >= 2 * perFrame (headTurnSpeed w) && inMillimetres (headStepMove w) >= 2 * perFrame (headMoveSpeed w)
         ]

@@ -3,8 +3,7 @@
 module TrackKat.Tracker.Blobs (
     -- * The blobs in a frame
     findBlobs,
-    minFaintPixels,
-    maxBlobPixels,
+    minBlobPixels,
     at,
     whole,
 
@@ -12,7 +11,9 @@ module TrackKat.Tracker.Blobs (
     Shown (..),
     sortBlobs,
 
-    -- * Choosing among them
+    -- * Those big enough to be reflectors
+    bigAmong,
+    bigBeside,
     picks,
 
     -- * Those near a reflector
@@ -27,14 +28,19 @@ import Data.List (partition)
 
 import TrackKat.Frame (Blob (..), Stripe, stripesToBlobs)
 import TrackKat.Lights (Mask, inMask)
-import TrackKat.Sight (Kind (..), Sight (..))
+import TrackKat.Match (Kind (..), Sight (..))
 
--- | The smallest and largest blobs kept at all, in pixels: smaller is
--- noise, and larger nothing a reflector lights, which at 250 pixels at
--- 950 mm is about 3600 as near as the camera sees.
-minFaintPixels, maxBlobPixels :: Int
-minFaintPixels = 6
+-- | Blobs smaller or larger than this many pixels are not reflectors, when
+-- finding the clip afresh. A reflector lighting 250 pixels at 950 mm
+-- lights about 3600 as near as the camera sees.
+minBlobPixels, maxBlobPixels :: Int
+minBlobPixels = 15
 maxBlobPixels = 5000
+
+-- | The smallest blob taken for a reflector predicted nearby: one fading
+-- from view, or part of one.
+minFaintPixels :: Int
+minFaintPixels = 6
 
 -- | The blobs in a frame that could be reflectors, heaviest first.
 findBlobs :: [Stripe] -> [Blob]
@@ -63,6 +69,22 @@ sortBlobs :: Mask -> [Blob] -> Shown
 sortBlobs mask blobs = Shown mask masked visible
   where
     (masked, visible) = partition (inMask mask) blobs
+
+-- | A blob as big as a reflector, when finding the clip afresh, is at
+-- least this fraction (so many parts in so many) of the biggest blob in
+-- view: other reflections are often tiny beside the reflectors.
+besideBiggest :: (Int, Int)
+besideBiggest = (3, 25)
+
+-- | Big enough to be a reflector, of the given blobs: of a fair size, and
+-- not tiny beside the biggest of them, as other reflections often are.
+bigAmong :: [Blob] -> [Blob]
+bigAmong bs = let biggest = maximum (0 : map blobPoints bs) in filter (bigBeside biggest) bs
+
+-- | Whether a blob is big enough to be a reflector, beside a biggest blob
+-- of so many pixels.
+bigBeside :: Int -> Blob -> Bool
+bigBeside biggest b = blobPoints b >= minBlobPixels && blobPoints b * snd besideBiggest >= biggest * fst besideBiggest
 
 -- | The ways to pick so many of a list, in order.
 picks :: Int -> [a] -> [[a]]

@@ -11,75 +11,67 @@ import Test.Check
 import Test.Gen
 import Test.Simulation (bentWorn, clipBent, distance, headSeen)
 import TrackKat.Frame (Blob (..))
-import TrackKat.Match (Kind (..), Match (..), Sight (..), matches, reflectors)
+import TrackKat.Match (Kind (..), Match (..), Sight (..), matchScore, matches, noSize, sizeScore)
 import TrackKat.Pose
 import TrackKat.Synth
 import TrackKat.Term (Finding (..), Name (..), Score (..))
 import qualified TrackKat.Term as Term
 import TrackKat.Tracker (findBlobs)
-import TrackKat.Tracker.Account (metres)
-import TrackKat.Tracker.Reflectors (Expect (..))
-import TrackKat.Tracker.Sizes (unlearnt)
 
 tests :: TestTree
 tests = group "Match" $ do
-    -- A match's rank is what its terms come to: what the frame shows of
-    -- each reflector, the shift taken out, and the shift.
+    -- A match's cost is what its terms come to.
     let face = headSeen bentWorn 0 0 0
-        found = matches (expectedAt face) 5 ((findBlobs . renderDiscs) (((340, 288), 3) : pointDiscs defaultIntrinsics clipBent allLit (headSeen bentWorn 3 1 0)))
-    checkShowing "a match's terms are its rank" (show (map (Term.renderFindings . matchJudged) (take 1 found))) $
+        found = matches defaultIntrinsics clipBent face (pure noSize) ((findBlobs . renderDiscs) (((340, 288), 3) : pointDiscs defaultIntrinsics clipBent allLit (headSeen bentWorn 3 1 0)))
+    checkShowing "a match's terms are its cost" (show (map (Term.renderFindings . matchJudged) (take 2 found))) $
         not (null found)
-            && and [abs (sum (map (nats . findingScore) (matchJudged m)) - nats (matchRank m)) < 1e-9 | m <- found]
-            && map (map (brief . findingName) . matchJudged) (take 1 found) == [["left shows", "left place", "left size", "right shows", "right place", "right size", "top shows", "top place", "top size", "alike", "shift"]]
+            && and [abs (sum (map (nats . findingScore) (matchJudged m)) - nats (matchScore m)) < 1e-9 && nats (matchScore m) == negate (matchCost m) / 2 | m <- found]
+            && map (map (brief . findingName) . matchJudged) (take 1 found) == [["places", "sizes", "unseen"]]
     tree properties
 
--- | What is expected of the clip's reflectors at a pose, nothing learnt
--- of them.
-expectedAt :: Pose -> Expect
-expectedAt pose = Expect (seenAt defaultIntrinsics clipBent pose <$> reflectors) (metres pose) (pure unlearnt) Nothing
-
--- | The spread of how far the clip's picture shifts that the properties
--- match by, in pixels.
-shiftSpread :: Double
-shiftSpread = 5
-
--- | Ranks are sums of a few terms of up to hundreds of nats, right to
--- 1e-9.
+-- | Costs are sums of a few squared distances of up to hundreds of pixels,
+-- right to 1e-9.
 properties :: TestTree
 properties =
     testGroup
         "properties"
-        [ testProperty "the clip seen just where it is predicted is the best ranked match, each reflector a blob of its own" $
+        [ testProperty "the clip seen just where it is predicted is the best match, each reflector a blob of its own, at no cost" $
             \scene -> forAnyOrder (blobsOf scene{sceneOff = []}) $ \blobs ->
-                case matches (expectedAt (scenePose scene)) shiftSpread blobs of
+                case matches defaultIntrinsics clipBent (scenePose scene) (pure noSize) blobs of
                     [] -> counterexample "no match" False
                     best : _ ->
                         counterexample (show best) $
                             conjoin
                                 [ fmap (fmap sightAt) (toList (matchSights best)) === map Just (predicted scene)
                                 , property (all (maybe False ((== Whole) . sightKind)) (toList (matchSights best)))
+                                , close 1e-9 (matchCost best) 0
                                 , matchUnused best === length (sceneStrays scene)
                                 ]
         , testProperty "blobs match the same in whatever order they come" $
             \scene -> forAnyOrder (blobsOf scene) $ \shuffled ->
-                let ranks = sort . map (nats . matchRank) . matches (expectedAt (scenePose scene)) shiftSpread
-                 in length (ranks shuffled) === length (ranks (blobsOf scene)) .&&. conjoin (zipWith (close 1e-9) (ranks shuffled) (ranks (blobsOf scene)))
-        , testProperty "matches come best ranked first, each seeing two reflectors or more in blobs there are" $
+                let found = matches defaultIntrinsics clipBent (scenePose scene) (pure noSize)
+                    costs = sort . map matchCost . found
+                 in length (costs shuffled) === length (costs (blobsOf scene)) .&&. conjoin (zipWith (close 1e-9) (costs shuffled) (costs (blobsOf scene)))
+        , testProperty "matches come best first, each seeing two reflectors or more in blobs there are" $
             \scene ->
-                let found = matches (expectedAt (scenePose scene)) shiftSpread (blobsOf scene)
-                 in map (negate . nats . matchRank) found === sort (map (negate . nats . matchRank) found)
-                        .&&. property (all (\m -> length (catMaybes (toList (matchSights m))) >= 2 && matchUnused m >= 0 && matchUnused m <= length (blobsOf scene) - 1) found)
-        , testProperty "a match's rank is what its findings come to" $
+                let found = matches defaultIntrinsics clipBent (scenePose scene) (pure noSize) (blobsOf scene)
+                 in map matchCost found === sort (map matchCost found)
+                        .&&. property (all (\m -> length (catMaybes (toList (matchSights m))) >= 2 && matchUnused m >= 0 && matchUnused m <= length (blobsOf scene) - 2) found)
+        , testProperty "a match's score is what its findings come to, and its cost twice that, in squared pixels" $
             \scene ->
                 conjoin
-                    [ close 1e-9 (sum (map (nats . findingScore) (matchJudged m))) (nats (matchRank m))
-                    | m <- matches (expectedAt (scenePose scene)) shiftSpread (blobsOf scene)
+                    [ close 1e-9 (sum (map (nats . findingScore) (matchJudged m))) (nats (matchScore m)) .&&. nats (matchScore m) === negate (matchCost m) / 2
+                    | m <- matches defaultIntrinsics clipBent (scenePose scene) (pure noSize) (blobsOf scene)
                     ]
-        , testProperty "a reflector may be unseen whatever blobs are left over: of the clip seen where predicted, there is a match with each one out" $
-            \scene ->
-                let found = matches (expectedAt (scenePose scene)) shiftSpread (blobsOf scene{sceneOff = []})
-                    seenAs m = fmap (fmap sightAt) (toList (matchSights m))
-                 in conjoin [counterexample (show out) (any ((== out) . seenAs) found) | i <- [0 .. 2 :: Int], let out = [if i == j then Nothing else Just place | (j, place) <- zip [0 ..] (predicted scene)]]
+        , testProperty "a blob of the size expected, or of no known size, is as likely as can be, and less so the more it differs either way" $
+            \(Expected expected) (Times less) (Times more) ->
+                let times k = nats (sizeScore expected (k * expected))
+                 in conjoin
+                        [ sizeScore expected expected === Term.possible
+                        , sizeScore 0 expected === Term.possible
+                        , property (times (less * more) <= times less && times (1 / (less * more)) <= times (1 / less))
+                        , close 1e-9 (times less) (times (1 / less))
+                        ]
         ]
 
 -- | The clip where a pose puts it, its reflectors seen each a little off
@@ -137,3 +129,19 @@ laidOut scene =
         && and [distance at place >= 60 | (at, _) <- sceneStrays scene, place <- places]
   where
     places = predicted scene
+
+-- | How many pixels a blob is expected to have, up to a thousand.
+newtype Expected = Expected Double
+    deriving (Show)
+
+instance Arbitrary Expected where
+    arbitrary = Expected <$> choose (1, 1000)
+    shrink (Expected pixels) = Expected <$> shrinkWithin (1, 1000) 1 pixels
+
+-- | How many times as big, from as big to ten times.
+newtype Times = Times Double
+    deriving (Show)
+
+instance Arbitrary Times where
+    arbitrary = Times <$> choose (1, 10)
+    shrink (Times k) = Times <$> shrinkWithin (1, 10) 1 k

@@ -49,7 +49,7 @@ tests =
         , testProperty "the clip alone in view, facing the camera within 20 degrees, is tracked from the first frame" $
             \(Apart20 placing) ->
                 case step (clockAt 0) (renderDiscs (discs (Scene (Just placing) []))) fresh of
-                    (_, Tracked{outSeen = seen, outChosen = chosen}, _) -> seen === Seen [] 0 0 0 .&&. (\(Chosen way picking _ _) -> (way, picking)) chosen === (Appeared, ByLayout)
+                    (_, Tracked{outSeen = seen, outChosen = chosen}, _) -> seen === Seen [] 0 0 0 .&&. chosen === Chosen FoundAfresh Nothing
                     (_, Lost{outWhy = why}, _) -> counterexample (explainWhy why) False
         ]
   where

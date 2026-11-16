@@ -18,16 +18,14 @@ import TrackKat.Calibration (defaultCalibration)
 import TrackKat.Frame (Blob (..))
 import TrackKat.Lights (Masking (..), View (..), inMask, lightAreas, noLights)
 import TrackKat.Linear
-import TrackKat.Match (Kind (..), Sight (..), Three (..))
+import TrackKat.Match (Kind (..), Sight (..), Three (..), noSize)
 import TrackKat.Pose
 import TrackKat.Term (Finding (..), Name (..), impossible)
-import qualified TrackKat.Term as Term
 import TrackKat.Tracker.Absence
 import TrackKat.Tracker.Blobs
 import TrackKat.Tracker.Learners
 import TrackKat.Tracker.Mirror
 import TrackKat.Tracker.Outcome
-import TrackKat.Tracker.Sizes (unlearnt)
 import TrackKat.Tracker.Still
 import TrackKat.World (Instant, Seconds, clockAt, inSeconds, seconds, (.+^), (.-.))
 
@@ -100,7 +98,7 @@ mirror =
         [ testProperty "the clip alone in view, facing the camera within 20 degrees, shows clearly" $
             \(Apart20 placing) ->
                 case clipBlobs headset placing of
-                    blobs@[a, b, c] -> clarity (pure unlearnt) blobs (placed placing) (whole <$> Three a b c) === Clear
+                    blobs@[a, b, c] -> clarity (pure noSize) blobs (placed placing) (whole <$> Three a b c) === Clear
                     blobs -> counterexample (show blobs) False
         , testProperty "reflectors don't show clearly with one unseen, or not a blob of its own, nor more clearly for another blob in view" $
             \(Apart20 placing) (Stray another) (Sizes sizes) (Shared kind) ->
@@ -184,8 +182,8 @@ data Spell = InSight | OutOfSight Int Int
     deriving (Show)
 
 outcome :: Spell -> Outcome
-outcome InSight = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Continued ByPrediction Term.possible [])
-outcome (OutOfSight lights numbered) = Lost lights 0 (Why Following (Unfit [Finding (Name ("reason " ++ show numbered) "") impossible Nothing])) []
+outcome InSight = Tracked (HeadPose 0 0 0 0 0 0) 800 0 (Seen [] 0 0 0) [] (Chosen Followed Nothing)
+outcome (OutOfSight lights numbered) = Lost lights 0 (Why Following (Unfit [Finding (Name ("reason " ++ show numbered) "") impossible Nothing])) Nothing
 
 -- | Spells of up to a minute each, in sight and out; simpler of fewer.
 newtype Spells = Spells [(Int, Spell)]

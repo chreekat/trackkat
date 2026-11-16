@@ -6,7 +6,7 @@ import Data.Maybe (isJust)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
 
-import Test.Gen (Fraction (..), shrinkParts, shrinkWithin)
+import Test.Gen (Fraction (..), earlier, shrinkParts, shrinkWithin)
 import Test.Instances ()
 import Test.Simulation (headset)
 import TrackKat.Branch (newBranch)
@@ -37,7 +37,7 @@ tests =
                  in property ((isJust lastLater <= isJust lastSooner) && (isJust leftLater <= isJust leftSooner))
         , testProperty "a pose found afresh has been tracked since now, and leaves behind the last pose, unless one was left before it" $
             \spec (Now now) ->
-                let carried = carryOn Appeared now belief (trail spec)
+                let carried = carryOn FoundAfresh now belief (trail spec)
                  in carriedSince carried === now
                         .&&. leftTime carried === (if isJust (leftAt spec) then leftAt spec else lastAt spec)
         , testProperty "a pose resumed has been tracked since the pose left behind was, and leaves nothing behind" $
@@ -110,5 +110,5 @@ newtype Continuing = Continuing Way
     deriving (Show)
 
 instance Arbitrary Continuing where
-    arbitrary = pure (Continuing Continued)
-    shrink _ = []
+    arbitrary = Continuing <$> elements [Followed, Refound]
+    shrink (Continuing way) = Continuing <$> earlier [Followed, Refound] way

@@ -15,7 +15,6 @@ module TrackKat.Term (
     Name (..),
     Term,
     about,
-    aboutAny,
 
     -- ** Hard gates
     Bound (..),
@@ -29,7 +28,6 @@ module TrackKat.Term (
     gaussian,
     cost,
     likelihood,
-    weighing,
 
     -- * Judging
     score,
@@ -74,13 +72,9 @@ import Numeric (showFFloat)
 -- hard gate ('atMost', 'atLeast', 'within', 'gate') says 0 or minus
 -- infinity. A soft term says how unlikely: 'gaussian' for something with
 -- a spread, 'cost' for a penalty already reckoned in nats, 'likelihood'
--- and 'weighing' for any log-likelihood. Sums of scores are then
--- log-likelihoods too, and differences of them log-odds, which is what
--- "TrackKat.Branch" weighs its evidence in. A soft term may also be the
--- log of a ratio of likelihoods, how much likelier something is one way
--- than another, and then it is more than 0 where the evidence is for the
--- hypothesis: so the tracker scores what a frame shows (see Note [What a
--- frame shows] in "TrackKat.Tracker.Reflectors").
+-- for any log-likelihood. Sums of scores are then log-likelihoods too, and
+-- differences of them log-odds, which is what "TrackKat.Branch" weighs
+-- its evidence in.
 --
 -- The embedding is shallow: a term is the function that scores, and the
 -- function that tells its findings, and '<>' composes each. Scoring is
@@ -94,18 +88,18 @@ import Numeric (showFFloat)
 -- frame), and 'about' points a term for a part at the whole.
 --
 -- A term's name has two forms: a word or two for the developer reading
--- tirprobe's output beside a number and its limit ("near 181 mm < 250
+-- tirprobe's output beside a number and its limit ("aside 512 mm > 400
 -- mm"), and a plain phrase for the user, who is told only what is wrong
--- ("too close to the camera").
+-- ("too far to the side of where you recentered").
 --
--- Scores choose among hypotheses about a frame in the tracker: every
--- hypothesis is scored by the same terms and the best is taken (see Note
--- [One account] in "TrackKat.Tracker.Account"). Elsewhere hypotheses are
--- accepted or rejected one at a time, by gates (docs/heuristics.md says
--- which, and what softening them would take).
+-- Scores choose among hypotheses in one place: whether a frame's blobs
+-- are the clip followed from the last pose or found by their layout (see
+-- Note [Following or finding afresh] in "TrackKat.Tracker.Choose").
+-- Elsewhere hypotheses are accepted or rejected one at a time, by gates
+-- (docs/heuristics.md says which, and what softening them would take).
 
--- | The log of a likelihood, or of a ratio of likelihoods, in nats: at
--- most 0 from a gate, and minus infinity for what can't be.
+-- | The log of a likelihood, in nats: at most 0 from a gate, and minus
+-- infinity for what can't be.
 newtype Score = Score {nats :: Double}
     deriving (Eq, Ord)
 
@@ -179,15 +173,9 @@ about :: (a -> h) -> Term h -> Term a
 about part (Term s f) = Term (s . part) (f . part)
 {-# INLINE about #-}
 
--- | A term for a part that the whole may be without: it says nothing, and
--- finds nothing, of a whole that is.
-aboutAny :: (a -> Maybe h) -> Term h -> Term a
-aboutAny part (Term s f) = Term (maybe 0 s . part) (\h -> maybe id f (part h))
-{-# INLINE aboutAny #-}
-
--- | Which side of its limit a figure must be; or, of something soft, that
--- the limit is its spread about nothing, or what it was expected to be.
-data Bound = AtMost | AtLeast | Spread | Expected
+-- | Which side of its limit a figure must be, or that the limit is the
+-- spread of something soft.
+data Bound = AtMost | AtLeast | Spread
     deriving (Eq, Show)
 
 -- | A figure a term judged, against its limit or spread, in a unit.
@@ -252,13 +240,6 @@ cost name f = likelihood name (negate . f)
 likelihood :: Name -> (h -> Double) -> Term h
 likelihood name f = Term f (\h -> (Finding name (Score (f h)) Nothing :))
 {-# INLINE likelihood #-}
-
--- | A log-likelihood, or the log of a ratio of likelihoods, with the
--- figure it goes by against its spread, or against what was expected.
-weighing :: Name -> String -> Bound -> (h -> Double) -> (h -> (Double, Double)) -> Term h
-weighing name u bound f measured =
-    Term f (\h -> let (x, beside) = measured h in (Finding name (Score (f h)) (Just (Measure x bound beside u)) :))
-{-# INLINE weighing #-}
 
 -- | What the terms come to for a hypothesis. This is the fast path.
 score :: Term h -> h -> Score
@@ -361,7 +342,6 @@ renderMeasure (Measure x b l u) = case b of
     AtMost -> with x ++ (if x <= l then " <= " else " > ") ++ with l
     AtLeast -> with x ++ (if x >= l then " >= " else " < ") ++ with l
     Spread -> with x ++ " (spread " ++ figure l ++ ")"
-    Expected -> with x ++ " (expected " ++ figure l ++ ")"
   where
     with v = if null u then figure v else figure v ++ " " ++ u
 
@@ -385,7 +365,7 @@ figure v
 renderFinding :: Finding -> String
 renderFinding (Finding name s m) = unwords ([brief name] ++ maybe [] (pure . renderMeasure) m ++ [worth | soft])
   where
-    soft = maybe True ((`elem` [Spread, Expected]) . measureBound) m
+    soft = maybe True ((== Spread) . measureBound) m
     worth = "(" ++ renderScore s ++ ")"
 
 -- | A score, like "-3.2 nats", or "impossible".
