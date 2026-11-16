@@ -12,10 +12,13 @@ import Control.Exception (Handler (..), IOException, SomeAsyncException (..), So
 import Control.Monad (foldM, forM_, forever, unless, void, (<=<))
 import Data.Functor (($>))
 import Data.IORef
+import Data.Time.Calendar (toGregorian)
 import Data.Time.Clock (UTCTime)
-import GHC.Clock (getMonotonicTime)
+import Data.Time.LocalTime (LocalTime (..), TimeOfDay (..), getZonedTime, zonedTimeToLocalTime)
+import Data.Word (Word64, Word8)
+import GHC.Clock (getMonotonicTime, getMonotonicTimeNSec)
 import GHC.Stats (GCDetails (..), RTSStats (..), getRTSStats, getRTSStatsEnabled)
-import System.Directory (doesFileExist, getModificationTime, removePathForcibly, renameFile)
+import System.Directory (doesFileExist, getModificationTime, makeAbsolute, removePathForcibly, renameFile)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath ((</>))
@@ -36,8 +39,8 @@ import TrackKat.Idle
 import TrackKat.Install
 import TrackKat.Log
 import TrackKat.Pose
-import TrackKat.Recorder (describeMark)
-import TrackKat.Recording (Did (Marked))
+import TrackKat.Recorder
+import TrackKat.Recording (Did (Marked), clockSeconds, startOfSession, trackerTime)
 import TrackKat.Release
 import TrackKat.ServedGame
 import TrackKat.Session
@@ -61,7 +64,7 @@ main = do
         Just ListFiles -> mapM_ putStrLn releaseFiles
         Just (UninstallCommand how) -> uninstall how
         Just InstallCommand -> installFromCommandLine
-        Just (Run start window after) -> run start window after
+        Just (Run start window recorded after) -> run start window recorded after
 
 -- | Install this copy, and start the installed one, taking over from any
 -- trackkat running.
@@ -75,15 +78,15 @@ installFromCommandLine = do
         Right () -> putStrLn ("Installed trackkat in " ++ dir ++ ".")
         Left e -> putStrLn ("Installed trackkat in " ++ dir ++ ", but can't start it (error " ++ show e ++ ").") >> exitFailure
 
-run :: Start -> WindowAtStart -> Maybe Int -> IO ()
-run start window after = do
+run :: Start -> WindowAtStart -> Recorded -> Maybe Int -> IO ()
+run start window recorded after = do
     paths <- findPaths
     installedNow <- installedVersions paths
     let place = placement (installRoot paths) (exeDir paths)
     -- An older version, perhaps started by a game from its NPClient, or
     -- with an update waiting, hands over to the newest installed.
     forM_ (newerInstalled place installedNow) $ \v ->
-        launch (versionExe paths v) (startArgs start window ++ afterArgs after) >>= \case
+        launch (versionExe paths v) (startArgs start window recorded ++ afterArgs after) >>= \case
             Right () -> exitSuccess
             Left e -> consoleLine ("Can't start trackkat " ++ versionFolder v ++ " (error " ++ show e ++ "); carrying on.")
     first <- case after of
@@ -106,7 +109,7 @@ run start window after = do
             (Just v, Portable) -> "trackkat " ++ describeVersion v ++ ", running from " ++ exeDir paths
         moveSettings say paths
         let settingsFile = configFile paths
-        (config, stamp) <- loadConfig settingsFile
+        (config, settings, stamp) <- loadConfig settingsFile
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
         let gameFile = settingsDir paths </> "trackkat.game"
         before <- servedBefore gameFile
@@ -130,29 +133,63 @@ run start window after = do
             (Joysticks, e) -> say ("Can't watch joysticks for buttons (error " ++ show e ++ ").")
         say (describeBindings config)
         let calibrationFile = settingsDir paths </> "trackkat.calibration"
-        (calibration, told) <- loadCalibration (clipModel (clip config)) calibrationFile
-        shell <- Shell paths <$> newIORef (newSession config calibration) <*> pure offered <*> newEmptyMVar <*> newEmptyMVar
-        mapM_ (perform shell) told
-        (naming, named) <- nameButtons <$> monotonicNow
-        logLine named
-        alongside
-            [ ("Watching the settings file", watchSettings settingsFile shell stamp)
-            , ("Watching joysticks", joysticks naming)
-            , ("Saving calibrations", saveCalibrations calibrationFile (shSaving shell))
-            , ("Noting the game served", rememberServedGame gameFile)
-            , ("Keeping trackkat up to date", maintain place shell)
-            ]
-            $ withAsync (cameraLoop shell)
-            $ \camera -> do
-                link camera
-                controls start settingsFile shell
-                -- Let the camera go, turning its lights off, but not for
-                -- long: after sleep a USB read may never return.
-                _ <- timeout 3000000 (cancel camera)
-                -- Rather than wait for the other threads, one perhaps in a
-                -- download, leave at once.
-                hFlush stdout `catch` \e -> const (pure ()) (e :: IOException)
-                quitProcess
+        (calibration, told, learnt) <- loadCalibration (clipModel (clip config)) calibrationFile
+        withRecording recorded paths settings learnt $ \recording -> do
+            shell <- Shell paths <$> newIORef (newSession config calibration) <*> pure offered <*> newEmptyMVar <*> newEmptyMVar <*> pure recording
+            mapM_ (perform shell) told
+            (naming, named) <- nameButtons <$> monotonicNow
+            logLine named
+            alongside
+                [ ("Watching the settings file", watchSettings settingsFile shell stamp)
+                , ("Watching joysticks", joysticks naming)
+                , ("Saving calibrations", saveCalibrations calibrationFile (shSaving shell))
+                , ("Noting the game served", rememberServedGame gameFile)
+                , ("Keeping trackkat up to date", maintain place shell)
+                ]
+                $ withAsync (cameraLoop shell)
+                $ \camera -> do
+                    link camera
+                    controls start recorded settingsFile shell
+                    -- Let the camera go, turning its lights off, but not for
+                    -- long: after sleep a USB read may never return.
+                    _ <- timeout 3000000 (cancel camera)
+                    mapM_ finishRecording recording
+                    -- Rather than wait for the other threads, one perhaps in a
+                    -- download, leave at once.
+                    hFlush stdout `catch` \e -> const (pure ()) (e :: IOException)
+                    quitProcess
+
+-- | Run trackkat recording what happens to its session, if the command
+-- line asked, to the file it named or one named for the time, in the
+-- settings folder: the session starts from the settings file's text
+-- given, and the calibration file's, if it starts from what one says.
+-- Tracking goes on unrecorded if the file can't be written to.
+withRecording :: Recorded -> Paths -> String -> Maybe String -> (Maybe (FilePath, SessionRecorder) -> IO a) -> IO a
+withRecording Unrecorded _ _ _ act = act Nothing
+withRecording recorded paths settings learnt act = do
+    path <- case recorded of
+        RecordedTo file -> makeAbsolute file
+        _ -> (settingsDir paths </>) . named . zonedTimeToLocalTime <$> getZonedTime
+    start <- startOfSession notes settings learnt <$> getMonotonicTimeNSec
+    withRecorder path start (say . describeStopped) $ \case
+        Left err -> say (describeUnrecorded err) >> act Nothing
+        Right recorder -> say (describeRecording path) >> newSessionRecorder start recorder >>= act . Just . (path,)
+  where
+    named (LocalTime day (TimeOfDay hours minutes secs)) = recordingName (toGregorian day) (hours, minutes, floor secs)
+    notes =
+        [ "trackkat " ++ maybe "development build" describeVersion version
+        , "camera threshold " ++ show (threshold defaultSettings) ++ ", IR " ++ show (irBrightness defaultSettings)
+        ]
+
+-- | Write what is left of a recording and close it, saying where it is,
+-- but not waiting long for a disk that doesn't answer.
+finishRecording :: (FilePath, SessionRecorder) -> IO ()
+finishRecording (path, recorder) =
+    timeout 5000000 (finish (sessionRecorder recorder)) >>= \case
+        Just Whole -> say (describeRecorded path)
+        -- Told when it stopped.
+        Just Partial -> pure ()
+        Nothing -> say (describeStopped "the disk didn't take the last of it in 5 seconds")
 
 -- | Run threads, each named for what it does, alongside some work,
 -- stopping them when it ends. Nothing waits for them, so one that an
@@ -199,8 +236,8 @@ data HandOver = HandedOver | Staying
 
 -- | Take up what the window offers: install this copy, or switch to an
 -- installed one, handing over to it.
-takeOffer :: Start -> Shell -> IO HandOver
-takeOffer start sh =
+takeOffer :: Start -> Recorded -> Shell -> IO HandOver
+takeOffer start recorded sh =
     readIORef (shOffered sh) >>= \case
         NoOffer -> pure Staying
         OfferInstall v -> do
@@ -213,7 +250,7 @@ takeOffer start sh =
   where
     paths = shPaths sh
     switchTo exe =
-        handOver exe (startArgs start WindowShown) >>= \case
+        handOver exe (startArgs start WindowShown (continued recorded)) >>= \case
             Right () -> say ("Switching to " ++ exe ++ ".") $> HandedOver
             Left e -> say ("Can't start " ++ exe ++ " (error " ++ show e ++ ").") $> Staying
 
@@ -340,14 +377,14 @@ cameraLoop sh = forever $ do
 -- window's count of games current, until the user quits, or, when a game
 -- started trackkat, until neither a game nor the window has used it for
 -- 'idleSeconds'.
-controls :: Start -> FilePath -> Shell -> IO ()
-controls start path sh = go 0 Busy
+controls :: Start -> Recorded -> FilePath -> Shell -> IO ()
+controls start recorded path sh = go 0 Busy
   where
     go checked unused = do
         threadDelay 20000
         actions <- takeActions
         mapM_ act actions
-        switched <- if OfferAction `elem` actions then takeOffer start sh else pure Staying
+        switched <- if OfferAction `elem` actions then takeOffer start recorded sh else pure Staying
         reportTrackIRGames
         now <- getMonotonicTime
         if
@@ -380,10 +417,10 @@ controls start path sh = go 0 Busy
     act (KeyChosen k (Just b)) = addBinding k b
     act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
 
--- | Read the settings file, creating it with the defaults if there is none,
--- along with the modification time of what was read, and show it in
--- trackkat's window.
-loadConfig :: FilePath -> IO (Config, Maybe UTCTime)
+-- | Read the settings file, creating it with the defaults if there is none:
+-- its settings and its text, along with the modification time of what was
+-- read; and show it in trackkat's window.
+loadConfig :: FilePath -> IO (Config, String, Maybe UTCTime)
 loadConfig path = do
     exists <- doesFileExist path
     if not exists
@@ -391,28 +428,32 @@ loadConfig path = do
             writeFile path (renderConfig defaultConfig)
             say ("Wrote default settings to " ++ path)
             showSettings (renderConfig defaultConfig)
-            (defaultConfig,) <$> modificationTime path
+            (defaultConfig,renderConfig defaultConfig,) <$> modificationTime path
         else do
             stamp <- modificationTime path
             readSettings path >>= \case
                 Right (text, c) -> do
                     mapM_ (say . ((path ++ " ") ++)) (retiredSettings text)
                     showSettings text
-                    pure (c, stamp)
+                    pure (c, text, stamp)
                 Left err -> do
                     say (path ++ ": " ++ err)
                     exitFailure
 
 -- | Read what was learnt in earlier sessions about a head wearing the given
--- clip, or start afresh: the calibration, and what to say of it.
-loadCalibration :: Model -> FilePath -> IO (Calibration, [Effect])
+-- clip, or start afresh: the calibration, what to say of it, and the text
+-- of the file it is from, if it is from one.
+loadCalibration :: Model -> FilePath -> IO (Calibration, [Effect], Maybe String)
 loadCalibration m path = do
     exists <- doesFileExist path
     found <-
         if exists
-            then Just <$> (((screenCalibration m <=< parseCalibration) <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException))))
+            then Just <$> ((read' <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException))))
             else pure Nothing
-    pure (startingCalibration path found)
+    let (calibration, told) = startingCalibration path (fmap snd <$> found)
+    pure (calibration, told, either (const Nothing) (Just . fst) =<< found)
+  where
+    read' text = (text,) <$> (screenCalibration m =<< parseCalibration text)
 
 -- | Save each calibration handed over, only the latest when several wait,
 -- so that saving never holds up tracking. The file is replaced whole.
@@ -488,6 +529,8 @@ data Shell = Shell
     , shCheckAsked :: MVar ()
     -- ^ full from when the user asks to look for a newer version until
     -- 'maintain' has looked
+    , shRecording :: Maybe (FilePath, SessionRecorder)
+    -- ^ the file the session is recorded to, if it is, and its recorder
     }
 
 -- Note [What stays mutable]
@@ -509,6 +552,10 @@ data Shell = Shell
 --    disk or the network, without waiting for it: the latest calibration to
 --    save, and a click to answer.
 --
+--  * 'shRecording': each change to the session is handed to the recording
+--    as it is made, so that the recording has them in the session's order,
+--    whichever threads made them (see 'recordStep').
+--
 -- The rest of what a thread remembers from one round to the next is an
 -- argument of its loop.
 
@@ -517,9 +564,21 @@ monotonicNow :: IO Instant
 monotonicNow = clockAt <$> getMonotonicTime
 
 -- | Take the session through an event: the session after it, and what the
--- event asks to be done.
+-- event asks to be done. A recording has it as happening now.
 transition :: Shell -> Event -> IO (Session, [Effect])
-transition sh event = atomicModifyIORef' (shSession sh) $ \s -> let (s', effects) = step event s in (s', (s', effects))
+transition sh event = case shRecording sh of
+    Nothing -> transitionAt sh 0 0 event
+    Just _ -> getMonotonicTimeNSec >>= \at -> transitionAt sh at 0 event
+
+-- | Take the session through an event, as 'transition' does, that
+-- happened at the given time on the monotonic clock, a frame having the
+-- given counter, as a recording has it.
+transitionAt :: Shell -> Word64 -> Word8 -> Event -> IO (Session, [Effect])
+transitionAt sh at n event = case shRecording sh of
+    Nothing -> stepped
+    Just (_, recorder) -> recordStep recorder at n ((\result@(_, effects) -> (result, [did | Record did <- effects])) <$> stepped)
+  where
+    stepped = atomicModifyIORef' (shSession sh) $ \s -> let (s', effects) = step event s in (s', (s', effects))
 
 -- | Take the session through an event, and do what it asks.
 advance :: Shell -> Event -> IO ()
@@ -542,7 +601,7 @@ perform sh = \case
     BindHotkeys config -> rebindHotkeys (watchedKeys config)
     PointGames choice -> pointGames (exeDir (shPaths sh)) choice
     SetStartup choice -> setStartup say (shPaths sh) choice
-    Record (Marked n) -> say (describeMark Nothing n)
+    Record (Marked n) -> say . (`describeMark` n) =<< traverse (soFar . sessionRecorder . snd) (shRecording sh)
     Record _ -> pure ()
 
 -- | What the camera's thread keeps while the camera is connected.
@@ -585,11 +644,13 @@ track sh cam = do
   where
     packet :: (Light -> Light -> IO ()) -> Double -> Connection -> Packet -> IO Connection
     packet lights arrived c = \case
-        Frame _ stripes -> do
-            now <- getMonotonicTime
-            edges <- takeKeyEdges (clockAt now)
-            advance sh . ControlsPolled (clockAt now) edges =<< recenterCount
-            (s, effects) <- transition sh (FrameArrived (clockAt now) stripes)
+        Frame n stripes -> do
+            ns <- getMonotonicTimeNSec
+            let now = clockSeconds ns
+                seen = trackerTime ns
+            edges <- takeKeyEdges seen
+            mapM_ (perform sh) . snd =<< transitionAt sh ns n . ControlsPolled seen edges =<< recenterCount
+            (s, effects) <- transitionAt sh ns n (FrameArrived seen stripes)
             -- When games were sent the frame's pose.
             published <- foldM (\at e -> perform sh e >> case e of Publish _ -> Just <$> getMonotonicTime; _ -> pure at) Nothing effects
             let timed = maybe id (\at -> sawFrame (at - arrived) (maybe 0 (arrived -) (cLastArrival c)) (length stripes)) published (cWindow c)

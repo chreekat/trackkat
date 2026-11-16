@@ -385,9 +385,11 @@ properties =
         , testCase "what the log says of a recording and of marks" $ do
             describeRecording "C:\\r.txt" @?= "Recording to C:\\r.txt: about 6 MB a minute, until trackkat quits."
             describeStopped "the disk can't keep up" @?= "Recording stopped: the disk can't keep up. Tracking goes on."
+            describeUnrecorded "no such folder" @?= "Can't record: no such folder. Tracking goes on."
+            describeRecorded "C:\\r.txt" @?= "Recording saved to C:\\r.txt."
             map (`describeMark` 3) [Just Whole, Just Partial, Nothing]
                 @?= ["Mark 3 recorded.", "No mark: the recording has stopped.", "No mark: start trackkat with --record to record."]
-            assertBool "" (all ((<= 80) . length) (describeStopped "" : describeRecording "" : map (`describeMark` 3) [Just Whole, Just Partial, Nothing]))
+            assertBool "" (all ((<= 80) . length) (describeStopped "" : describeUnrecorded "" : describeRecorded "" : describeRecording "" : map (`describeMark` 3) [Just Whole, Just Partial, Nothing]))
         ]
   where
     camera start = let k = startIntrinsics start in (focal k, cx k, cy k)

@@ -14,7 +14,9 @@ module TrackKat.Recorder (
     notRecording,
     withRecorder,
     describeRecording,
+    describeUnrecorded,
     describeStopped,
+    describeRecorded,
 
     -- * Where entries go
     Sink (..),
@@ -194,6 +196,14 @@ entryTime = \case
 -- | The log's line for a recording begun, to the file given.
 describeRecording :: FilePath -> String
 describeRecording path = "Recording to " ++ path ++ ": about 6 MB a minute, until trackkat quits."
+
+-- | The log's line for a recording that couldn't be begun, and why.
+describeUnrecorded :: String -> String
+describeUnrecorded why = "Can't record: " ++ why ++ ". Tracking goes on."
+
+-- | The log's line for a recording finished whole, in the file given.
+describeRecorded :: FilePath -> String
+describeRecorded path = "Recording saved to " ++ path ++ "."
 
 -- | The log's line for a recording that stopped before it was finished,
 -- and why.
