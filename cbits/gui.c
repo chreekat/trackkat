@@ -41,10 +41,11 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
-enum { F_RECENTER, F_PAUSE, F_TRIM, F_AIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_HEAD_VIEW, F_COUNT };
+enum { F_RECENTER, F_PAUSE, F_TRIM, F_AIM, F_SMOOTHING, F_STEADINESS, F_RESPONSIVENESS, F_YAW, F_PITCH, F_ROLL, F_X, F_Y, F_Z, F_LEAN, F_NPCLIENT, F_UPDATES, F_STARTUP, F_LIGHTS, F_TRACKER, F_HEAD_VIEW, F_COUNT };
 static const wchar_t *const field_names[F_COUNT] = {L"recenter", L"pause", L"trim", L"aim", L"smoothing", L"steadiness",
                                                     L"responsiveness", L"yaw", L"pitch", L"roll", L"x", L"y", L"z", L"lean",
-                                                    L"npclient", L"updates", L"startup", L"ignore lights", L"head view"};
+                                                    L"npclient", L"updates", L"startup", L"ignore lights", L"tracker",
+                                                    L"head view"};
 #define LISTS 4 /* binding lists: recenter, pause, trim, aim */
 
 /* A blob as the camera saw it, and what it was taken for. */
@@ -2000,6 +2001,8 @@ static void show_field(int i, const wchar_t *value)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"trackir") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"on") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+    else if (i == F_TRACKER)
+        SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"new") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_HEAD_VIEW) {
         /* The file read back with the view last saved says nothing new, and
          * may be older than a view clicked to since. */
@@ -2031,7 +2034,7 @@ static void save_settings(void)
     head_view_saved = head_view;
     for (int i = 0; i < F_COUNT; i++)
         if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS ||
-            slider_field(i))
+            i == F_TRACKER || slider_field(i))
             copy_text(values[i], FIELD_MAX, field_text[i]);
         else if (i == F_HEAD_VIEW)
             copy_text(values[i], FIELD_MAX, view_settings[head_view]);
@@ -2750,6 +2753,9 @@ static void build_window(void)
         control(L"BUTTON", L"Ignore still lights", WS_TABSTOP | BS_AUTOCHECKBOX, 246, AIDS_Y + 26, 140, 22,
                 ID_FIELD + F_LIGHTS),
         L"Learn bright lights that stay put, such as a lamp, and ignore them");
+    field_ctl[F_TRACKER] = tip(control(L"BUTTON", L"New tracker", WS_TABSTOP | BS_AUTOCHECKBOX, 402, AIDS_Y + 26, 110,
+                                       22, ID_FIELD + F_TRACKER),
+                               L"Try the reworked tracking. Uncheck to go back");
 
     /* The calibration, and under its cover the two buttons that change it. */
     static const wchar_t calibration_tip[] =
@@ -2992,6 +2998,11 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_FIELD + F_LEAN:
             copy_text(field_text[F_LEAN], FIELD_MAX,
                       SendMessageW(field_ctl[F_LEAN], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"view" : L"screen");
+            save_soon(1);
+            return 0;
+        case ID_FIELD + F_TRACKER:
+            copy_text(field_text[F_TRACKER], FIELD_MAX,
+                      SendMessageW(field_ctl[F_TRACKER], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"new" : L"old");
             save_soon(1);
             return 0;
         case ID_FIELD + F_NPCLIENT:

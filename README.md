@@ -68,14 +68,15 @@ tooltip saying what it does.
 16. Smoothing: steadiness against jitter, responsiveness against lag.
 17. **Lean follows the view**, or the screen.
 18. **Ignore still lights**: a lamp or a fire behind you doesn't stop trackkat finding the clip; see [still lights](docs/details.md#still-lights).
-19. What trackkat has learned about your camera and neck.
-20. A cover: lift it for **Calibrate now** (after moving the camera, turn your head left and right for five seconds) and **Clear calibration** (start afresh).
-21. The log's latest line; **Copy log** for bug reports.
-22. **Open log**: the whole log, and trackkat's version, in a window of its own.
-23. **Start with Windows**, in the tray: the way to use anti-cheat mode without starting trackkat by hand.
-24. **Keep up to date**: an installed trackkat fetches new versions in the background.
-25. **Anti-cheat mode**, for games such as Arma Reforger that refuse trackkat's NPClient.
-26. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
+19. **New tracker**: try the reworked tracking; see [two trackers](docs/details.md#two-trackers).
+20. What trackkat has learned about your camera and neck.
+21. A cover: lift it for **Calibrate now** (after moving the camera, turn your head left and right for five seconds) and **Clear calibration** (start afresh).
+22. The log's latest line; **Copy log** for bug reports.
+23. **Open log**: the whole log, and trackkat's version, in a window of its own.
+24. **Start with Windows**, in the tray: the way to use anti-cheat mode without starting trackkat by hand.
+25. **Keep up to date**: an installed trackkat fetches new versions in the background.
+26. **Anti-cheat mode**, for games such as Arma Reforger that refuse trackkat's NPClient.
+27. **Quit trackkat**. Closing the window instead keeps trackkat running in the tray.
 
 ## Keys
 
