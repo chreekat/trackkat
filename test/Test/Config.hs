@@ -90,8 +90,8 @@ tests = group "Config" $ do
     check "curve inputs must increase" $ parseConfig "pitch = 5:5 3:9" == Left "line 1: curve inputs must be positive and increasing"
     check "curve points must be numbers" $ parseConfig "z = 1:x" == Left "line 1: expected input:output, not \"1:x\""
     let curvesOf = fmap ((\r -> [yawCurve r, pitchCurve r, rollCurve r, xCurve r, yCurve r, zCurve r]) . response) . parseConfig
-    check "curves with precision" $
-        curvesOf "yaw = 1:6, precision 40\npitch = 2:14 , precision 0\nroll = 1:4\nx = 1:3, precision 100\ny = 1:4,precision 5\n"
+    check "responses with a curve" $
+        curvesOf "yaw = 1:6, curve 40\npitch = 2:14 , curve 0\nroll = 1:4\nx = 1:3, curve 100\ny = 1:4,curve 5\n"
             == Right
                 [ Expo (Multiplier 6 40 yawRange)
                 , Expo (Multiplier 7 0 pitchRange)
@@ -100,14 +100,16 @@ tests = group "Config" $ do
                 , Expo (Multiplier 4 5 leanRange)
                 , Points [(1, 2.5)]
                 ]
-    check "precision with several points" $
-        parseConfig "yaw = 1:6 2:9, precision 40" == Left "line 1: precision needs one point above 0, like 1:6, precision 40"
-    check "precision with no multiplier" $
-        parseConfig "yaw = 1:0, precision 40" == Left "line 1: precision needs one point above 0, like 1:6, precision 40"
-    check "precision out of range" $ parseConfig "yaw = 1:6, precision 101" == Left "line 1: precision is a number from 0 to 100"
-    check "not a precision" $ parseConfig "yaw = 1:6, expo 40" == Left "line 1: expected precision and a number, not \"expo 40\""
-    check "precision with no points" $ parseConfig "yaw = , precision 40" == Left "line 1: a curve needs at least one input:output point"
-    check "two commas" $ parseConfig "yaw = 1:6, precision 4, 5" == Left "line 1: a curve has at most one comma, before its precision"
+    check "a curve by its older name, precision, reads the same" $
+        curvesOf "yaw = 1:6, precision 40\nx = 1:3,precision 100\n" == curvesOf "yaw = 1:6, curve 40\nx = 1:3,curve 100\n"
+    check "curve with several points" $
+        parseConfig "yaw = 1:6 2:9, curve 40" == Left "line 1: curve needs one point above 0, like 1:6, curve 40"
+    check "curve with no multiplier" $
+        parseConfig "yaw = 1:0, curve 40" == Left "line 1: curve needs one point above 0, like 1:6, curve 40"
+    check "curve out of range" $ parseConfig "yaw = 1:6, curve 101" == Left "line 1: curve is a number from 0 to 100"
+    check "not a curve" $ parseConfig "yaw = 1:6, expo 40" == Left "line 1: expected curve and a number, not \"expo 40\""
+    check "curve with no points" $ parseConfig "yaw = , curve 40" == Left "line 1: a curve needs at least one input:output point"
+    check "two commas" $ parseConfig "yaw = 1:6, curve 4, 5" == Left "line 1: a response has at most one comma, before its curve"
     let withExpos =
             defaultConfig
                 { response =
@@ -118,10 +120,10 @@ tests = group "Config" $ do
                         }
                 }
     check "curves round-trip" $ parseConfig (renderConfig withExpos) == Right withExpos
-    check "precision written" $
-        editSettings [("yaw", "1:6, precision 40")] "yaw = 1:6 # mine\n" == Right "yaw = 1:6, precision 40 # mine\n"
-    check "precision described" $
-        (describeChanges defaultConfig <$> parseConfig "yaw = 1:6, precision 40\n") == Right "Settings reloaded: yaw = 1:6, precision 40"
+    check "curve written" $
+        editSettings [("yaw", "1:6, curve 40")] "yaw = 1:6 # mine\n" == Right "yaw = 1:6, curve 40 # mine\n"
+    check "curve described, by its newer name" $
+        (describeChanges defaultConfig <$> parseConfig "yaw = 1:6, precision 40\n") == Right "Settings reloaded: yaw = 1:6, curve 40"
 
     let reloaded text = describeChanges defaultConfig <$> parseConfig text
     check "nothing changed" $ reloaded "# just a comment\n" == Right "Settings reloaded."
@@ -183,7 +185,7 @@ tests = group "Config" $ do
     -- Aiming: its keys, and its own curves and smoothing.
     check "aim unbound by default" $ aimBindings defaultConfig == []
     let aiming = aim . response
-        aimed = parseConfig "aim = Stick button 4 hold\naim yaw = 1:2\naim pitch = 1:1, precision 50\naim steadiness = 80\nsteadiness = 70\n"
+        aimed = parseConfig "aim = Stick button 4 hold\naim yaw = 1:2\naim pitch = 1:1, curve 50\naim steadiness = 80\nsteadiness = 70\n"
     check "aim settings" $
         fmap aimBindings aimed == Right [Binding stick Hold]
             && fmap aiming aimed == Right (Aim (tuned 80 45) (Points [(1, 2)]) (Expo (Multiplier 1 50 pitchRange)) (Points [(1, 1.5)]))
@@ -195,7 +197,7 @@ tests = group "Config" $ do
     check "aim steadiness out of range" $ parseConfig "aim steadiness = 101" == Left "line 1: aim steadiness is a number from 0 to 100"
     check "aim change described" $
         (describeChanges defaultConfig <$> aimed)
-            == Right "Settings reloaded: aim = Stick button 4 hold, steadiness = 70, aim yaw = 1:2, aim pitch = 1:1, precision 50, aim steadiness = 80"
+            == Right "Settings reloaded: aim = Stick button 4 hold, steadiness = 70, aim yaw = 1:2, aim pitch = 1:1, curve 50, aim steadiness = 80"
     check "a file from before aiming says the defaults" $
         parseConfig (unlines (filter (not . isPrefixOf "aim") (lines (renderConfig defaultConfig)))) == Right defaultConfig
     check "aim edited" $ editSettings [("aim", "F8 hold")] "aim = # none\n" == Right "aim = F8 hold # none\n"

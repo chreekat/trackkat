@@ -120,16 +120,17 @@ rewritten, so your own edits and comments in the file stay. The line beside
 
 **Curves.** In a plot, across is your head and up is the game's view; the
 dot is your head now. The multiplier is how many times further the view
-turns or moves than your head, and its arrows step it by halves. A
-precision above 0 makes small movements gentler, for aiming and reading
-gauges, and large ones steeper, so the same head movement still reaches the
-end of the view; the dotted line is then the multiplier alone. The line
-under each says how far your head moves for the view to reach the end of
-its range. **Curves as text** shows them as `trackkat.conf` writes them: a
-multiplier such as `1:6`, perhaps with a precision as in `1:6, precision
-40`, or input:output points such as `10:10 45:120`, joined by straight
-lines from 0:0. A curve of points is left as it is unless you change its
-multiplier or precision.
+turns or moves than your head, and its arrows step it by halves. More
+**Curve** gives finer control near the center of the range, for aiming and
+reading gauges, and makes large movements steeper, so the same head
+movement still reaches the end of the view; the dotted line is then the
+multiplier alone. The line under each says how far your head moves for the
+view to reach the end of its range. **Curves as text** shows them as
+`trackkat.conf` writes them: a multiplier such as `1:6`, perhaps with a
+curve as in `1:6, curve 40` (older files say `precision` there, which
+still reads), or input:output points such as `10:10 45:120`, joined by
+straight lines from 0:0. Points are left as they are unless you change the
+multiplier or the curve.
 
 **Aids.** Smoothing calms the view while your head is still, at the cost of
 a little lag when you move; off, games get every tremor. Raise steadiness

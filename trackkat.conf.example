@@ -51,16 +51,17 @@ responsiveness = 45
 # view turns 6 degrees for each degree your head turns, so turning
 # 30 degrees looks straight behind you.
 #
-# Draw a curve by defining more input:output points: degrees for yaw,
+# Draw any shape by defining more input:output points: degrees for yaw,
 # pitch and roll, mm for x, y and z. Straight lines join the points,
 # starting from 0:0, and carry on past the last one. For example, a
 # deadzone then 1:1 is 0.5:0 1.5:1.
 #
-# A centre precision, from 0 to 100, makes small movements gentler and
-# large ones steeper, while the same head movement still reaches the
-# end of the view. It's best to get a feel for this by playing with it
-# in trackkat's window. For example:
-#   yaw = 1:6, precision 40
+# After a multiplier, a curve from 0 to 100: more curve gives finer
+# control near the center of the range and makes large movements
+# steeper, while the same head movement still reaches the end of the
+# view. It's best to get a feel for this by playing with it in
+# trackkat's window. For example:
+#   yaw = 1:6, curve 40
 yaw = 1:6
 pitch = 1:7
 roll = 1:4

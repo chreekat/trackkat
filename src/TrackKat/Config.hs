@@ -364,16 +364,17 @@ renderConfig c =
         , "# view turns 6 degrees for each degree your head turns, so turning"
         , "# 30 degrees looks straight behind you."
         , "#"
-        , "# Draw a curve by defining more input:output points: degrees for yaw,"
+        , "# Draw any shape by defining more input:output points: degrees for yaw,"
         , "# pitch and roll, mm for x, y and z. Straight lines join the points,"
         , "# starting from 0:0, and carry on past the last one. For example, a"
         , "# deadzone then 1:1 is 0.5:0 1.5:1."
         , "#"
-        , "# A centre precision, from 0 to 100, makes small movements gentler and"
-        , "# large ones steeper, while the same head movement still reaches the"
-        , "# end of the view. It's best to get a feel for this by playing with it"
-        , "# in trackkat's window. For example:"
-        , "#   yaw = 1:6, precision 40"
+        , "# After a multiplier, a curve from 0 to 100: more curve gives finer"
+        , "# control near the center of the range and makes large movements"
+        , "# steeper, while the same head movement still reaches the end of the"
+        , "# view. It's best to get a feel for this by playing with it in"
+        , "# trackkat's window. For example:"
+        , "#   yaw = 1:6, curve 40"
         , "yaw = " ++ renderCurve (yawCurve r)
         , "pitch = " ++ renderCurve (pitchCurve r)
         , "roll = " ++ renderCurve (rollCurve r)
@@ -598,21 +599,21 @@ editSettings new str
              in settingText (dropWhileEnd isSpace name) v ++ (if null comment then "" else " " ++ comment)
 
 -- | Read a curve: points like @0.5:0 1.5:1@, inputs increasing from zero,
--- or a multiplier with a centre precision like @1:6, precision 40@, given
--- the end of the axis's view.
+-- or a multiplier with a curve like @1:6, curve 40@, given the end of the
+-- axis's view. Older files say @precision@ for @curve@.
 parseCurve :: Double -> String -> Either String Curve
 parseCurve range value = case splitOn ',' value of
     [points] -> Points <$> parsePoints points
     [points, extra] -> do
         m <- case parsePoints points of
             Right [(i, o)] | o > 0 -> Right (o / i)
-            Right _ -> Left "precision needs one point above 0, like 1:6, precision 40"
+            Right _ -> Left "curve needs one point above 0, like 1:6, curve 40"
             Left err -> Left err
         p <- case words extra of
-            ["precision", n] -> parseKnob "precision" n
-            _ -> Left ("expected precision and a number, not " ++ show (trim extra))
+            [word, n] | word `elem` ["curve", "precision"] -> parseKnob "curve" n
+            _ -> Left ("expected curve and a number, not " ++ show (trim extra))
         Right (Expo (Multiplier m p range))
-    _ -> Left "a curve has at most one comma, before its precision"
+    _ -> Left "a response has at most one comma, before its curve"
 
 parsePoints :: String -> Either String [(Double, Double)]
 parsePoints value = do
@@ -631,7 +632,7 @@ parsePoints value = do
 
 renderCurve :: Curve -> String
 renderCurve (Points points) = unwords [renderNumber a ++ ":" ++ renderNumber b | (a, b) <- points]
-renderCurve (Expo e) = "1:" ++ renderNumber (factor e) ++ ", precision " ++ renderNumber (precision e)
+renderCurve (Expo e) = "1:" ++ renderNumber (factor e) ++ ", curve " ++ renderNumber (precision e)
 
 -- | Read a smoothing knob, a number from 0 to 100.
 parseKnob :: String -> String -> Either String Double

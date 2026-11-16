@@ -64,7 +64,7 @@ tooltip saying what it does.
 12. **Add…**: press a key, joystick button, or middle or side mouse button to add it.
 13. Whether the last change was saved: settings are written to `trackkat.conf` as you change them, and apply at once.
 14. **Curves as text**, for curves of any shape.
-15. Response curves: a multiplier, a centre precision, and a plot with your head as a dot.
+15. The response of each axis: a multiplier, a curve, and a plot with your head as a dot.
 16. Smoothing: steadiness against jitter, responsiveness against lag.
 17. **Lean follows the view**, or the screen.
 18. **Ignore still lights**: a lamp or a fire behind you doesn't stop trackkat finding the clip; see [still lights](docs/details.md#still-lights).

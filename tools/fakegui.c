@@ -47,7 +47,7 @@ static const wchar_t *const names[] = {L"recenter", L"pause", L"trim", L"aim", L
                                        L"npclient", L"head view"};
 static const wchar_t *const values[] = {L"F12, Throttle - HOTAS Warthog button 4 double", L"Ctrl+F9",
                                         L"Throttle - HOTAS Warthog button 4", L"Throttle - HOTAS Warthog button 4 hold",
-                                        L"on", L"90", L"45", L"1:6, precision 40", L"1:7", L"1:4", L"1:3", L"1:4",
+                                        L"on", L"90", L"45", L"1:6, curve 40", L"1:7", L"1:4", L"1:3", L"1:4",
                                         L"1:2.5", L"view", L"trackkat", L"virtual"};
 
 /* A blob, as hts_gui_blobs takes them, put at spots[n]; how many there are

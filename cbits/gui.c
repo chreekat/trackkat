@@ -1490,7 +1490,7 @@ static LRESULT CALLBACK strip_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 
 /* A curve as trackkat.conf writes it, read as src/TrackKat/Config.hs reads
  * it: a multiplier with a centre precision, such as 1:6 or
- * 1:6, precision 40, or other input:output points. */
+ * 1:6, curve 40, or other input:output points. */
 enum { SHAPE_MULTIPLIER, SHAPE_POINTS, SHAPE_UNREADABLE };
 #define CURVE_POINTS 64
 
@@ -1541,9 +1541,13 @@ static void read_curve(const wchar_t *text, Curve *c)
     if (*p == L',') {
         p++;
         skip_spaces(&p);
-        if (wcsncmp(p, L"precision", 9) != 0)
+        /* "precision" is what older files call it. */
+        if (wcsncmp(p, L"curve", 5) == 0)
+            p += 5;
+        else if (wcsncmp(p, L"precision", 9) == 0)
+            p += 9;
+        else
             return;
-        p += 9;
         if (*p != L' ' && *p != L'\t')
             return;
         wchar_t *end;
@@ -1725,7 +1729,7 @@ static void sync_curve(int axis, int from)
     if (c->shape == SHAPE_MULTIPLIER)
         describe_reach(buf, 64, axis, c->factor);
     else
-        copy_text(buf, 64, c->shape == SHAPE_POINTS ? L"Custom curve, of points" : L"Can't read this curve");
+        copy_text(buf, 64, c->shape == SHAPE_POINTS ? L"Custom, by points" : L"Can't read this text");
     SetWindowTextW(curve_note[axis], buf);
     syncing--;
     InvalidateRect(curve_plot[axis], NULL, FALSE);
@@ -1737,7 +1741,7 @@ static void set_multiplier(int axis, double factor, int precision, int from)
     wchar_t number[32], text[FIELD_MAX];
     format_number(number, 32, factor);
     if (precision > 0)
-        _snwprintf(text, FIELD_MAX, L"1:%ls, precision %d", number, precision);
+        _snwprintf(text, FIELD_MAX, L"1:%ls, curve %d", number, precision);
     else
         _snwprintf(text, FIELD_MAX, L"1:%ls", number);
     text[FIELD_MAX - 1] = 0;
@@ -2666,11 +2670,10 @@ static void build_window(void)
 
     static const wchar_t plot_tip[] = L"Across, your head; up, the game's view. The dot is your head now";
     static const wchar_t multiplier_tip[] = L"How many times further the view turns or moves than your head";
-    static const wchar_t precision_tip[] =
-        L"Above 0, small movements are gentler and large ones steeper, for aiming";
+    static const wchar_t precision_tip[] = L"More curve -> Finer control near center of range";
     static const wchar_t note_tip[] = L"How far your head moves for the view to reach the end of its range";
     static const wchar_t text_tip[] =
-        L"A multiplier such as 1:6, or 1:6, precision 40, or points such as 10:10 45:120";
+        L"A multiplier such as 1:6, or 1:6, curve 40, or points such as 10:10 45:120";
     for (int i = 0; i < 6; i++) {
         int x = 22 + (i % 3) * 226, y = CURVES_Y + (i / 3) * 72, right = x + 72;
         curve_plot[i] = tip(CreateWindowExW(0, L"trackkat_curve", L"", WS_CHILD | WS_VISIBLE, S(x), S(y), S(64),
@@ -2688,7 +2691,7 @@ static void build_window(void)
         SendMessageW(multiplier_step[i], UDM_SETBUDDY, (WPARAM)multiplier_edit[i], 0);
         SendMessageW(multiplier_step[i], UDM_SETRANGE32, 0, 1000);
         SendMessageW(multiplier_step[i], UDM_SETPOS32, 0, 500);
-        curve_extra[i][1] = tip(control(L"STATIC", L"Precision", SS_LEFT, right, y + 29, 52, 18, 0), precision_tip);
+        curve_extra[i][1] = tip(control(L"STATIC", L"Curve", SS_LEFT, right, y + 29, 52, 18, 0), precision_tip);
         SendMessageW(curve_extra[i][1], WM_SETFONT, (WPARAM)small_font, FALSE);
         precision_slider[i] = tip(control(TRACKBAR_CLASSW, L"", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, right + 48,
                                           y + 26, 72, 22, ID_PRECISION + i),
