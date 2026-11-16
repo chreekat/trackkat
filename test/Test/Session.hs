@@ -20,6 +20,7 @@ import TrackKat.Gesture (Edge (..), holdAfter)
 import TrackKat.Linear
 import TrackKat.Log
 import TrackKat.Pose
+import TrackKat.Recording (Did (..))
 import TrackKat.Response
 import TrackKat.Session
 import TrackKat.Synth (rotYXZ, squareStripes)
@@ -226,6 +227,11 @@ tests =
                  in sAim held === Aiming
                         .&&. (if boundTo rebound key /= boundTo bound key then sAim resaved === NotAiming else property True)
                         .&&. sAim released === NotAiming
+        , testProperty "marks are numbered from 1 in the order asked for, and nothing else is marked" $
+            \(Moves moves) ->
+                let made = [(event, n) | (_, event, _, effects) <- trace moves, Record (Marked n) <- effects]
+                 in map snd made === [1 .. length [() | (_, MarkAsked, _, _) <- trace moves]]
+                        .&&. conjoin [counterexample (show event) (isMark event) | (event, _) <- made]
         , testProperty "a calibration file that is missing or can't be read starts the session from none, and one that can from what it says" $
             \(Found found) ->
                 let (c, effects) = startingCalibration "trackkat.calibration" found
@@ -280,6 +286,7 @@ keeping passes c =
         , pauseBindings = filter passes (pauseBindings c)
         , trimBindings = filter passes (trimBindings c)
         , aimBindings = filter passes (aimBindings c)
+        , markBindings = filter passes (markBindings c)
         }
 
 -- | What a hotkey asks for when its key is tapped.
@@ -288,6 +295,7 @@ hotkeyAsked RecenterKey = RecenterAsked
 hotkeyAsked PauseKey = PauseAsked
 hotkeyAsked TrimKey = TrimAsked
 hotkeyAsked AimKey = AimAsked
+hotkeyAsked MarkKey = MarkAsked
 
 -- | Whether an event can begin aiming or end it: its switch and its keys,
 -- recentering, and settings that may stop watching a key held down.
@@ -344,7 +352,7 @@ data Move
 data GameAsked = GameAsked | NoGameAsked
     deriving (Eq, Show)
 
-data Asked = ToRecenter | ToPause | ToTrim | ToAim | ToCalibrate | ToClear
+data Asked = ToRecenter | ToPause | ToTrim | ToAim | ToCalibrate | ToClear | ToMark
     deriving (Eq, Show)
 
 -- | The events moves make, frames 120 a second, but for the waits.
@@ -368,6 +376,7 @@ events = snd . mapAccumL event (0 :: Int, 0 :: Int, 0 :: Int)
         Ask ToAim -> (same, AimAsked)
         Ask ToCalibrate -> (same, CalibrateAsked)
         Ask ToClear -> (same, ClearCalibrationAsked)
+        Ask ToMark -> (same, MarkAsked)
         Save config -> (same, SettingsSaved "text" config)
         Corrupt -> (same, PacketCorrupt "too short")
       where
@@ -399,6 +408,10 @@ reached moves = fst (steps (events moves) start)
 effectsOf :: [Move] -> [Effect]
 effectsOf moves = snd (steps (events moves) start)
 
+isMark :: Event -> Bool
+isMark MarkAsked = True
+isMark _ = False
+
 isFrame :: Event -> Bool
 isFrame FrameArrived{} = True
 isFrame _ = False
@@ -429,7 +442,7 @@ instance Arbitrary Move where
             , (1, pure Glint)
             , (4, Look <$> scale (`div` 10) (listOf ((,) <$> elements [WentDown, CameUp] <*> elements bench)) <*> elements [NoGameAsked, NoGameAsked, GameAsked])
             , (2, pure Wait)
-            , (5, Ask <$> elements [ToRecenter, ToPause, ToPause, ToTrim, ToTrim, ToAim, ToAim, ToCalibrate, ToClear])
+            , (5, Ask <$> elements [ToRecenter, ToPause, ToPause, ToTrim, ToTrim, ToAim, ToAim, ToCalibrate, ToClear, ToMark])
             , (1, Save <$> genConfig)
             , (1, (\(OnBench config) -> Save config) <$> arbitrary)
             , (1, elements [Seek, Connect, Stop "The camera stopped.", Corrupt])
@@ -471,7 +484,8 @@ instance Arbitrary OnBench where
         pause <- bindings
         trim <- bindings
         aiming <- bindings
-        pure (OnBench defaultConfig{recenterBindings = recenter, pauseBindings = pause, trimBindings = trim, aimBindings = aiming})
+        marking <- bindings
+        pure (OnBench defaultConfig{recenterBindings = recenter, pauseBindings = pause, trimBindings = trim, aimBindings = aiming, markBindings = marking})
     shrink (OnBench config) = [OnBench simpler | simpler <- shrinkConfig config, benched simpler]
       where
         benched c = all ((`elem` bench) . boundKey) (concatMap (hotkeyBindings c) [minBound .. maxBound])

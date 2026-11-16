@@ -18,7 +18,7 @@ tests =
         "Controls"
         [ testProperty "each hotkey has the bindings the settings give it, and the log's line names every one" $
             \(Sayable c) ->
-                concatMap (hotkeyBindings c) [minBound .. maxBound] === recenterBindings c ++ pauseBindings c ++ trimBindings c ++ aimBindings c
+                concatMap (hotkeyBindings c) [minBound .. maxBound] === recenterBindings c ++ pauseBindings c ++ trimBindings c ++ aimBindings c ++ markBindings c
                     .&&. conjoin
                         [ counterexample (describeBindings c) (renderBinding b `isInfixOf` describeBindings c)
                         | k <- [minBound .. maxBound]

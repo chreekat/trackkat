@@ -24,7 +24,7 @@ import TrackKat.Log (Line (..))
 import TrackKat.World (Instant, seconds, (.+^))
 
 -- | An action bound to keys and joystick buttons.
-data Hotkey = RecenterKey | PauseKey | TrimKey | AimKey
+data Hotkey = RecenterKey | PauseKey | TrimKey | AimKey | MarkKey
     deriving (Eq, Show, Enum, Bounded)
 
 -- | The keys and buttons bound to each hotkey.
@@ -33,6 +33,7 @@ hotkeyBindings c RecenterKey = recenterBindings c
 hotkeyBindings c PauseKey = pauseBindings c
 hotkeyBindings c TrimKey = trimBindings c
 hotkeyBindings c AimKey = aimBindings c
+hotkeyBindings c MarkKey = markBindings c
 
 -- | The hotkeys each way of pressing a key or button is bound to.
 boundTo :: Config -> KeyOrButton -> [(Gesture, Hotkey)]
@@ -47,11 +48,12 @@ watchedKeys c = nub [boundKey b | k <- [minBound .. maxBound], b <- hotkeyBindin
 describeBindings :: Config -> String
 describeBindings config =
     printf
-        "Recenter: %s   Pause: %s   Trim: %s   Aim: %s"
+        "Recenter: %s   Pause: %s   Trim: %s   Aim: %s   Mark: %s"
         (keysAndButtons (recenterBindings config))
         (keysAndButtons (pauseBindings config))
         (keysAndButtons (trimBindings config))
         (keysAndButtons (aimBindings config))
+        (keysAndButtons (markBindings config))
 
 -- | A watched key or button going down or coming up, and when. A key bound
 -- with modifiers goes down with just those held, and comes up when the key

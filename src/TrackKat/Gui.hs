@@ -43,6 +43,7 @@ module TrackKat.Gui (
     savedSettings,
 ) where
 
+import Control.Monad (forM_)
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
@@ -185,7 +186,7 @@ takeActions = do
     pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11), (AimAction, 12)], testBit bits b] ++ keys)
   where
     chosen k = do
-        code <- fromIntegral <$> c_chosen_key (list k)
+        code <- maybe (pure 0) (fmap fromIntegral . c_chosen_key) (list k)
         pure (KeyChosen k (keyFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
 
 -- | The binding list waiting for a key or joystick button to add, if any.
@@ -198,17 +199,20 @@ capturing =
         3 -> pure (Just AimKey)
         _ -> pure Nothing
 
--- | Add a key or button to a list in the window, bound as the settings
--- file binds one with no gesture written, and stop waiting for one.
+-- | Add a key or button to a hotkey's list in the window, if it has one,
+-- bound as the settings file binds one with no gesture written, and stop
+-- waiting for one.
 addBinding :: Hotkey -> KeyOrButton -> IO ()
-addBinding k b = withCWString (renderKeyOrButton b) (c_add_binding (list k))
+addBinding k b = forM_ (list k) $ \which -> withCWString (renderKeyOrButton b) (c_add_binding which)
 
--- | How cbits/gui.c numbers the binding lists.
-list :: Hotkey -> CInt
-list RecenterKey = 0
-list PauseKey = 1
-list TrimKey = 2
-list AimKey = 3
+-- | How cbits/gui.c numbers the binding lists; marking has none, and is
+-- bound in the settings file alone.
+list :: Hotkey -> Maybe CInt
+list RecenterKey = Just 0
+list PauseKey = Just 1
+list TrimKey = Just 2
+list AimKey = Just 3
+list MarkKey = Nothing
 
 -- | Add a line to the log the window shows.
 guiLog :: String -> IO ()

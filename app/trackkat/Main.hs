@@ -36,6 +36,8 @@ import TrackKat.Idle
 import TrackKat.Install
 import TrackKat.Log
 import TrackKat.Pose
+import TrackKat.Recorder (describeMark)
+import TrackKat.Recording (Did (Marked))
 import TrackKat.Release
 import TrackKat.ServedGame
 import TrackKat.Session
@@ -540,6 +542,8 @@ perform sh = \case
     BindHotkeys config -> rebindHotkeys (watchedKeys config)
     PointGames choice -> pointGames (exeDir (shPaths sh)) choice
     SetStartup choice -> setStartup say (shPaths sh) choice
+    Record (Marked n) -> say (describeMark Nothing n)
+    Record _ -> pure ()
 
 -- | What the camera's thread keeps while the camera is connected.
 data Connection = Connection

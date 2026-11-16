@@ -25,10 +25,15 @@
 # sensitivity, for finer control: to lay a gunsight on something by
 # head. A key or button with hold aims while it is held down; one
 # without turns aiming on, then off. Recentering ends it.
+#
+# mark: while trackkat records what the camera sees, as it does
+# when started with --record, notes the moment in the recording:
+# press it when tracking goes wrong.
 recenter = F12
 pause = F9
 trim =
 aim =
+mark =
 
 # Smoothing calms the view while your head is still, at the cost of
 # some lag when you move. Both settings run from 0 to 100.

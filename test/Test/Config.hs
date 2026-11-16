@@ -190,6 +190,12 @@ tests = group "Config" $ do
         fmap aimBindings aimed == Right [Binding stick Hold]
             && fmap aiming aimed == Right (Aim (tuned 80 45) (Points [(1, 2)]) (Expo (Multiplier 1 50 pitchRange)) (Points [(1, 1.5)]))
             && fmap (smoothing . response) aimed == Right (tuned 70 45)
+    -- Marking: its keys.
+    check "mark unbound by default" $ markBindings defaultConfig == []
+    check "mark bindings" $
+        fmap markBindings (parseConfig "mark = F8, Stick button 4 double\n") == Right [tap (Key [] "F8"), Binding stick Double]
+    check "mark change described" $
+        describeChanges defaultConfig defaultConfig{markBindings = [tap (Key [] "F8")]} == "Settings reloaded: mark = F8"
     check "aim's smoothing off, the view's left on" $
         fmap (\c -> (aimSmoothing (aiming c), smoothing (response c))) (parseConfig "aim smoothing = off\n")
             == Right (NoSmoothing, smoothing (response defaultConfig))
@@ -216,8 +222,8 @@ tests = group "Config" $ do
     -- Editing the settings file from trackkat's window.
     let userFile = "# mine\npause=Pause # TrackIR style\nsmoothing = off\nsteadiness = 70\npause = F9\n"
     checkShowing "values as written" (show (settingValues userFile)) $
-        take 7 (settingValues userFile)
-            == [("recenter", "F12"), ("pause", "F9"), ("trim", ""), ("aim", ""), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
+        take 8 (settingValues userFile)
+            == [("recenter", "F12"), ("pause", "F9"), ("trim", ""), ("aim", ""), ("mark", ""), ("smoothing", "off"), ("steadiness", "70"), ("responsiveness", "45")]
     check "names in file order" $ settingNames == map fst (settingValues "")
     check "unchanged values leave the file alone" $ editSettings (settingValues userFile) userFile == Right userFile
     checkShowing "edit keeps comments" (show (editSettings [("pause", "Ctrl+F9"), ("yaw", "1:5")] userFile)) $
@@ -305,6 +311,16 @@ properties =
                                     , take (length (lines text)) (map named (lines edited)) === map named (lines text)
                                     , property (all (null . comment) (drop (length (lines text)) (lines edited)))
                                     ]
+        , testProperty "a file edited to other settings but for one the window doesn't show, as mark, keeps what it says of that one" $
+            \(Edited file) (Sayable c) (Unshown name) ->
+                let text = fileText file
+                    shown = [(n, v) | (n, v) <- settingValues (renderConfig c), n /= name]
+                 in case editSettings shown text of
+                        Left err -> counterexample err False
+                        Right edited ->
+                            counterexample edited $
+                                filter ((== Just name) . named) (lines edited) === filter ((== Just name) . named) (lines text)
+                                    .&&. lookup name (settingValues edited) === lookup name (settingValues text)
         , testProperty "a file edited twice to the same settings is edited once" $
             \(Edited file) (Sayable c) ->
                 let values = settingValues (renderConfig c)
@@ -343,6 +359,19 @@ instance Arbitrary Edited where
         let settings = [Setting name value | (name, value) <- settingValues (renderConfig c)]
         Edited <$> listOf (oneof [Remark <$> elements ["", "# mine", "#", "  # as Zoë likes it"], elements settings <*> elements ["", " # mine", "   #"]])
     shrink (Edited file) = Edited <$> shrinkList (const []) file
+
+-- | A setting trackkat's window doesn't show, by name; simplest marking's
+-- keys.
+newtype Unshown = Unshown String
+    deriving (Show)
+
+instance Arbitrary Unshown where
+    arbitrary = Unshown <$> elements unshown
+    shrink (Unshown name) = Unshown <$> earlier unshown name
+
+-- | As field_names in cbits/gui.c leaves them out.
+unshown :: [String]
+unshown = ["mark", "aim yaw", "aim pitch", "aim roll", "aim smoothing", "aim steadiness", "aim responsiveness", "clip"]
 
 -- | A key or mouse button with modifiers.
 newtype KeyBinding = KeyBinding KeyOrButton

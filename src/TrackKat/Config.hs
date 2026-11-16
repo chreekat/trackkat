@@ -59,6 +59,7 @@ data Config = Config
     , pauseBindings :: [Binding]
     , trimBindings :: [Binding]
     , aimBindings :: [Binding]
+    , markBindings :: [Binding]
     , response :: Response
     , clip :: ClipShape
     , npclient :: NPClient
@@ -126,8 +127,8 @@ wornDistances m = (norm (mRight m ^-^ mLeft m), norm (mTop m ^-^ mRight m), norm
 clipModel :: ClipShape -> Model
 clipModel (ClipShape _ m) = m
 
--- | TrackIR's own keys, and none to trim or aim; linear curves with gains
--- tuned in DCS; strong smoothing; aiming that turns the view half as far
+-- | TrackIR's own keys, and none to trim, aim, or mark; linear curves with
+-- gains tuned in DCS; strong smoothing; aiming that turns the view half as far
 -- again as the head, smoothed more strongly still; the headset clip
 -- trackkat was developed with, its post as it is now bent; trackkat's own
 -- NPClient; still lights ignored; the head view as games see it.
@@ -138,6 +139,7 @@ defaultConfig =
         , pauseBindings = [Binding (Key [] "F9") Tap]
         , trimBindings = []
         , aimBindings = []
+        , markBindings = []
         , response =
             Response
                 { smoothing = knobSmoothing defaultKnobs
@@ -264,6 +266,7 @@ setting (c, d@(Dials k a)) name value =
             "pause" -> bindings (\b -> c{pauseBindings = b})
             "trim" -> bindings (\b -> c{trimBindings = b})
             "aim" -> bindings (\b -> c{aimBindings = b})
+            "mark" -> bindings (\b -> c{markBindings = b})
             "smoothing" -> (\k' -> (c, Dials k' a)) <$> knob k
             "steadiness" -> (\k' -> (c, Dials k' a)) <$> knob k
             "responsiveness" -> (\k' -> (c, Dials k' a)) <$> knob k
@@ -338,10 +341,15 @@ renderConfig c =
         , "# sensitivity, for finer control: to lay a gunsight on something by"
         , "# head. A key or button with hold aims while it is held down; one"
         , "# without turns aiming on, then off. Recentering ends it."
+        , "#"
+        , "# mark: while trackkat records what the camera sees, as it does"
+        , "# when started with --record, notes the moment in the recording:"
+        , "# press it when tracking goes wrong."
         , settingText "recenter" (renderBindings (recenterBindings c))
         , settingText "pause" (renderBindings (pauseBindings c))
         , settingText "trim" (renderBindings (trimBindings c))
         , settingText "aim" (renderBindings (aimBindings c))
+        , settingText "mark" (renderBindings (markBindings c))
         , ""
         , "# Smoothing calms the view while your head is still, at the cost of"
         , "# some lag when you move. Both settings run from 0 to 100."
@@ -448,6 +456,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
             , ("pause", renderBindings (pauseBindings c))
             , ("trim", renderBindings (trimBindings c))
             , ("aim", renderBindings (aimBindings c))
+            , ("mark", renderBindings (markBindings c))
             ]
                 ++ knobs "" (smoothingKnobs defaultKnobs (smoothing r))
                 ++ [ (name, renderCurve (f r))

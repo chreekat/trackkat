@@ -36,6 +36,7 @@ import TrackKat.Gesture (Recognizer, Signal (..), edge, forget, newRecognizer, t
 import TrackKat.Linear (V3)
 import TrackKat.Log (Line (..))
 import TrackKat.Pose
+import TrackKat.Recording (Did (..))
 import TrackKat.Response
 import TrackKat.Shape
 import TrackKat.Tracker (
@@ -93,6 +94,9 @@ import TrackKat.World (Instant)
 --    frame after. Aiming that a key or button held down began ends when
 --    the key comes up, or when the settings bind it otherwise.
 --
+--  * Marks are numbered from 1, in the order asked for, whatever else
+--    happens.
+--
 -- "Test.Session" states these as properties.
 
 -- | A session of head tracking, which outlives any one connection to the
@@ -118,6 +122,8 @@ data Session = Session
     -- the camera
     , sRecenters :: !Int
     -- ^ how many times games had asked to recenter when last looked at
+    , sMarks :: !Int
+    -- ^ how many times the user has asked to mark the moment
     }
 
 -- | What games are sent.
@@ -143,6 +149,7 @@ newSession config c =
         , sLatest = centred
         , sAbsence = noAbsence
         , sRecenters = 0
+        , sMarks = 0
         }
 
 -- | The calibration to start a session from, and what to say of it, given
@@ -193,6 +200,8 @@ data Event
       AimLetGo
     | CalibrateAsked
     | ClearCalibrationAsked
+    | -- | mark the moment, for whoever reads a recording of the session
+      MarkAsked
     | -- | the settings file was saved: its text, and the settings it gives
       SettingsSaved String Config
     deriving (Show)
@@ -225,6 +234,8 @@ data Effect
       PointGames NPClient
     | -- | have Windows start trackkat at login, or not
       SetStartup Startup
+    | -- | say in a recording of the session, if there is one, what it did
+      Record Did
     deriving (Show)
 
 -- | Take a session through events, oldest first.
@@ -263,6 +274,7 @@ step event s = case event of
             , ShowClip Nothing
             ]
         )
+    MarkAsked -> let n = sMarks s + 1 in (s{sMarks = n}, [Record (Marked n)])
     SettingsSaved text new -> settingsSaved text new s
 
 say :: String -> Effect
@@ -305,6 +317,7 @@ asked signal = case signal of
     once PauseKey = PauseAsked
     once TrimKey = TrimAsked
     once AimKey = AimAsked
+    once MarkKey = MarkAsked
 
 -- | Begin aiming, or end it, if that is a change.
 aimTo :: Aiming -> Session -> (Session, [Effect])

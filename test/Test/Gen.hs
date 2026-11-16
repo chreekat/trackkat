@@ -624,6 +624,7 @@ genConfig = do
     pause <- bindings
     trim <- bindings
     aiming <- bindings
+    marking <- bindings
     smooth <- smoothed
     aimed <- Aim <$> smoothed <*> curve yawRange <*> curve pitchRange <*> curve rollRange
     curves <-
@@ -636,7 +637,7 @@ genConfig = do
             <*> curve leanRange
     leaning <- elements [LeanWithView, LeanWithScreen]
     worn <- clip' `suchThatMap` id
-    Config recenter pause trim aiming (curves leaning aimed) worn
+    Config recenter pause trim aiming marking (curves leaning aimed) worn
         <$> elements [TrackKatNPClient, TrackIRNPClient]
         <*> elements [UpdatesOn, UpdatesOff]
         <*> elements [StartAtLogin, NoStartAtLogin]
@@ -666,6 +667,7 @@ shrinkConfig =
         , \c -> [c{pauseBindings = bs} | bs <- shrinkList shrinkBinding (pauseBindings c)]
         , \c -> [c{trimBindings = bs} | bs <- shrinkList shrinkBinding (trimBindings c)]
         , \c -> [c{aimBindings = bs} | bs <- shrinkList shrinkBinding (aimBindings c)]
+        , \c -> [c{markBindings = bs} | bs <- shrinkList shrinkBinding (markBindings c)]
         , asDefault (smoothing . response) (\c x -> c{response = (response c){smoothing = x}})
         , asDefault (yawCurve . response) (\c x -> c{response = (response c){yawCurve = x}})
         , asDefault (pitchCurve . response) (\c x -> c{response = (response c){pitchCurve = x}})
