@@ -2667,7 +2667,8 @@ static void build_window(void)
         name_switch(i);
     }
 
-    /* Each binding list in a column under its switch. */
+    /* Each binding list in a column under its switch. A box never wraps, so
+     * that a line is a binding; a long one scrolls sideways as it is edited. */
     static const wchar_t *const headings[LISTS] = {L"RECENTER", L"PAUSE", L"TRIM", L"AIM"};
     static const int add_ids[LISTS] = {ID_ADD_RECENTER, ID_ADD_PAUSE, ID_ADD_TRIM, ID_ADD_AIM};
     int column_w = SWITCH_W - 8;
@@ -2677,7 +2678,7 @@ static void build_window(void)
                               list_tips[i]);
         HWND box = CreateWindowExW(0, L"EDIT", L"",
                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_MULTILINE |
-                                       ES_AUTOVSCROLL | ES_WANTRETURN,
+                                       ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN,
                                    S(x), S(BIND_Y + 44), S(column_w), S(64), main_hwnd,
                                    (HMENU)(INT_PTR)(ID_FIELD + F_RECENTER + i), inst, NULL);
         SendMessageW(box, WM_SETFONT, (WPARAM)ui_font, FALSE);
@@ -2952,8 +2953,12 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             /* White while edited; otherwise the list reads as plain text. */
             if (code == EN_SETFOCUS || code == EN_KILLFOCUS)
                 InvalidateRect((HWND)lp, NULL, TRUE);
-            if (code == EN_KILLFOCUS)
+            if (code == EN_KILLFOCUS) {
+                /* Back to the start of its lines, if a long one scrolled it. */
+                SendMessageW((HWND)lp, EM_SETSEL, 0, 0);
+                SendMessageW((HWND)lp, EM_SCROLLCARET, 0, 0);
                 save_soon(1);
+            }
             return 0;
         }
         if (id >= ID_FIELD + F_YAW && id <= ID_FIELD + F_Z) {
