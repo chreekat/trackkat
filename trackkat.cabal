@@ -158,6 +158,19 @@ executable trackkat
   if (os(windows) && flag(icon))
     ld-options: icons/trackkat-icon.o
 
+-- Drives the window with a scripted pose, to work on it without a camera.
+executable fakegui
+  import:           shared
+  hs-source-dirs:   app/fakegui
+  main-is:          Main.hs
+  ghc-options:      -threaded
+  build-depends:
+    , base
+    , trackkat
+
+  if !os(windows)
+    buildable: False
+
 test-suite tests
   import:           shared
   type:             exitcode-stdio-1.0
