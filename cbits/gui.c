@@ -1,5 +1,5 @@
-/* trackkat's window and system tray icon, on a thread of their own with its
- * own message loop.
+/* trackkat's window and system tray icon, on a thread of their own: this
+ * file's (hts_gui_start), or one TrackKat.Gui runs (hts_gui_create).
  *
  * Haskell pushes state in with the hts_gui_* setters and polls what the user
  * asked for with hts_gui_take_actions, as with the hotkeys. The GUI thread
@@ -300,14 +300,14 @@ void hts_gui_checking(int checking)
 }
 
 /* The version shown in the title, the strip and the log window. Call before
- * hts_gui_start. */
+ * hts_gui_create. */
 void hts_gui_version(const wchar_t *text)
 {
     copy_text(version_text, 64, text);
 }
 
 /* Whether this copy can update itself, so Check for updates works. Call
- * before hts_gui_start. */
+ * before hts_gui_create. */
 void hts_gui_updatable(int can)
 {
     updatable = can;
@@ -457,10 +457,6 @@ static int icon_shown = -1;
 static wchar_t tip_shown[128];
 static unsigned long long log_shown; /* log characters put in the log box, counting all ever logged */
 static int scroll_pos; /* how far the window's content is scrolled up, in pixels */
-
-static volatile LONG gui_status; /* 0 starting, 1 running, 2 failed */
-static volatile LONG gui_error;
-static int show_at_start;
 
 static int S(int x) { return MulDiv(x, dpi, 96); }
 
@@ -3391,28 +3387,13 @@ static void click_away(const MSG *msg)
             SetFocus(main_hwnd);
 }
 
-static DWORD WINAPI gui_thread(LPVOID unused)
+/* Whether TrackKat.Gui's message loop is to leave a message to the windows'
+ * own handling (nonzero) rather than dispatch it. */
+int hts_gui_dialog_message(MSG *msg)
 {
-    (void)unused;
-    if (!create_windows()) {
-        InterlockedExchange(&gui_error, (LONG)GetLastError());
-        InterlockedExchange(&gui_status, 2);
-        return 0;
-    }
-    InterlockedExchange(&gui_status, 1);
-    if (show_at_start)
-        show_window();
-
-    MSG msg;
-    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        click_away(&msg);
-        /* Gives the windows Tab between controls, Enter to save and Esc to hide. */
-        if (IsDialogMessageW(main_hwnd, &msg) || IsDialogMessageW(log_hwnd, &msg))
-            continue;
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-    return 0;
+    click_away(msg);
+    /* Gives the windows Tab between controls, Enter to save and Esc to hide. */
+    return IsDialogMessageW(main_hwnd, msg) || IsDialogMessageW(log_hwnd, msg);
 }
 
 /* Remove the tray icon, which Windows otherwise leaves behind until the
@@ -3437,13 +3418,48 @@ static BOOL WINAPI console_closing(DWORD event)
     return FALSE;
 }
 
-/* Start the window and tray icon on a thread of their own, with the window
- * shown or not. Returns 0, or a Windows error code. */
-int hts_gui_start(int show)
+/* Make the window and tray icon on the calling thread, which must then run
+ * their message loop, with the window shown or not. Returns 0, or a Windows
+ * error code. */
+int hts_gui_create(int show)
 {
     SetProcessDPIAware();
-    show_at_start = show;
     SetConsoleCtrlHandler(console_closing, TRUE);
+    if (!create_windows())
+        return (int)GetLastError();
+    if (show)
+        show_window();
+    return 0;
+}
+
+static volatile LONG gui_status; /* 0 starting, 1 running, 2 failed */
+static volatile LONG gui_error;
+static int show_at_start;
+
+static DWORD WINAPI gui_thread(LPVOID unused)
+{
+    (void)unused;
+    int rc = hts_gui_create(show_at_start);
+    InterlockedExchange(&gui_error, (LONG)rc);
+    InterlockedExchange(&gui_status, rc ? 2 : 1);
+    if (rc)
+        return 0;
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (hts_gui_dialog_message(&msg))
+            continue;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    return 0;
+}
+
+/* Make the window and tray icon, and run them, on a thread of their own,
+ * with the window shown or not: the window in C (window = c). Returns 0, or
+ * a Windows error code. */
+int hts_gui_start(int show)
+{
+    show_at_start = show;
     HANDLE t = CreateThread(NULL, 0, gui_thread, NULL, 0, NULL);
     if (!t)
         return (int)GetLastError();

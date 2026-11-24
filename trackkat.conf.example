@@ -123,5 +123,9 @@ ignore lights = on
 # proven. tracker = old: track as trackkat did before it.
 tracker = old
 
+# window = haskell: try the window being rebuilt in Haskell, not yet
+# whole, from when trackkat next starts. window = c: the window in C.
+window = c
+
 # head view: what the window shows of your head: virtual, physical, or camera.
 head view = virtual

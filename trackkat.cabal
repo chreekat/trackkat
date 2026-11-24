@@ -108,6 +108,7 @@ library
       cbits/trackir.c
       cbits/windows.c
     include-dirs:    cbits
+    build-depends:   Win32 ^>=2.14.2
     extra-libraries: advapi32 bcrypt gdi32 hid ole32 shell32 user32 winhttp
 
 -- Simulated frames, for the tests: not part of trackkat itself.

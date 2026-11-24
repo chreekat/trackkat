@@ -8,6 +8,7 @@ module TrackKat.Config (
     Startup (..),
     HeadView (..),
     WhichTracker (..),
+    WhichWindow (..),
     defaultConfig,
     parseConfig,
     readSettings,
@@ -68,6 +69,7 @@ data Config = Config
     , startup :: Startup
     , lightMasking :: Masking
     , chosenTracker :: WhichTracker
+    , chosenWindow :: WhichWindow
     , headView :: HeadView
     }
     deriving (Eq, Show)
@@ -82,6 +84,11 @@ data HeadView = VirtualView | PhysicalView | CameraView
 -- hypothesis about a frame by one account (see Note [Two trackers] in
 -- "TrackKat.Trackers").
 data WhichTracker = OldTracker | NewTracker
+    deriving (Eq, Show)
+
+-- | Which window and tray icon trackkat shows: the one in C, or the one
+-- being rebuilt in Haskell.
+data WhichWindow = CWindow | HaskellWindow
     deriving (Eq, Show)
 
 -- | Whether an installed trackkat looks for, and fetches, newer versions.
@@ -139,8 +146,8 @@ clipModel (ClipShape _ m) = m
 -- gains tuned in DCS; strong smoothing; aiming that turns the view half as far
 -- again as the head, smoothed more strongly still; the headset clip
 -- trackkat was developed with, its post as it is now bent; trackkat's own
--- NPClient; still lights ignored; the old tracker; the head view as games
--- see it.
+-- NPClient; still lights ignored; the old tracker; the window in C; the head
+-- view as games see it.
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -173,6 +180,7 @@ defaultConfig =
         , startup = NoStartAtLogin
         , lightMasking = MaskLights
         , chosenTracker = OldTracker
+        , chosenWindow = CWindow
         , headView = VirtualView
         }
   where
@@ -299,6 +307,7 @@ setting (c, d@(Dials k a)) name value =
             "startup" -> (\st -> (c{startup = st}, d)) <$> parseStartup value
             "ignore lights" -> (\l -> (c{lightMasking = l}, d)) <$> parseMasking value
             "tracker" -> (\w -> (c{chosenTracker = w}, d)) <$> parseWhich value
+            "window" -> (\w -> (c{chosenWindow = w}, d)) <$> parseWindow value
             "head view" -> (\v -> (c{headView = v}, d)) <$> parseHeadView value
             _ -> Left ("unknown setting " ++ show name)
   where
@@ -450,6 +459,10 @@ renderConfig c =
         , "# proven. tracker = old: track as trackkat did before it."
         , "tracker = " ++ renderWhich (chosenTracker c)
         , ""
+        , "# window = haskell: try the window being rebuilt in Haskell, not yet"
+        , "# whole, from when trackkat next starts. window = c: the window in C."
+        , "window = " ++ renderWindow (chosenWindow c)
+        , ""
         , "# head view: what the window shows of your head: virtual, physical, or camera."
         , "head view = " ++ renderHeadView (headView c)
         ]
@@ -488,6 +501,7 @@ describeChanges old new = case [n ++ " = " ++ v | (n, v) <- settings new, lookup
                    , ("startup", renderStartup (startup c))
                    , ("ignore lights", renderMasking (lightMasking c))
                    , ("tracker", renderWhich (chosenTracker c))
+                   , ("window", renderWindow (chosenWindow c))
                    ]
     -- A smoothing's settings, by what its names begin with; turned off, its
     -- knobs do nothing, so they are no change.
@@ -548,6 +562,15 @@ parseWhich _ = Left "tracker is old or new"
 renderWhich :: WhichTracker -> String
 renderWhich OldTracker = "old"
 renderWhich NewTracker = "new"
+
+parseWindow :: String -> Either String WhichWindow
+parseWindow "c" = Right CWindow
+parseWindow "haskell" = Right HaskellWindow
+parseWindow _ = Left "window is c or haskell"
+
+renderWindow :: WhichWindow -> String
+renderWindow CWindow = "c"
+renderWindow HaskellWindow = "haskell"
 
 parseHeadView :: String -> Either String HeadView
 parseHeadView "virtual" = Right VirtualView

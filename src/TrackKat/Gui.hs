@@ -1,12 +1,12 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | trackkat's window and system tray icon: see cbits/gui.c. State is
--- pushed in with the @show@ functions, which never wait on the window, and
--- what the user asks for is polled with 'takeActions'.
+-- | trackkat's window and system tray icon: see cbits/gui.c. They run on a
+-- thread of their own; state is pushed in with the @show@ functions, which
+-- never wait on the window, and what the user asks for is polled with
+-- 'takeActions'.
 module TrackKat.Gui (
     WindowAtStart (..),
-    startGui,
-    stopGui,
+    withGui,
     quitProcess,
     showRunning,
     quitRunning,
@@ -43,16 +43,23 @@ module TrackKat.Gui (
     savedSettings,
 ) where
 
-import Control.Monad (forM_)
+import Control.Concurrent.Async (link, wait, withAsyncBound)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (bracket, finally)
+import Control.Monad (forM_, void, when)
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
 import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
 import Foreign.Ptr (Ptr, nullPtr)
+import Graphics.Win32.Message (wM_QUIT)
+import Graphics.Win32.Window (LPMSG, allocaMessage, dispatchMessage, getMessage, translateMessage)
+import Graphics.Win32.Window.PostMessage (postThreadMessage)
+import System.Win32.Thread (getCurrentThreadId)
 
 import TrackKat.CommandLine (WindowAtStart (..))
-import TrackKat.Config (KeyOrButton, keyFromCodes, renderKeyOrButton)
+import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOrButton)
 import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
@@ -62,6 +69,8 @@ import TrackKat.Response (Aiming (..), Trim (..))
 import TrackKat.Trackers (BlobRole (..))
 
 foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
+foreign import ccall safe "hts_gui_create" c_create :: CInt -> IO CInt
+foreign import ccall safe "hts_gui_dialog_message" c_dialog_message :: LPMSG -> IO CInt
 foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()
 foreign import ccall unsafe "hts_gui_quit" c_quit :: IO ()
 foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
@@ -92,16 +101,39 @@ foreign import ccall unsafe "hts_gui_settings_message" c_settings_message :: CWS
 foreign import ccall unsafe "hts_gui_set_setting" c_set_setting :: CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString -> CWString -> CInt -> IO CInt
 
--- | Start the window and tray icon on a thread of their own. Left is a
--- Windows error code.
-startGui :: WindowAtStart -> IO (Either Int ())
-startGui w = do
-    rc <- c_start (case w of WindowShown -> 1; WindowHidden -> 0)
-    pure (if rc == 0 then Right () else Left (fromIntegral rc))
+-- | Run the window and tray icon chosen alongside some work, which is told
+-- whether they started (Left is a Windows error code), and remove them when
+-- it ends.
+withGui :: WhichWindow -> WindowAtStart -> (Either Int () -> IO a) -> IO a
+withGui CWindow w work = bracket (c_start (shown w)) (const c_stop) (work . started)
+withGui HaskellWindow w work = do
+    made <- newEmptyMVar
+    withAsyncBound (runGui made) $ \gui -> do
+        link gui
+        (rc, thread) <- takeMVar made
+        work (started rc)
+            `finally` (c_stop >> when (rc == 0) (postThreadMessage thread wM_QUIT 0 0) >> wait gui)
+  where
+    -- Windows belong to the thread that made them, which alone gets their
+    -- messages: a bound thread, so it is always the same one.
+    runGui made = do
+        thread <- getCurrentThreadId
+        rc <- c_create (shown w)
+        putMVar made (rc, thread)
+        when (rc == 0) (allocaMessage messageLoop)
+    messageLoop msg =
+        getMessage msg Nothing >>= \more -> when more $ do
+            handled <- c_dialog_message msg
+            when (handled == 0) (translateMessage msg >> void (dispatchMessage msg))
+            messageLoop msg
 
--- | Remove the tray icon, which Windows otherwise leaves behind.
-stopGui :: IO ()
-stopGui = c_stop
+shown :: WindowAtStart -> CInt
+shown WindowShown = 1
+shown WindowHidden = 0
+
+started :: CInt -> Either Int ()
+started 0 = Right ()
+started rc = Left (fromIntegral rc)
 
 -- | Remove the tray icon and end the process at once, whatever other
 -- threads are doing.

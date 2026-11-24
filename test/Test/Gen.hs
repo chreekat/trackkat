@@ -643,6 +643,7 @@ genConfig = do
         <*> elements [StartAtLogin, NoStartAtLogin]
         <*> elements [MaskLights, NoMasking]
         <*> elements [OldTracker, NewTracker]
+        <*> elements [CWindow, HaskellWindow]
         <*> elements [VirtualView, PhysicalView, CameraView]
   where
     bindings = scale (`div` 10) (listOf genBinding)
@@ -684,6 +685,7 @@ shrinkConfig =
         , asDefault startup (\c x -> c{startup = x})
         , asDefault lightMasking (\c x -> c{lightMasking = x})
         , asDefault chosenTracker (\c x -> c{chosenTracker = x})
+        , asDefault chosenWindow (\c x -> c{chosenWindow = x})
         , asDefault headView (\c x -> c{headView = x})
         ]
   where

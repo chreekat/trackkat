@@ -157,6 +157,9 @@ tests = group "Config" $ do
     check "the tracker is the old one unless asked for" $
         map (fmap chosenTracker . parseConfig) ["", "tracker = old", "tracker = new"] == [Right OldTracker, Right OldTracker, Right NewTracker]
     check "bad tracker" $ parseConfig "tracker = newest" == Left "line 1: tracker is old or new"
+    check "the window is the C one unless asked for" $
+        map (fmap chosenWindow . parseConfig) ["", "window = c", "window = haskell"] == [Right CWindow, Right CWindow, Right HaskellWindow]
+    check "bad window" $ parseConfig "window = rust" == Left "line 1: window is c or haskell"
     check "bad head view" $ parseConfig "head view = side" == Left "line 1: head view is virtual, physical, or camera"
     let withCamera = defaultConfig{headView = CameraView}
     check "head view round-trips" $ parseConfig (renderConfig withCamera) == Right withCamera

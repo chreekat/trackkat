@@ -104,14 +104,16 @@ run start window recorded after = do
         exitFailure
     showVersion (maybe "development build" describeVersion version)
     showUpdateButton (maybe UpdateButtonDisabled (const UpdateButtonEnabled) (selfUpdating place))
-    bracket_ (startGui window >>= either (\e -> say ("Can't show a window or tray icon (error " ++ show e ++ ").")) pure) stopGui $ do
-        say $ case (version, place) of
-            (Nothing, _) -> "trackkat, a development build, which can't be installed or updated, running from " ++ exeDir paths
-            (Just v, Installed _) -> "trackkat " ++ describeVersion v ++ ", installed in " ++ exeDir paths
-            (Just v, Portable) -> "trackkat " ++ describeVersion v ++ ", running from " ++ exeDir paths
-        moveSettings say paths
-        let settingsFile = configFile paths
-        (config, settings, stamp) <- loadConfig settingsFile
+    -- The window shows what is said before it starts.
+    say $ case (version, place) of
+        (Nothing, _) -> "trackkat, a development build, which can't be installed or updated, running from " ++ exeDir paths
+        (Just v, Installed _) -> "trackkat " ++ describeVersion v ++ ", installed in " ++ exeDir paths
+        (Just v, Portable) -> "trackkat " ++ describeVersion v ++ ", running from " ++ exeDir paths
+    moveSettings say paths
+    let settingsFile = configFile paths
+    (config, settings, stamp) <- loadConfig settingsFile
+    withGui (chosenWindow config) window $ \started -> do
+        either (\e -> say ("Can't show a window or tray icon (error " ++ show e ++ ").")) pure started
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
         let gameFile = settingsDir paths </> "trackkat.game"
         before <- servedBefore gameFile

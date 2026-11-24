@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 -- | fakegui: drive trackkat's window and tray icon ("TrackKat.Gui") with a
 -- scripted pose and status, for working on the GUI without a camera. Prints
 -- what the user asks for. Keys chosen for the bindings are all Ctrl+F7. A
@@ -7,7 +9,8 @@
 -- for updates finds a newer version the second time, which Restart to
 -- update takes back.
 --
--- usage: fakegui [seconds]
+-- usage: fakegui [c | haskell] [seconds]: the window in C by default, as
+-- trackkat's settings have it.
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
@@ -17,7 +20,7 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 
-import TrackKat.Config (KeyOrButton (..), Modifier (..))
+import TrackKat.Config (KeyOrButton (..), Modifier (..), WhichWindow (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Gui
@@ -58,9 +61,22 @@ data Script = Script
 
 main :: IO ()
 main = do
-    seconds <- getArgs >>= \args -> pure (case args of [s] -> read s; _ -> 30 :: Int)
+    (which, seconds) <-
+        getArgs >>= \case
+            "haskell" : rest -> pure (HaskellWindow, secondsIn rest)
+            "c" : rest -> pure (CWindow, secondsIn rest)
+            rest -> pure (CWindow, secondsIn rest)
     showUpdateButton UpdateButtonEnabled
-    startGui WindowShown >>= either (\e -> hPutStrLn stderr ("could not start the GUI (error " ++ show e ++ ")") >> exitFailure) pure
+    withGui which WindowShown $ \started -> do
+        either (\e -> hPutStrLn stderr ("could not start the GUI (error " ++ show e ++ ")") >> exitFailure) pure started
+        script seconds
+
+secondsIn :: [String] -> Int
+secondsIn [s] = read s
+secondsIn _ = 30
+
+script :: Int -> IO ()
+script seconds = do
     forM_ settings (uncurry showSetting)
     guiLog "Games will load NPClient from C:\\Games\\trackkat"
     guiLog "Recenter: F12, Throttle - HOTAS Warthog button 4 double   Pause: Ctrl+F9   Trim: Throttle - HOTAS Warthog button 4   Aim: Throttle - HOTAS Warthog button 4 hold"
@@ -74,7 +90,6 @@ main = do
     showClip (Just (V3 38 92 71, V3 (-32) 92 71, V3 3 148.2 (-16.9)))
     showCamera Tracking
     run (seconds * 60) 0 (Script False NotAiming 0 0)
-    stopGui
 
 run :: Int -> Int -> Script -> IO ()
 run frames i s
