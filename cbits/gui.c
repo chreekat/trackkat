@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <math.h>
 #include <string.h>
 #include <wchar.h>
@@ -1896,8 +1897,11 @@ static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 
 /* Save the settings after the given number of milliseconds without further
  * changes, so dragging a slider saves once, when it stops. */
+static int save_pending; /* a change in the window, not yet saved */
+
 static void save_soon(UINT ms)
 {
+    save_pending = 1;
     SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL);
 }
 
@@ -2030,6 +2034,7 @@ static void show_field(int i, const wchar_t *value)
 static void save_settings(void)
 {
     wchar_t values[F_COUNT][FIELD_MAX];
+    save_pending = 0;
     head_view_saved = head_view;
     for (int i = 0; i < F_COUNT; i++)
         if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS ||
@@ -2820,21 +2825,25 @@ static void build_window(void)
 static wchar_t settings_path[MAX_PATH];
 
 /* Open the settings file as Windows opens a file of its kind; with nothing
- * set to open it, ask which program should, as Explorer does; and failing
- * that, in Notepad. Shell extensions may need COM, so it is started on this
- * thread first. */
+ * set to open it, ask which program should, as Explorer does, and if the
+ * user cancels that, leave it; and failing those, in Notepad. Shell
+ * extensions may need COM, so it is started on this thread first. */
 static void open_settings_file(void)
 {
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     INT_PTR r = (INT_PTR)ShellExecuteW(main_hwnd, L"open", settings_path, NULL, NULL, SW_SHOWNORMAL);
-    if (r == SE_ERR_NOASSOC)
-        r = (INT_PTR)ShellExecuteW(main_hwnd, L"openas", settings_path, NULL, NULL, SW_SHOWNORMAL);
-    if (r <= 32) {
-        wchar_t quoted[MAX_PATH + 2];
-        _snwprintf(quoted, MAX_PATH + 2, L"\"%ls\"", settings_path);
-        quoted[MAX_PATH + 1] = 0;
-        ShellExecuteW(main_hwnd, NULL, L"notepad.exe", quoted, NULL, SW_SHOWNORMAL);
+    if (r > 32)
+        return;
+    if (r == SE_ERR_NOASSOC) {
+        OPENASINFO ask = {settings_path, NULL, OAIF_ALLOW_REGISTRATION | OAIF_EXEC};
+        HRESULT h = SHOpenWithDialog(main_hwnd, &ask);
+        if (SUCCEEDED(h) || h == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+            return;
     }
+    wchar_t quoted[MAX_PATH + 2];
+    _snwprintf(quoted, MAX_PATH + 2, L"\"%ls\"", settings_path);
+    quoted[MAX_PATH + 1] = 0;
+    ShellExecuteW(main_hwnd, NULL, L"notepad.exe", quoted, NULL, SW_SHOWNORMAL);
 }
 
 /* Open the settings file at the given path in an editor, on the GUI thread,
@@ -3029,9 +3038,13 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             show_log();
             return 0;
         case ID_OPEN_SETTINGS:
-            /* Saved first, so the editor shows what the window does. */
-            KillTimer(main_hwnd, ID_AUTOSAVE);
-            save_settings();
+            /* A change waiting to be saved is saved first, so the editor
+             * shows it. Nothing else is: the window may not yet show an edit
+             * made to the file itself, and saving it would undo that. */
+            if (save_pending) {
+                KillTimer(main_hwnd, ID_AUTOSAVE);
+                save_settings();
+            }
             InterlockedOr(&actions, ACT_OPEN_SETTINGS);
             return 0;
         case ID_FIELD + F_LEAN:
