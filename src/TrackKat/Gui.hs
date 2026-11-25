@@ -11,6 +11,7 @@ module TrackKat.Gui (
     showRunning,
     quitRunning,
     showVersion,
+    openSettingsFile,
     UpdateButton (..),
     showUpdateButton,
     UpdateCheck (..),
@@ -76,6 +77,7 @@ foreign import ccall unsafe "hts_gui_quit" c_quit :: IO ()
 foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
 foreign import ccall unsafe "hts_gui_quit_running" c_quit_running :: IO CInt
 foreign import ccall unsafe "hts_gui_version" c_version :: CWString -> IO ()
+foreign import ccall unsafe "hts_gui_open_settings" c_open_settings :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_updatable" c_updatable :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_checking" c_checking :: CInt -> IO ()
 foreign import ccall unsafe "hts_gui_update_status" c_update_status :: CInt -> CWString -> IO ()
@@ -154,6 +156,11 @@ quitRunning = (\pid -> if pid == 0 then Nothing else Just (fromIntegral pid)) <$
 showVersion :: String -> IO ()
 showVersion v = withCWString v c_version
 
+-- | Open the settings file in an editor: the program Windows opens such a
+-- file with, the one the user picks if there is none, or else Notepad.
+openSettingsFile :: FilePath -> IO ()
+openSettingsFile path = withCWString path c_open_settings
+
 -- | Whether the window's Check for updates button works: only for a copy
 -- that updates itself.
 data UpdateButton = UpdateButtonEnabled | UpdateButtonDisabled
@@ -206,6 +213,9 @@ data Action
       CheckForUpdatesAction
     | -- | the Save button: read the settings with 'savedSettings'
       SaveAction
+    | -- | the Edit settings file button, pressed after the window's
+      -- settings were handed over to save ('SaveAction')
+      OpenSettingsAction
     | -- | a key pressed to add to a binding list, if it has a name
       KeyChosen Hotkey (Maybe KeyOrButton)
     deriving (Eq, Show)
@@ -215,7 +225,7 @@ takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
     keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8), (AimKey, 13)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11), (AimAction, 12)], testBit bits b] ++ keys)
+    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11), (AimAction, 12), (OpenSettingsAction, 14)], testBit bits b] ++ keys)
   where
     chosen k = do
         code <- maybe (pure 0) (fmap fromIntegral . c_chosen_key) (list k)

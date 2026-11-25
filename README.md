@@ -92,7 +92,8 @@ see [one button, several things](docs/details.md#one-button-several-things).
 ## Settings
 
 Change settings in the window, which saves them as you go, or edit
-`trackkat.conf`, in `%APPDATA%\trackkat`, in any text editor; it explains
+`trackkat.conf`, in `%APPDATA%\trackkat`, in any text editor (**Edit
+settings file**, beside **Quit trackkat**, opens it in yours); it explains
 every setting, as [`trackkat.conf.example`](trackkat.conf.example) shows.
 Either way they apply at once, while you play.
 

@@ -158,6 +158,9 @@ act view a s = case a of
         addBinding k (Key [Ctrl] "F7")
         pure s
     OfferAction -> showOffer Nothing >> pure s
+    OpenSettingsAction -> do
+        putStrLn "  open the settings file"
+        pure s
     _ -> pure s
 
 -- | The reflectors, wider than tall, move as the head turns; out of sight,

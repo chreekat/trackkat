@@ -419,6 +419,7 @@ controls start recorded path sh = go 0 Busy
     act OfferAction = pure ()
     act CheckForUpdatesAction = void (tryPutMVar (shCheckAsked sh) ())
     act SaveAction = saveSettings path
+    act OpenSettingsAction = openSettingsFile path
     act (KeyChosen k (Just b)) = addBinding k b
     act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
 

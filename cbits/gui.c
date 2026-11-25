@@ -32,6 +32,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_CHECK_UPDATES 0x800
 #define ACT_AIM 0x1000
 #define ACT_KEY_AIM 0x2000
+#define ACT_OPEN_SETTINGS 0x4000 /* after saving what the window holds */
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
@@ -385,6 +386,7 @@ void hts_gui_add_binding(int which, const wchar_t *binding)
 #define WM_APP_SHOW (WM_APP + 2)
 #define WM_APP_CAPTURE_MOUSE (WM_APP + 3) /* to an Add button, once its click is done */
 #define WM_APP_QUIT (WM_APP + 4)          /* from another trackkat, uninstalling */
+#define WM_APP_OPEN_SETTINGS (WM_APP + 5) /* once the settings are saved */
 #define TIMER_ID 1
 #define TIMER_MS 33
 #define COVER_AWAY_MS 4000 /* the calibration cover closes once the mouse has been away from it this long */
@@ -409,6 +411,7 @@ enum {
     ID_HEAD_VIEW,
     ID_AIM,
     ID_ADD_AIM,
+    ID_OPEN_SETTINGS,
     ID_FIELD = 200, /* + field index */
     ID_MENU_OPEN = 300,
     ID_MENU_RECENTER,
@@ -2798,6 +2801,9 @@ static void build_window(void)
         control(L"BUTTON", L"Anti-cheat mode", WS_TABSTOP | BS_AUTOCHECKBOX, 284, MODES_Y + 12, 120, 22,
                 ID_FIELD + F_NPCLIENT),
         L"For anti-cheat that blocks trackkat's NPClient: games load NaturalPoint's");
+    tip(control(L"BUTTON", L"Edit settings file", WS_TABSTOP | BS_PUSHBUTTON, 440, MODES_Y + 10, 130, 26,
+                ID_OPEN_SETTINGS),
+        L"Open trackkat.conf in a text editor; trackkat applies it each time it is saved");
     tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 590, MODES_Y + 10, 116, 26, ID_QUIT),
         L"Stop tracking and quit; closing the window instead keeps trackkat in the tray");
 
@@ -2807,6 +2813,37 @@ static void build_window(void)
     place_bindings_tip();
     group(L"Response", 10, RESP_Y - 6, 700, RESP_H + 6);
     control(L"STATIC", L"", SS_ETCHEDFRAME, 10, LOG_Y, 700, 36, 0);
+}
+
+/* ---- The settings file ---------------------------------------------------- */
+
+static wchar_t settings_path[MAX_PATH];
+
+/* Open the settings file as Windows opens a file of its kind; with nothing
+ * set to open it, ask which program should, as Explorer does; and failing
+ * that, in Notepad. Shell extensions may need COM, so it is started on this
+ * thread first. */
+static void open_settings_file(void)
+{
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    INT_PTR r = (INT_PTR)ShellExecuteW(main_hwnd, L"open", settings_path, NULL, NULL, SW_SHOWNORMAL);
+    if (r == SE_ERR_NOASSOC)
+        r = (INT_PTR)ShellExecuteW(main_hwnd, L"openas", settings_path, NULL, NULL, SW_SHOWNORMAL);
+    if (r <= 32) {
+        wchar_t quoted[MAX_PATH + 2];
+        _snwprintf(quoted, MAX_PATH + 2, L"\"%ls\"", settings_path);
+        quoted[MAX_PATH + 1] = 0;
+        ShellExecuteW(main_hwnd, NULL, L"notepad.exe", quoted, NULL, SW_SHOWNORMAL);
+    }
+}
+
+/* Open the settings file at the given path in an editor, on the GUI thread,
+ * once what the window held is saved. */
+void hts_gui_open_settings(const wchar_t *path)
+{
+    copy_text(settings_path, MAX_PATH, path);
+    if (tray_hwnd)
+        PostMessageW(tray_hwnd, WM_APP_OPEN_SETTINGS, 0, 0);
 }
 
 /* ---- The log window ------------------------------------------------------- */
@@ -2990,6 +3027,12 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_OPEN_LOG:
             show_log();
+            return 0;
+        case ID_OPEN_SETTINGS:
+            /* Saved first, so the editor shows what the window does. */
+            KillTimer(main_hwnd, ID_AUTOSAVE);
+            save_settings();
+            InterlockedOr(&actions, ACT_OPEN_SETTINGS);
             return 0;
         case ID_FIELD + F_LEAN:
             copy_text(field_text[F_LEAN], FIELD_MAX,
@@ -3180,6 +3223,9 @@ static LRESULT CALLBACK tray_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_QUIT:
         InterlockedOr(&actions, ACT_QUIT);
+        return 0;
+    case WM_APP_OPEN_SETTINGS:
+        open_settings_file();
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
