@@ -1,5 +1,6 @@
 /* trackkat's window and system tray icon, on a thread of their own: this
- * file's (hts_gui_start), or one TrackKat.Gui runs (hts_gui_create).
+ * file's (hts_gui_start), or one TrackKat.Gui runs (hts_gui_create), with
+ * the tray icon TrackKat.Gui.Tray's.
  *
  * Haskell pushes state in with the hts_gui_* setters and polls what the user
  * asked for with hts_gui_take_actions, as with the hotkeys. The GUI thread
@@ -455,6 +456,7 @@ static int dpi = 96;
 static HFONT ui_font, mono_font, small_font, bold_font, caps_font, tiny_font;
 static HBRUSH white_brush;
 static UINT taskbar_created;
+static int own_tray; /* whether the tray icon is this file's */
 static int tray_added;
 static NOTIFYICONDATAW nid;
 static int icon_shown = -1;
@@ -2560,7 +2562,6 @@ static void refresh(void)
     if (strip_changed)
         InvalidateRect(strip_hwnd, NULL, FALSE);
     drain_log();
-    update_tray(0);
     watch_cover();
     if (IsWindowVisible(main_hwnd) && !IsIconic(main_hwnd)) {
         InvalidateRect(live_hwnd, NULL, FALSE);
@@ -3224,6 +3225,7 @@ static LRESULT CALLBACK tray_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_TIMER:
         refresh();
+        update_tray(0);
         return 0;
     case WM_APP_TRAY:
         if (lp == WM_LBUTTONUP || lp == WM_LBUTTONDBLCLK)
@@ -3330,7 +3332,9 @@ static void make_fonts(void)
     white_brush = CreateSolidBrush(RGB(255, 255, 255));
 }
 
-static int create_windows(void)
+/* Make the windows, with the hidden one the tray icon talks to: the one
+ * given, or this file's. */
+static int create_windows(HWND tray)
 {
     inst = GetModuleHandleW(NULL);
     HDC screen = GetDC(NULL);
@@ -3344,10 +3348,26 @@ static int create_windows(void)
     memset(&wc, 0, sizeof wc);
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.lpfnWndProc = tray_proc;
-    wc.lpszClassName = L"trackkat";
-    if (!RegisterClassW(&wc))
-        return 0;
+    if (!tray) {
+        wc.lpfnWndProc = tray_proc;
+        wc.lpszClassName = L"trackkat";
+        if (!RegisterClassW(&wc))
+            return 0;
+        /* Hidden, but top-level, so a second trackkat can find it and
+         * Explorer's TaskbarCreated reaches it. */
+        tray = CreateWindowExW(0, L"trackkat", L"trackkat", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, inst, NULL);
+        if (!tray)
+            return 0;
+        taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+        memset(&nid, 0, sizeof nid);
+        nid.cbSize = sizeof nid;
+        nid.hWnd = tray;
+        nid.uID = 1;
+        nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+        nid.uCallbackMessage = WM_APP_TRAY;
+        own_tray = 1;
+    }
+    tray_hwnd = tray;
     wc.lpfnWndProc = main_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.hIcon = resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXICON));
@@ -3373,11 +3393,6 @@ static int create_windows(void)
     if (!RegisterClassW(&wc))
         return 0;
 
-    /* Hidden, but top-level, so a second trackkat can find it and Explorer's
-     * TaskbarCreated reaches it. */
-    tray_hwnd = CreateWindowExW(0, L"trackkat", L"trackkat", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, inst, NULL);
-    if (!tray_hwnd)
-        return 0;
     RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     /* No taller than the screen; it scrolls instead. */
@@ -3409,15 +3424,9 @@ static int create_windows(void)
     SendMessageW(log_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
     build_log_window();
 
-    taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
-    memset(&nid, 0, sizeof nid);
-    nid.cbSize = sizeof nid;
-    nid.hWnd = tray_hwnd;
-    nid.uID = 1;
-    nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-    nid.uCallbackMessage = WM_APP_TRAY;
     refresh();
-    update_tray(1);
+    if (own_tray)
+        update_tray(1);
     SetTimer(tray_hwnd, TIMER_ID, TIMER_MS, NULL);
     return 1;
 }
@@ -3455,6 +3464,36 @@ int hts_gui_dialog_message(MSG *msg)
     return IsDialogMessageW(main_hwnd, msg) || IsDialogMessageW(log_hwnd, msg);
 }
 
+/* For the tray icon TrackKat.Gui.Tray shows, on the GUI thread. */
+
+/* Bring the window up to date with what Haskell pushed: on each WM_TIMER. */
+void hts_gui_refresh(void) { refresh(); }
+
+void hts_gui_show(void) { show_window(); }
+
+/* Ask for something, as the window does: ACT_ bits. */
+void hts_gui_ask(int act) { InterlockedOr(&actions, act); }
+
+/* On WM_APP_OPEN_SETTINGS. */
+void hts_gui_open_settings_now(void) { open_settings_file(); }
+
+/* Whether the tray icon is removed for good. */
+int hts_gui_stopping(void) { return InterlockedCompareExchange(&stopping, 0, 0); }
+
+/* What the last refresh saw, for the icon: the camera as hts_gui_camera
+ * takes it and why it is down, whether the clip is out of sight, games,
+ * whether paused, and the tray's item for an offer; texts of TEXT_MAX and 128
+ * characters. */
+void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *games, int *paused, wchar_t *offer)
+{
+    *camera = seen.camera;
+    copy_text(camera_text, TEXT_MAX, seen.camera_text);
+    *clip_lost = seen.blobs >= 0;
+    *games = seen.games;
+    *paused = seen.paused;
+    copy_text(offer, 128, seen.offer_tray);
+}
+
 /* Remove the tray icon, which Windows otherwise leaves behind until the
  * mouse passes over it. */
 void hts_gui_stop(void)
@@ -3477,14 +3516,16 @@ static BOOL WINAPI console_closing(DWORD event)
     return FALSE;
 }
 
-/* Make the window and tray icon on the calling thread, which must then run
- * their message loop, with the window shown or not. Returns 0, or a Windows
- * error code. */
-int hts_gui_create(int show)
+/* Make the window on the calling thread, which must then run its message
+ * loop, with it shown or not, and with the hidden window the tray icon talks
+ * to: one the thread made (a top-level window of class "trackkat", uID 1 its
+ * icon's, sent this file's WM_APP_ messages and the timer's WM_TIMER), or
+ * NULL for this file's. Returns 0, or a Windows error code. */
+int hts_gui_create(int show, HWND tray)
 {
     SetProcessDPIAware();
     SetConsoleCtrlHandler(console_closing, TRUE);
-    if (!create_windows())
+    if (!create_windows(tray))
         return (int)GetLastError();
     if (show)
         show_window();
@@ -3498,7 +3539,7 @@ static int show_at_start;
 static DWORD WINAPI gui_thread(LPVOID unused)
 {
     (void)unused;
-    int rc = hts_gui_create(show_at_start);
+    int rc = hts_gui_create(show_at_start, NULL);
     InterlockedExchange(&gui_error, (LONG)rc);
     InterlockedExchange(&gui_status, rc ? 2 : 1);
     if (rc)

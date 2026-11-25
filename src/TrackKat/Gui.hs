@@ -48,12 +48,13 @@ import Control.Concurrent.Async (link, wait, withAsyncBound)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket, finally)
 import Control.Monad (forM_, void, when)
-import Data.Bits (shiftR, testBit, (.&.))
+import Data.Bits (shiftL, shiftR, testBit, (.&.))
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
 import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
 import Foreign.Ptr (Ptr, nullPtr)
+import Graphics.Win32.GDI.Types (HWND)
 import Graphics.Win32.Message (wM_QUIT)
 import Graphics.Win32.Window (LPMSG, allocaMessage, dispatchMessage, getMessage, translateMessage)
 import Graphics.Win32.Window.PostMessage (postThreadMessage)
@@ -64,13 +65,17 @@ import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOr
 import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
+import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..), Trim (..))
 import TrackKat.Trackers (BlobRole (..))
+import TrackKat.Tray (TrayChoice (..))
 
 foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
-foreign import ccall safe "hts_gui_create" c_create :: CInt -> IO CInt
+foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> IO CInt
+foreign import ccall safe "hts_gui_show" c_show :: IO ()
+foreign import ccall unsafe "hts_gui_ask" c_ask :: CInt -> IO ()
 foreign import ccall safe "hts_gui_dialog_message" c_dialog_message :: LPMSG -> IO CInt
 foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()
 foreign import ccall unsafe "hts_gui_quit" c_quit :: IO ()
@@ -107,7 +112,7 @@ foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString 
 -- whether they started (Left is a Windows error code), and remove them when
 -- it ends.
 withGui :: WhichWindow -> WindowAtStart -> (Either Int () -> IO a) -> IO a
-withGui CWindow w work = bracket (c_start (shown w)) (const c_stop) (work . started)
+withGui CWindow w work = bracket (c_start (windowCode w)) (const c_stop) (work . started)
 withGui HaskellWindow w work = do
     made <- newEmptyMVar
     withAsyncBound (runGui made) $ \gui -> do
@@ -120,7 +125,7 @@ withGui HaskellWindow w work = do
     -- messages: a bound thread, so it is always the same one.
     runGui made = do
         thread <- getCurrentThreadId
-        rc <- c_create (shown w)
+        rc <- makeTray choose >>= either (pure . fromIntegral) (c_create (windowCode w))
         putMVar made (rc, thread)
         when (rc == 0) (allocaMessage messageLoop)
     messageLoop msg =
@@ -129,9 +134,23 @@ withGui HaskellWindow w work = do
             when (handled == 0) (translateMessage msg >> void (dispatchMessage msg))
             messageLoop msg
 
-shown :: WindowAtStart -> CInt
-shown WindowShown = 1
-shown WindowHidden = 0
+-- | What the user chose from the tray icon or its menu, or another trackkat
+-- asked for.
+choose :: TrayChoice -> IO ()
+choose OpenChoice = c_show
+choose RecenterChoice = ask RecenterAction
+choose PauseChoice = ask PauseAction
+choose TrimChoice = ask TrimAction
+choose OfferChoice = ask OfferAction
+choose QuitChoice = ask QuitAction
+
+-- | Ask for something, as the window does, for 'takeActions'.
+ask :: Action -> IO ()
+ask a = forM_ (lookup a actionBits) (c_ask . shiftL 1)
+
+windowCode :: WindowAtStart -> CInt
+windowCode WindowShown = 1
+windowCode WindowHidden = 0
 
 started :: CInt -> Either Int ()
 started 0 = Right ()
@@ -225,11 +244,27 @@ takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
     keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8), (AimKey, 13)], testBit bits b]
-    pure ([a | (a, b) <- [(RecenterAction, 0), (PauseAction, 1), (CalibrateAction, 2), (QuitAction, 3), (SaveAction, 4), (TrimAction, 7), (ClearCalibrationAction, 9), (OfferAction, 10), (CheckForUpdatesAction, 11), (AimAction, 12), (OpenSettingsAction, 14)], testBit bits b] ++ keys)
+    pure ([a | (a, b) <- actionBits, testBit bits b] ++ keys)
   where
     chosen k = do
         code <- maybe (pure 0) (fmap fromIntegral . c_chosen_key) (list k)
         pure (KeyChosen k (keyFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
+
+-- | As cbits/gui.c's ACT_ bits.
+actionBits :: [(Action, Int)]
+actionBits =
+    [ (RecenterAction, 0)
+    , (PauseAction, 1)
+    , (CalibrateAction, 2)
+    , (QuitAction, 3)
+    , (SaveAction, 4)
+    , (TrimAction, 7)
+    , (ClearCalibrationAction, 9)
+    , (OfferAction, 10)
+    , (CheckForUpdatesAction, 11)
+    , (AimAction, 12)
+    , (OpenSettingsAction, 14)
+    ]
 
 -- | The binding list waiting for a key or joystick button to add, if any.
 capturing :: IO (Maybe Hotkey)
