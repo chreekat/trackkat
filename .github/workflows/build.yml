@@ -135,28 +135,15 @@ jobs:
           Copy-Item NPClient.dll, NPClient64.dll, npgame.exe, trackdemo.exe dist\
           Copy-Item "$env:USB_PREFIX\bin\libusb-1.0.dll" dist\
           Copy-Item README.md dist\
-          # The icon, for Explorer and trackkat's window.
-          $objdump = Join-Path "$env:USB_PREFIX" "bin\objdump.exe"
-          if (-not (& $objdump -h dist\trackkat.exe | Select-String '\.rsrc')) { "::error::trackkat.exe has no icon"; exit 1 }
-          # Installing copies, and updates unpack, the files trackkat names.
-          $listed = & dist\trackkat.exe --list-files | Sort-Object
-          $packed = Get-ChildItem dist -Name | Sort-Object
-          $diff = Compare-Object $listed $packed
-          if ($diff) { "::error::dist doesn't hold the files trackkat --list-files names: $($diff | Out-String)"; exit 1 }
+          pwsh -NoProfile -File tools/check-dist.ps1 dist "$env:USB_PREFIX\bin\objdump.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # trackkat.exe is a GUI program, so it never opens a console window;
-      # tirprobe is a console program. Started with no console, trackkat
-      # prints nowhere, without failing; started from a terminal, it prints
-      # to that terminal's console, which a hidden pwsh here reads back.
+      # Started with no console, trackkat prints nowhere, without failing;
+      # started from a terminal, it prints to that terminal's console, which
+      # a hidden pwsh here reads back.
       - name: Check trackkat opens no console, and prints to a terminal
         shell: pwsh
         run: |
-          foreach ($t in @(@{ exe = "trackkat.exe"; subsystem = 2 }, @{ exe = "tirprobe.exe"; subsystem = 3 })) {
-            $bytes = [IO.File]::ReadAllBytes("dist\$($t.exe)")
-            $subsystem = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 92)
-            "$($t.exe): PE subsystem $subsystem"
-            if ($subsystem -ne $t.subsystem) { "::error::$($t.exe) has PE subsystem $subsystem, not $($t.subsystem)"; exit 1 }
-          }
           $exe = (Resolve-Path dist\trackkat.exe).Path
           # A program that doesn't finish may be showing a message box: say what it says.
           Add-Type -TypeDefinition @'
@@ -244,6 +231,20 @@ jobs:
           $want = Get-ChildItem dist -Name | Sort-Object
           $got = Get-ChildItem signed -Name | Sort-Object
           if (Compare-Object $want $got) { "::error::SignPath returned other files: $got"; exit 1 }
+          # Each program and DLL is ours, signed, or libusb's, as built.
+          foreach ($f in $got) {
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path "signed\$f").Path)
+            $pe = $bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A
+            if ($pe -and $f -ne "libusb-1.0.dll") {
+              $sig = Get-AuthenticodeSignature "signed\$f"
+              "${f}: $($sig.Status), $($sig.SignerCertificate.Subject)"
+              if ($sig.Status -ne 'Valid') { "::error::SignPath returned $f $($sig.Status): $($sig.StatusMessage)"; exit 1 }
+            } elseif ((Get-FileHash "signed\$f").Hash -ne (Get-FileHash "dist\$f").Hash) {
+              "::error::SignPath changed $f"; exit 1
+            }
+          }
+          pwsh -NoProfile -File tools/check-dist.ps1 signed "$env:USB_PREFIX\bin\objdump.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item -Recurse dist
           Rename-Item signed dist
 
