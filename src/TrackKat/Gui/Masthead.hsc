@@ -7,18 +7,15 @@ module TrackKat.Gui.Masthead (registerMasthead) where
 #include <windows.h>
 
 import Control.Monad (when)
-import Foreign.C.String (CWString, newCWString, peekCWString)
-import Foreign.C.Types (CInt (..), CIntPtr (..))
-import Foreign.Marshal.Alloc (alloca, allocaBytes)
+import Foreign.C.String (CWString, peekCWString)
+import Foreign.C.Types (CInt (..))
+import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray)
-import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (FunPtr, Ptr, castPtr, ptrToIntPtr, wordPtrToPtr)
-import Foreign.Storable (peek, pokeByteOff)
+import Foreign.Ptr (Ptr, ptrToIntPtr, wordPtrToPtr)
+import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HDC, HWND)
-import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect, getParent, sendMessage)
-import System.Win32.DLL (getModuleHandle)
-import System.Win32.Types (ATOM, HANDLE, getLastError)
+import System.Win32.Types (HANDLE)
 
 import TrackKat.Display (UpdateCheck (..), UpdateStatus (..))
 import TrackKat.Gui.Paint
@@ -26,34 +23,17 @@ import TrackKat.UI.Masthead
 
 foreign import ccall unsafe "hts_gui_masthead_state"
     c_masthead_state :: CWString -> CWString -> Ptr CInt -> CWString -> Ptr CInt -> IO ()
-foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr () -> IO ATOM
 foreign import ccall unsafe "windows.h CreateSolidBrush" c_CreateSolidBrush :: Colour -> IO HANDLE
-foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
 
--- | Register the masthead's window class, which cbits/gui.c's
--- hts_gui_create then makes it of rather than registering its own; reports
--- what fails in it. Left is a Windows error code.
+-- | Register the masthead's window class, reporting what fails in it.
 registerMasthead :: (String -> IO ()) -> IO (Either Int ())
 registerMasthead report = do
-    inst <- getModuleHandle Nothing
-    cursor <- loadCursor Nothing iDC_ARROW
     -- The brushes behind its buttons' rounded corners, for the life of the
     -- process.
     quiet <- c_CreateSolidBrush stripColour
     offering <- c_CreateSolidBrush offerColour
-    proc <- mkProc (guarded report "The masthead" (mastheadProc quiet offering))
-    -- As cbits/gui.c's build_window makes it; never freed.
-    name <- newCWString "trackkat_strip"
-    atom <- allocaBytes size $ \p -> do
-        fillBytes p 0 size
-        #{poke WNDCLASSW, lpfnWndProc} p proc
-        #{poke WNDCLASSW, hInstance} p inst
-        #{poke WNDCLASSW, hCursor} p cursor
-        #{poke WNDCLASSW, lpszClassName} p name
-        c_RegisterClass (castPtr p)
-    if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
-  where
-    size = #{size WNDCLASSW}
+    -- As cbits/gui.c's build_window makes it.
+    registerPart report "The masthead" "trackkat_strip" (mastheadProc quiet offering)
 
 mastheadProc :: HANDLE -> HANDLE -> WindowClosure
 mastheadProc quiet offering w msg wp lp
@@ -112,7 +92,7 @@ paint dc w h s = do
                 Good -> do
                     [s1, s2, s3, s4, s10', s15] <- mapM scaled [1, 2, 3, 4, 10, 15]
                     let cy = h `div` 2
-                    polyline dc s2 goodColour [(x + s1, cy), (x + s4, cy + s3), (x + s10', cy - s4)]
+                    polyline dc Solid s2 goodColour [(x + s1, cy), (x + s4, cy + s3), (x + s10', cy - s4)]
                     pure (x + s15)
                 Plain -> pure x
             textAt dc UiFont (case verdict of Good -> goodColour; Plain -> rgb 85 85 85) (x', 0, right - x', h) #{const DT_LEFT} text

@@ -2,6 +2,7 @@
 -- program's icons, the window's fonts and scale, drawing on a device
 -- context, and window procedures an exception can't escape.
 module TrackKat.Gui.Paint (
+    registerPart,
     guarded,
     resourceIcon,
     Font (..),
@@ -14,6 +15,7 @@ module TrackKat.Gui.Paint (
     Lines (..),
     textHeight,
     textIn,
+    Stroke (..),
     polyline,
     drawIcon,
 ) where
@@ -22,14 +24,18 @@ module TrackKat.Gui.Paint (
 
 import Control.Exception (SomeAsyncException, catch, displayException, fromException, throwIO)
 import Data.Bits ((.|.))
-import Foreign.C.String (withCWStringLen)
-import Foreign.C.Types (CInt (..))
+import Foreign.C.String (newCWString, withCWStringLen)
+import Foreign.C.Types (CInt (..), CIntPtr (..))
+import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Array (withArrayLen)
-import Foreign.Ptr (Ptr, castPtr, nullPtr, wordPtrToPtr)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (FunPtr, Ptr, castPtr, nullPtr, wordPtrToPtr)
+import Foreign.Storable (pokeByteOff)
 import Graphics.Win32.GDI.Types (HDC, HICON, LPRECT, RECT, allocaRECT, peekRECT, pokeRECT)
+import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Window (WindowClosure, defWindowProc)
 import System.Win32.DLL (getModuleHandle)
-import System.Win32.Types (BOOL, DWORD, HANDLE, HINSTANCE, LPCTSTR, UINT)
+import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, LPCTSTR, UINT, getLastError)
 
 foreign import ccall unsafe "hts_gui_dpi" c_dpi :: IO CInt
 foreign import ccall unsafe "hts_gui_font" c_font :: CInt -> IO HANDLE
@@ -48,6 +54,30 @@ foreign import ccall unsafe "windows.h DrawTextW" c_DrawText :: HDC -> Ptr () ->
 foreign import ccall unsafe "windows.h Polyline" c_Polyline :: HDC -> Ptr CInt -> CInt -> IO BOOL
 foreign import ccall unsafe "windows.h DrawIconEx"
     c_DrawIconEx :: HDC -> CInt -> CInt -> HICON -> CInt -> CInt -> UINT -> HANDLE -> UINT -> IO BOOL
+foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr () -> IO ATOM
+foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
+
+-- | Register a window class for a part of the window drawn here, which
+-- cbits/gui.c's hts_gui_create then makes it of rather than registering its
+-- own; its procedure is 'guarded', named by the part. Left is a Windows
+-- error code.
+registerPart :: (String -> IO ()) -> String -> String -> WindowClosure -> IO (Either Int ())
+registerPart report part className proc = do
+    inst <- getModuleHandle Nothing
+    cursor <- loadCursor Nothing iDC_ARROW
+    -- Both for the life of the process.
+    wndProc <- mkProc (guarded report part proc)
+    name <- newCWString className
+    atom <- allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke WNDCLASSW, lpfnWndProc} p wndProc
+        #{poke WNDCLASSW, hInstance} p inst
+        #{poke WNDCLASSW, hCursor} p cursor
+        #{poke WNDCLASSW, lpszClassName} p name
+        c_RegisterClass (castPtr p)
+    if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
+  where
+    size = #{size WNDCLASSW}
 
 -- | A window procedure that reports what fails in it, naming the part of
 -- the window, and leaves the message to Windows' handling: an exception
@@ -126,10 +156,14 @@ textIn dc font c Wrapped (x, y, w, h) s = do
     inkFor dc c
     () <$ drawText dc s (rect x y w h) (#{const DT_WORDBREAK} .|. #{const DT_EDITCONTROL} .|. #{const DT_NOPREFIX} .|. #{const DT_END_ELLIPSIS})
 
--- | Draw lines through points with a solid pen of a width and colour.
-polyline :: HDC -> CInt -> Colour -> [(CInt, CInt)] -> IO ()
-polyline dc width c points = do
-    pen <- c_CreatePen #{const PS_SOLID} width c
+data Stroke = Solid | Dotted
+
+-- | Draw lines through points with a pen of a stroke, width and colour; a
+-- dotted one's gaps leave what is there.
+polyline :: HDC -> Stroke -> CInt -> Colour -> [(CInt, CInt)] -> IO ()
+polyline dc stroke width c points = do
+    _ <- c_SetBkMode dc #{const TRANSPARENT}
+    pen <- c_CreatePen (case stroke of Solid -> #{const PS_SOLID}; Dotted -> #{const PS_DOT}) width c
     old <- c_SelectObject dc pen
     _ <- withArrayLen (concatMap (\(x, y) -> [x, y]) points) $ \n p -> c_Polyline dc p (fromIntegral (n `div` 2))
     _ <- c_SelectObject dc old
