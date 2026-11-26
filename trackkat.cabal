@@ -256,12 +256,13 @@ test-suite tests
     Test.Updater
     Test.Visibility
     Test.World
-  ghc-options:      "-with-rtsopts=-T"
   build-depends:
     , base
     , bytestring
+    , containers
     , directory
     , filepath
+    , ghc-heap
     , tasty
     , tasty-hunit
     , tasty-quickcheck

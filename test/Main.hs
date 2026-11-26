@@ -95,6 +95,7 @@ main = do
                 , Test.Updater.tests
                 , Test.Idle.tests
                 , Test.Icons.tests
+                , Test.Memory.tests
                 , testGroup
                     "the old tracker"
                     [ Test.Old.Gen.shrinks
