@@ -180,20 +180,21 @@ static bool map_shared(void)
 {
     if (heap && control)
         return true;
-    if (!heap) {
-        heap_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
-                                          sizeof(FTHeap), FREETRACK_HEAP);
-        if (heap_mapping)
-            heap = MapViewOfFile(heap_mapping, FILE_MAP_WRITE, 0, 0, sizeof(FTHeap));
-    }
-    if (!control) {
-        control_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
-                                             sizeof(TrackKatControl), TRACKKAT_CONTROL);
-        if (control_mapping)
-            control = MapViewOfFile(control_mapping, FILE_MAP_WRITE, 0, 0, sizeof(TrackKatControl));
-    }
+    np_shared_security security;
+    SECURITY_ATTRIBUTES *sa = np_share_with_games(&security);
+    if (!heap_mapping)
+        heap_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, sa, PAGE_READWRITE, 0, sizeof(FTHeap), FREETRACK_HEAP);
+    if (heap_mapping && !heap)
+        heap = MapViewOfFile(heap_mapping, FILE_MAP_WRITE, 0, 0, sizeof(FTHeap));
+    if (!control_mapping)
+        control_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, sa, PAGE_READWRITE, 0, sizeof(TrackKatControl),
+                                             TRACKKAT_CONTROL);
+    if (control_mapping && !control)
+        control = MapViewOfFile(control_mapping, FILE_MAP_WRITE, 0, 0, sizeof(TrackKatControl));
+    DWORD err = GetLastError();
+    np_shared_security_free(&security);
     if (!(heap && control))
-        LOG_FIRST(3, "could not map shared memory (error %lu)", GetLastError());
+        LOG_FIRST(3, "could not map shared memory (error %lu)", err);
     return heap && control;
 }
 

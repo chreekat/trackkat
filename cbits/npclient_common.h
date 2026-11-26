@@ -8,6 +8,8 @@
 #ifndef NPCLIENT_COMMON_H
 #define NPCLIENT_COMMON_H
 
+#include <windows.h>
+
 #include "trackkat_shared.h"
 
 enum { NP_STATUS_OK = 0, NP_STATUS_DISABLED = 1 };
@@ -81,6 +83,19 @@ const unsigned char *np_game_key(unsigned short id, const char **name);
 
 /* NaturalPoint's signature, which games check. */
 void np_signature(tir_signature_t *sig);
+
+/* Security for the objects games share with trackkat, made with
+ * np_share_with_games and freed with np_shared_security_free. */
+typedef struct np_shared_security {
+    SECURITY_ATTRIBUTES attributes;
+    SECURITY_DESCRIPTOR descriptor;
+    PSECURITY_DESCRIPTOR label; /* holds the descriptor's integrity label */
+} np_shared_security;
+
+/* The security attributes to create an object games share with trackkat
+ * with, which live as long as *s. */
+SECURITY_ATTRIBUTES *np_share_with_games(np_shared_security *s);
+void np_shared_security_free(np_shared_security *s);
 
 /* Record a process among the games tracking; 0 if there's no free slot. */
 int np_add_game(volatile TrackKatControl *control, long pid);

@@ -25,21 +25,24 @@ static volatile TrackKatControl *control;
  * on success. */
 int hts_shared_open(void)
 {
-    ft_mutex = CreateMutexA(NULL, FALSE, FREETRACK_MUTEX);
+    np_shared_security security;
+    SECURITY_ATTRIBUTES *sa = np_share_with_games(&security);
+    ft_mutex = CreateMutexA(sa, FALSE, FREETRACK_MUTEX);
+    ft_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, sa, PAGE_READWRITE, 0, sizeof(FTHeap), FREETRACK_HEAP);
+    DWORD err = ft_mapping ? 0 : GetLastError();
+    if (!err) {
+        control_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, sa, PAGE_READWRITE, 0, sizeof(TrackKatControl),
+                                             TRACKKAT_CONTROL);
+        err = control_mapping ? 0 : GetLastError();
+    }
+    np_shared_security_free(&security);
+    if (err)
+        return (int)err;
 
-    ft_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
-                                    sizeof(FTHeap), FREETRACK_HEAP);
-    if (!ft_mapping)
-        return (int)GetLastError();
     ft_heap = MapViewOfFile(ft_mapping, FILE_MAP_WRITE, 0, 0, sizeof(FTHeap));
     if (!ft_heap)
         return (int)GetLastError();
     poses_published = np_pose_count(&ft_heap->data);
-
-    control_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
-                                         sizeof(TrackKatControl), TRACKKAT_CONTROL);
-    if (!control_mapping)
-        return (int)GetLastError();
     control = MapViewOfFile(control_mapping, FILE_MAP_WRITE, 0, 0, sizeof(TrackKatControl));
     if (!control)
         return (int)GetLastError();
@@ -140,8 +143,11 @@ int hts_tracking_game_name(wchar_t *buf, int size)
  * keeps no handle to it, so it can try again once the holder has quit. */
 int hts_single_instance(void)
 {
-    HANDLE m = CreateMutexA(NULL, TRUE, TRACKKAT_RUNNING_MUTEX);
-    if (m && GetLastError() == ERROR_ALREADY_EXISTS) {
+    np_shared_security security;
+    HANDLE m = CreateMutexA(np_share_with_games(&security), TRUE, TRACKKAT_RUNNING_MUTEX);
+    DWORD err = GetLastError();
+    np_shared_security_free(&security);
+    if (m && err == ERROR_ALREADY_EXISTS) {
         CloseHandle(m);
         return 0;
     }

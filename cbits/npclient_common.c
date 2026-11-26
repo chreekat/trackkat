@@ -6,6 +6,7 @@
  * and the signature are what NaturalPoint-aware games check for. */
 
 #include <windows.h>
+#include <sddl.h>
 #include <string.h>
 
 #include "npclient_common.h"
@@ -284,6 +285,32 @@ void np_signature(tir_signature_t *sig)
         sig->DllSignature[i] = part1_2[i] ^ part1_1[i];
     for (int i = 0; i < 200; i++)
         sig->AppSignature[i] = part2_1[i] ^ part2_2[i];
+}
+
+/* As NaturalPoint's DLL makes its own: anyone may use them, even a game
+ * running at low integrity, so that whichever of trackkat and a game makes
+ * one first, elevated or not, the other can open it. */
+SECURITY_ATTRIBUTES *np_share_with_games(np_shared_security *s)
+{
+    memset(s, 0, sizeof *s);
+    InitializeSecurityDescriptor(&s->descriptor, SECURITY_DESCRIPTOR_REVISION);
+    SetSecurityDescriptorDacl(&s->descriptor, TRUE, NULL, FALSE);
+    PACL sacl;
+    BOOL present, defaulted;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"S:(ML;;NW;;;LW)", SDDL_REVISION_1, &s->label, NULL)
+        && GetSecurityDescriptorSacl(s->label, &present, &sacl, &defaulted) && present)
+        SetSecurityDescriptorSacl(&s->descriptor, TRUE, sacl, FALSE);
+    s->attributes.nLength = sizeof s->attributes;
+    s->attributes.lpSecurityDescriptor = &s->descriptor;
+    s->attributes.bInheritHandle = FALSE;
+    return &s->attributes;
+}
+
+void np_shared_security_free(np_shared_security *s)
+{
+    if (s->label)
+        LocalFree(s->label);
+    s->label = NULL;
 }
 
 int np_add_game(volatile TrackKatControl *control, long pid)

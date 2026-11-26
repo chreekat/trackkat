@@ -17,7 +17,6 @@
  * count. */
 
 #include <windows.h>
-#include <sddl.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -345,26 +344,14 @@ int hts_trackir_start(unsigned long pid, unsigned long long created, unsigned lo
     if (trackir_software_running())
         return -1;
 
-    /* As NaturalPoint's DLL makes them: anyone may use them, even a game
-     * running at low integrity. */
-    SECURITY_DESCRIPTOR sd;
-    SECURITY_ATTRIBUTES sa = {sizeof sa, &sd, FALSE};
-    PSECURITY_DESCRIPTOR low = NULL;
-    InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
-    SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
-    PACL sacl;
-    BOOL present, defaulted;
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"S:(ML;;NW;;;LW)", SDDL_REVISION_1, &low, NULL)
-        && GetSecurityDescriptorSacl(low, &present, &sacl, &defaulted) && present)
-        SetSecurityDescriptorSacl(&sd, TRUE, sacl, FALSE);
-
-    mutex = CreateMutexA(&sa, FALSE, TRACKIR_MUTEX);
+    np_shared_security security;
+    SECURITY_ATTRIBUTES *sa = np_share_with_games(&security);
+    mutex = CreateMutexA(sa, FALSE, TRACKIR_MUTEX);
     /* A game that loaded the DLL first has made it already. */
-    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(TrackIRShared),
+    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, sa, PAGE_READWRITE, 0, sizeof(TrackIRShared),
                                  TRACKIR_SHARED);
     DWORD err = GetLastError();
-    if (low)
-        LocalFree(low);
+    np_shared_security_free(&security);
     if (!mutex || !mapping)
         return (int)err;
     volatile TrackIRShared *s = MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(TrackIRShared));
