@@ -22,6 +22,7 @@ module TrackKat.Frame (
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import qualified Data.ByteString as B
 import Data.List (partition, sortOn)
+import Data.Maybe (isJust)
 import Data.Ord (Down (..))
 import Data.Word (Word8)
 
@@ -67,14 +68,9 @@ parseStream bs
             | B.length bs > maxFrameBytes -> resync "frame too long"
             | otherwise -> ([], bs)
         Interrupted -> resync "frame interrupted by the next one"
-    | otherwise = case B.index bs 1 of
-        t
-            | t `elem` [0x10, 0x20, 0x40, 0x1C]
-            , n > 0 ->
-                if n > B.length bs then ([], bs) else emit (reply t (B.take n bs)) (B.drop n bs)
-          where
-            n = fromIntegral (B.index bs 0)
-        _ -> resync "unrecognized bytes"
+    | otherwise = case replyStart bs of
+        Just (n, t) -> if n > B.length bs then ([], bs) else emit (reply t (B.take n bs)) (B.drop n bs)
+        Nothing -> resync "unrecognized bytes"
   where
     emit p rest = let (ps, r) = parseStream rest in (p : ps, r)
     resync why = case findFrameHeader 1 (const True) bs of
@@ -97,6 +93,16 @@ parseStream bs
 -- stripe boundary where that count matches, followed by the end of the data
 -- or the next packet. If the next frame's header turns up first, the frame
 -- lost its tail and is reported corrupt.
+
+-- | The length and type of the reply to a command that the stream starts
+-- with, if it starts with one.
+replyStart :: B.ByteString -> Maybe (Int, Word8)
+replyStart b
+    | B.length b >= 2 && t `elem` [0x10, 0x20, 0x40, 0x1C] && n > 0 = Just (n, t)
+    | otherwise = Nothing
+  where
+    n = fromIntegral (B.index b 0)
+    t = B.index b 1
 
 maxFrameBytes :: Int
 maxFrameBytes = 65536
@@ -129,11 +135,10 @@ frameEnd b = go 4
         | k + 4 > limit = maybe Incomplete (const Interrupted) successor
         | be32 (B.drop k b) == k - 4 =
             let rest = B.drop (k + 4) b
-             in if B.null rest || isFrameHeader rest || isReplyStart rest
+             in if B.null rest || isFrameHeader rest || isJust (replyStart rest)
                     then Complete (k + 4)
                     else if B.length rest < 4 then Incomplete else go (k + stripeBytes)
         | otherwise = go (k + stripeBytes)
-    isReplyStart r = B.length r >= 2 && B.index r 1 `elem` [0x20, 0x40]
 
 be32 :: B.ByteString -> Int
 be32 = foldl' (\acc w -> acc `shiftL` 8 .|. fromIntegral w) 0 . B.unpack . B.take 4

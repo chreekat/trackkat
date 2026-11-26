@@ -70,6 +70,10 @@ tests = group "Frame" $ do
     let (withReply, _) = feed [frame 0x20 blobB <> B.pack [0x07, 0x20, 0, 1, 0, 0, 0] <> frame 0x21 []]
     checkShowing "status reply between frames" (show withReply) (counters withReply == [0x20, 0x21] && length [() | StatusReply _ <- withReply] == 1)
 
+    forM_ [0x10, 0x1C, 0x20, 0x40] $ \t -> do
+        let (withAny, _) = feed [frame 0x30 blobB <> B.pack [0x05, t, 1, 2, 3] <> frame 0x31 []]
+        checkShowing ("a reply of type " ++ show t ++ " between frames") (show withAny) (counters withAny == [0x30, 0x31] && null (corrupt withAny) && length withAny == 3)
+
     check "status reply" $ fmap statusReady (parseStatus (B.pack [0x07, 0x20, 0, 1, 0, 0, 0])) == Just True
     tree properties
 
