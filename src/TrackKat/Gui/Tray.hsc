@@ -8,6 +8,7 @@ module TrackKat.Gui.Tray (makeTray) where
 #include <windows.h>
 #include <shellapi.h>
 
+import Control.Exception (SomeAsyncException, bracket, catch, displayException, fromException, throwIO)
 import Control.Monad (forM_, unless, void, when)
 import Data.Bits ((.&.), (.|.))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
@@ -71,10 +72,10 @@ data Shown = NotShown | ShownAs TrayLook String
 
 -- | Make the hidden window the tray icon talks to, for cbits/gui.c's
 -- hts_gui_create, which times it; it is told what the user chose from the
--- icon or its menu, or another trackkat asked for. Left is a Windows error
--- code.
-makeTray :: (TrayChoice -> IO ()) -> IO (Either Int HWND)
-makeTray choose = do
+-- icon or its menu, or another trackkat asked for, and reports what failed
+-- with the first function given. Left is a Windows error code.
+makeTray :: (String -> IO ()) -> (TrayChoice -> IO ()) -> IO (Either Int HWND)
+makeTray report choose = do
     inst <- getModuleHandle Nothing
     registered <- registerClass (0, inst, Nothing, Nothing, Nothing, Nothing, className)
     case registered of
@@ -89,14 +90,22 @@ makeTray choose = do
                 else do
                     taskbarCreated <- withCWString "TaskbarCreated" c_RegisterWindowMessage
                     shown <- newIORef NotShown
-                    void (setWindowClosure w (trayProc choose taskbarCreated shown))
+                    void (setWindowClosure w (trayProc report choose taskbarCreated shown))
                     pure (Right w)
   where
     -- As cbits/gui.c's hts_gui_quit_running and hts_gui_show_running find it.
     className = mkClassName "trackkat"
 
-trayProc :: (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
-trayProc choose taskbarCreated shown w msg wp lp
+-- | An exception can't leave a window procedure but by ending the process,
+-- so one that fails is reported, and the message left to Windows' handling.
+trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
+trayProc report choose taskbarCreated shown w msg wp lp =
+    respond choose taskbarCreated shown w msg wp lp `catch` \e -> case fromException e of
+        Just async -> throwIO (async :: SomeAsyncException)
+        Nothing -> report ("The tray icon failed: " ++ displayException e) >> defWindowProc (Just w) msg wp lp
+
+respond :: (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
+respond choose taskbarCreated shown w msg wp lp
     | msg == taskbarCreated && taskbarCreated /= 0 = do
         -- Explorer restarted, and forgot the icon.
         writeIORef shown NotShown
@@ -133,18 +142,17 @@ trayProc choose taskbarCreated shown w msg wp lp
                 writeIORef shown (if added then now else NotShown)
     menu = do
         s <- trayState
-        m <- createPopupMenu
-        forM_ (trayMenu s) $ \case
-            MenuItem choice name tick ->
-                appendMenu m (#{const MF_STRING} .|. (case tick of Ticked -> #{const MF_CHECKED}; Unticked -> 0)) (itemId choice) (Just name)
-            MenuSeparator -> appendMenu m #{const MF_SEPARATOR} 0 Nothing
-        setMenuDefaultItem m (itemId OpenChoice) False
-        (x, y) <- getCursorPos
-        -- Without these, the menu doesn't close when clicking elsewhere.
-        void (setForegroundWindow w)
-        void (c_TrackPopupMenu m #{const TPM_RIGHTBUTTON} (fromIntegral x) (fromIntegral y) 0 w nullPtr)
-        postMessage (Just w) 0 0 0
-        destroyMenu m
+        bracket createPopupMenu destroyMenu $ \m -> do
+            forM_ (trayMenu s) $ \case
+                MenuItem choice name tick ->
+                    appendMenu m (#{const MF_STRING} .|. (case tick of Ticked -> #{const MF_CHECKED}; Unticked -> 0)) (itemId choice) (Just name)
+                MenuSeparator -> appendMenu m #{const MF_SEPARATOR} 0 Nothing
+            setMenuDefaultItem m (itemId OpenChoice) False
+            (x, y) <- getCursorPos
+            -- Without these, the menu doesn't close when clicking elsewhere.
+            void (setForegroundWindow w)
+            void (c_TrackPopupMenu m #{const TPM_RIGHTBUTTON} (fromIntegral x) (fromIntegral y) 0 w nullPtr)
+            postMessage (Just w) 0 0 0
     notify message icon tip = notifyIcon message w icon tip
     nimAdd = #{const NIM_ADD}
     nimModify = #{const NIM_MODIFY}

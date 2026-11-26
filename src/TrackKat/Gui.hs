@@ -125,7 +125,7 @@ withGui HaskellWindow w work = do
     -- messages: a bound thread, so it is always the same one.
     runGui made = do
         thread <- getCurrentThreadId
-        rc <- makeTray choose >>= either (pure . fromIntegral) (c_create (windowCode w))
+        rc <- makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
         putMVar made (rc, thread)
         when (rc == 0) (allocaMessage messageLoop)
     messageLoop msg =
