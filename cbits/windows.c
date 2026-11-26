@@ -258,8 +258,8 @@ int hts_find_trackir_dir(wchar_t *out, int len)
  * which refuses F12 (reserved for debuggers) and swallows the key, hiding it
  * from games bound to the same key. The middle and side mouse buttons are
  * watched with a low-level mouse hook, as keys with their virtual-key codes,
- * and likewise never swallowed. Joysticks (joystick.c) are watched on the
- * same thread.
+ * and likewise never swallowed. Joysticks (joystick.c) are watched on a
+ * thread of their own.
  *
  * All that is told of the watched keys and buttons is each going down and
  * coming up, and when: what a press does is decided by whoever takes the
@@ -302,7 +302,7 @@ static SRWLOCK edges_lock = SRWLOCK_INIT;
 static Edge edges[MAX_EDGES];
 static int edges_first, edges_count;
 
-static volatile LONG hotkey_status; /* 0 starting, 1 started */
+static volatile LONG watchers_started; /* of the hotkey and joystick threads */
 static DWORD keyboard_error, mouse_error, joystick_error;
 
 /* Watch these n keys and buttons in place of those watched before, whether
@@ -481,22 +481,20 @@ void watched_button(const wchar_t *joystick, int index, int button, int down)
         note_edge(&matched[i], down ? EDGE_DOWN : EDGE_UP);
 }
 
+/* Runs the low-level hooks, and nothing else, as Windows drops a hook whose
+ * thread is slow to answer it. */
 static DWORD WINAPI hotkey_thread(LPVOID unused)
 {
     (void)unused;
-    joystick_error = joysticks_watch();
-    /* Hooked last, with nothing between them and the message loop: Windows
-     * drops a low-level hook whose thread is slow to answer it. */
     HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboard_hook, GetModuleHandleW(NULL), 0);
     keyboard_error = hook ? 0 : GetLastError();
     HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, GetModuleHandleW(NULL), 0);
     mouse_error = mouse ? 0 : GetLastError();
-    InterlockedExchange(&hotkey_status, 1);
-    if (keyboard_error && mouse_error && joystick_error)
+    InterlockedIncrement(&watchers_started);
+    if (keyboard_error && mouse_error)
         return 0;
 
-    /* The hook and the joystick window run only while this thread pumps
-     * messages. */
+    /* The hooks run only while this thread pumps messages. */
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0)
         DispatchMessageW(&msg);
@@ -507,8 +505,23 @@ static DWORD WINAPI hotkey_thread(LPVOID unused)
     return 0;
 }
 
-/* Start watching the keyboard, mouse and joysticks for the watched keys and
- * buttons on a thread of their own. Returns 0, or a Windows error code if
+static DWORD WINAPI joystick_thread(LPVOID unused)
+{
+    (void)unused;
+    joystick_error = joysticks_watch();
+    InterlockedIncrement(&watchers_started);
+    if (joystick_error)
+        return 0;
+
+    /* The joystick window runs only while this thread pumps messages. */
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0) > 0)
+        DispatchMessageW(&msg);
+    return 0;
+}
+
+/* Start watching the keyboard and mouse, and the joysticks, for the watched
+ * keys and buttons, on a thread each. Returns 0, or a Windows error code if
  * the keyboard can't be watched; sets *mouse_err and *joysticks_err
  * likewise. */
 int hts_hotkeys_start(int *mouse_err, int *joysticks_err)
@@ -519,7 +532,14 @@ int hts_hotkeys_start(int *mouse_err, int *joysticks_err)
         return *joysticks_err;
     }
     CloseHandle(t);
-    while (InterlockedCompareExchange(&hotkey_status, 0, 0) == 0)
+    HANDLE j = CreateThread(NULL, 0, joystick_thread, NULL, 0, NULL);
+    if (j) {
+        CloseHandle(j);
+    } else {
+        joystick_error = GetLastError();
+        InterlockedIncrement(&watchers_started);
+    }
+    while (InterlockedCompareExchange(&watchers_started, 0, 0) < 2)
         Sleep(1);
     *mouse_err = (int)mouse_error;
     *joysticks_err = (int)joystick_error;

@@ -1,4 +1,4 @@
-/* What the hotkey thread (windows.c) and the joystick code (joystick.c) ask
+/* What the joystick thread (windows.c) and the joystick code (joystick.c) ask
  * of each other. */
 
 #ifndef TRACKKAT_JOYSTICK_H
