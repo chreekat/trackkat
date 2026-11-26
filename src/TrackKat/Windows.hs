@@ -29,13 +29,13 @@ module TrackKat.Windows (
     takeJoystickEvents,
 ) where
 
-import Data.Bits (shiftR, (.&.))
+import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import Data.List (isSuffixOf)
 import Data.Word (Word64)
 import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
-import Foreign.C.Types (CDouble (..), CFloat (..), CInt (..), CLong (..), CUInt (..), CULLong (..), CULong (..))
+import Foreign.C.Types (CDouble (..), CFloat (..), CInt (..), CLong (..), CULLong (..), CULong (..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
+import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
 
@@ -62,10 +62,7 @@ foreign import ccall unsafe "hts_process_started" c_process_started :: CULong ->
 foreign import ccall unsafe "hts_window_process" c_window_process :: CULLong -> IO CULong
 foreign import ccall unsafe "hts_trackir_take_game" c_trackir_take_game :: IO CInt
 foreign import ccall unsafe "hts_scrambled_game" c_scrambled_game :: CInt -> IO CString
-foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
-foreign import ccall unsafe "hts_bind_key" c_bind_key :: CUInt -> CUInt -> IO ()
-foreign import ccall unsafe "hts_bind_button" c_bind_button :: CWString -> CInt -> CInt -> IO ()
-foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
+foreign import ccall unsafe "hts_watch" c_watch :: CInt -> Ptr CInt -> Ptr CWString -> Ptr CInt -> Ptr CInt -> IO ()
 foreign import ccall safe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
 foreign import ccall unsafe "hts_key_edge"
     c_key_edge :: Ptr CInt -> CWString -> CInt -> Ptr CInt -> Ptr CInt -> Ptr CDouble -> IO CInt
@@ -236,16 +233,29 @@ startHotkeys keys = do
         jerr <- peek joystickError
         pure [(w, fromIntegral e) | (w, e) <- [(Keyboard, keyboardError), (Mouse, merr), (Joysticks, jerr)], e /= 0]
 
--- | Change the keys and buttons watched.
+-- | Change the keys and buttons watched, all at once.
 rebindHotkeys :: [KeyOrButton] -> IO ()
-rebindHotkeys keys = do
-    c_bindings_clear
-    mapM_ bind keys
-    c_bindings_apply
+rebindHotkeys keys =
+    withNames (map name keys) $ \names ->
+        withArrayLen (map code keys) $ \n codes ->
+            withArray names $ \namesP ->
+                withArray (map index keys) $ \indexes ->
+                    withArray (map button keys) $ \buttons ->
+                        c_watch (fromIntegral n) codes namesP indexes buttons
   where
-    bind (Key mods key) = c_bind_key (fromIntegral (modifierMask mods)) (fromIntegral (virtualKey key))
-    bind (JoystickButton (Joystick name index) n) =
-        withCWString name $ \p -> c_bind_button p (fromIntegral index) (fromIntegral n)
+    -- As hts_watch in cbits/windows.c takes them.
+    code (Key mods key) = fromIntegral (modifierMask mods `shiftL` 16 .|. virtualKey key)
+    code JoystickButton{} = 0
+    name (Key _ _) = Nothing
+    name (JoystickButton (Joystick j _) _) = Just j
+    index (Key _ _) = 0
+    index (JoystickButton (Joystick _ i) _) = fromIntegral i
+    button (Key _ _) = 0
+    button (JoystickButton _ b) = fromIntegral b
+    -- Each name as a C string, or null for none, while the action runs.
+    withNames :: [Maybe String] -> ([CWString] -> IO a) -> IO a
+    withNames [] act = act []
+    withNames (m : ms) act = maybe ($ nullPtr) withCWString m $ \p -> withNames ms (act . (p :))
 
 -- | The watched keys' and buttons' presses and releases since the last
 -- call, oldest first, given the moment now, which each is timed back from.

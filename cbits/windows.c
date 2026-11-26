@@ -336,9 +336,6 @@ typedef struct {
 static SRWLOCK watched_lock = SRWLOCK_INIT;
 static Watched watched[MAX_WATCHED];
 static int watched_count;
-/* Keys and buttons being gathered by hts_bind_*, until hts_bindings_apply. */
-static Watched staged[MAX_WATCHED];
-static int staged_count;
 
 /* A watched key or button going down or coming up. */
 typedef struct {
@@ -356,42 +353,26 @@ static int edges_first, edges_count;
 static volatile LONG hotkey_status; /* 0 starting, 1 started */
 static DWORD keyboard_error, mouse_error, joystick_error;
 
-/* Start gathering a new set of keys and buttons to watch; the old ones stay
- * watched until hts_bindings_apply. Those past MAX_WATCHED are ignored. */
-void hts_bindings_clear(void)
+/* Watch these n keys and buttons in place of those watched before, whether
+ * or not the keyboard and joysticks are being watched yet; those past
+ * MAX_WATCHED are ignored. The ith is the key keys[i], mods << 16 | vk, or,
+ * where that is 0, button buttons[i] of the indexes[i]th joystick named
+ * joysticks[i]. */
+void hts_watch(int n, const int *keys, const wchar_t *const *joysticks, const int *indexes, const int *buttons)
 {
-    staged_count = 0;
-}
-
-void hts_bind_key(unsigned mods, unsigned vk)
-{
-    if (staged_count == MAX_WATCHED)
-        return;
-    Watched *w = &staged[staged_count++];
-    w->key = (LONG)(mods << 16 | vk);
-    w->joystick[0] = 0;
-    w->index = 0;
-    w->button = 0;
-}
-
-void hts_bind_button(const wchar_t *joystick, int index, int button)
-{
-    if (staged_count == MAX_WATCHED)
-        return;
-    Watched *w = &staged[staged_count++];
-    w->key = 0;
-    lstrcpynW(w->joystick, joystick, JOYSTICK_NAME_LEN);
-    w->index = index;
-    w->button = button;
-}
-
-/* Watch the gathered keys and buttons, whether or not the keyboard and
- * joysticks are being watched yet. */
-void hts_bindings_apply(void)
-{
+    n = n < 0 ? 0 : n > MAX_WATCHED ? MAX_WATCHED : n;
     AcquireSRWLockExclusive(&watched_lock);
-    memcpy(watched, staged, sizeof staged);
-    watched_count = staged_count;
+    for (int i = 0; i < n; i++) {
+        Watched *w = &watched[i];
+        memset(w, 0, sizeof *w);
+        w->key = (LONG)keys[i];
+        if (!w->key && joysticks[i]) {
+            lstrcpynW(w->joystick, joysticks[i], JOYSTICK_NAME_LEN);
+            w->index = indexes[i];
+            w->button = buttons[i];
+        }
+    }
+    watched_count = n;
     ReleaseSRWLockExclusive(&watched_lock);
 }
 

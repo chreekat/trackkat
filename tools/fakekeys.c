@@ -11,10 +11,7 @@
 
 #include "trackkat_shared.h"
 
-void hts_bindings_clear(void);
-void hts_bind_key(unsigned mods, unsigned vk);
-void hts_bind_button(const wchar_t *joystick, int index, int button);
-void hts_bindings_apply(void);
+void hts_watch(int n, const int *keys, const wchar_t *const *joysticks, const int *indexes, const int *buttons);
 int hts_hotkeys_start(int *mouse_err, int *joysticks_err);
 int hts_key_edge(int *key, wchar_t *joystick, int joystick_len, int *index, int *button, double *age);
 void watched_button(const wchar_t *joystick, int index, int button, int down);
@@ -56,13 +53,13 @@ static void drain(const char *what)
 
 int main(void)
 {
-    hts_bindings_clear();
-    hts_bind_key(0, VK_F8);
-    hts_bind_key(0x2, VK_F9); /* Ctrl+F9 */
-    hts_bind_key(0, VK_XBUTTON1);
-    hts_bind_button(L"throttle - hotas warthog", 1, 4);
-    hts_bind_button(L"Throttle - HOTAS Warthog", 1, 4);
-    hts_bindings_apply();
+    {
+        /* F8, Ctrl+F9, Mouse4, and a joystick's button under two spellings. */
+        const int keys[] = {VK_F8, 0x2 << 16 | VK_F9, VK_XBUTTON1, 0, 0};
+        const wchar_t *names[] = {NULL, NULL, NULL, L"throttle - hotas warthog", L"Throttle - HOTAS Warthog"};
+        const int indexes[] = {0, 0, 0, 1, 1}, buttons[] = {0, 0, 0, 4, 4};
+        hts_watch(5, keys, names, indexes, buttons);
+    }
     int mouse_err = 0, joystick_err = 0;
     int keyboard_err = hts_hotkeys_start(&mouse_err, &joystick_err);
     printf("errors: keyboard %d mouse %d joysticks %d\n", keyboard_err, mouse_err, joystick_err);
@@ -91,28 +88,31 @@ int main(void)
     drain("Mouse4");
 
     key(VK_F8, 0);
-    hts_bindings_clear();
-    hts_bind_key(0, VK_F7);
-    hts_bindings_apply();
+    {
+        const int keys[] = {VK_F7};
+        hts_watch(1, keys, NULL, NULL, NULL);
+    }
     key(VK_F8, 0); /* a repeat, of a key no longer watched */
     key(VK_F8, 1);
     key(VK_F8, 0);
     key(VK_F8, 1);
     drain("F8 held as it stops being watched");
 
-    hts_bindings_clear();
-    hts_bind_button(L"throttle - hotas warthog", 1, 4);
-    hts_bind_button(L"Throttle - HOTAS Warthog", 1, 4);
-    hts_bind_button(L"Throttle - HOTAS Warthog", 2, 4);
-    hts_bindings_apply();
+    {
+        const int keys[] = {0, 0, 0};
+        const wchar_t *names[] = {L"throttle - hotas warthog", L"Throttle - HOTAS Warthog", L"Throttle - HOTAS Warthog"};
+        const int indexes[] = {1, 1, 2}, buttons[] = {4, 4, 4};
+        hts_watch(3, keys, names, indexes, buttons);
+    }
     watched_button(L"Throttle - HOTAS Warthog", 1, 4, 1);
     watched_button(L"Throttle - HOTAS Warthog", 1, 5, 1);
     watched_button(L"Throttle - HOTAS Warthog", 1, 4, 0);
     drain("a joystick's button 4, bound under two spellings, and 5, not watched");
 
-    hts_bindings_clear();
-    hts_bind_key(0, VK_F8);
-    hts_bindings_apply();
+    {
+        const int keys[] = {VK_F8};
+        hts_watch(1, keys, NULL, NULL, NULL);
+    }
     key(VK_F8, 0);
     Sleep(2100);
     key(VK_F8, 0); /* long after its last key-down: a new press */
