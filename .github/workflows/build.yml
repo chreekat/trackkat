@@ -316,5 +316,7 @@ jobs:
           key: linux-cabal-${{ steps.haskell.outputs.ghc-version }}-${{ steps.haskell.outputs.cabal-version }}-${{ hashFiles('trackkat.cabal', 'cabal.project', 'cabal.project.freeze') }}
           restore-keys: linux-cabal-${{ steps.haskell.outputs.ghc-version }}-${{ steps.haskell.outputs.cabal-version }}-
       - run: cabal update
-      - run: cabal build all --enable-tests
+      - run: |
+          printf 'package trackkat\n  ghc-options: -Werror\n' > cabal.project.local
+          cabal build all --enable-tests
       - run: cabal test all --test-show-details=direct
