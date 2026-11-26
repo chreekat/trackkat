@@ -39,7 +39,6 @@ module TrackKat.Pose (
     cameraLevel,
     levelFromUp,
     levelUp,
-    levelFromYaws,
     cameraTilt,
     inLevelAxes,
     inHeadAxes,
@@ -699,22 +698,6 @@ levelFromUp up = Level (M33 right down forward)
 -- | The vertical of level axes, in camera axes, pointing up.
 levelUp :: Level -> V3
 levelUp (Level (M33 _ down _)) = (-1) *^ down
-
--- | Level axes whose vertical is the axis of the given head rotations
--- (relative to a reference, in camera axes), as from turning the head left
--- and right. Small rotations count for little; the result is Nothing if
--- there was too little turning to tell.
-levelFromYaws :: [M33] -> Maybe Level
-levelFromYaws rots
-    | norm total < 0.5 = Nothing
-    | otherwise = Just (levelFromUp total)
-  where
-    -- 2 sin(angle) times the axis of each rotation, pointing up.
-    axis (M33 (V3 _ r01 r02) (V3 r10 _ r12) (V3 r20 r21 _)) =
-        let v = V3 (r21 - r12) (r02 - r20) (r10 - r01)
-         in if dot v cameraUp < 0 then (-1) *^ v else v
-    total = foldr ((^+^) . axis) (V3 0 0 0) rots
-    cameraUp = V3 0 (-1) 0
 
 -- | How far the camera is tipped down, and to its right, from the given
 -- level, in degrees.

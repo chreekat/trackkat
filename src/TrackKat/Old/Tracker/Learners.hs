@@ -82,7 +82,7 @@ sweepOn now pose ref learners = case learnersSweep learners of
     Just (Sweep deadline rots)
         | now < deadline ->
             (learners{learnersSweep = Just (Sweep deadline (poseR pose `mulMM` transpose (poseR ref) : rots))}, [])
-        | otherwise -> case levelFromYaws rots of
+        | otherwise -> case levelFromTurns rots of
             Nothing -> (learners{learnersSweep = Nothing}, [CalibrationFailed])
             Just l ->
                 let learner = calibrateLevel l (learnersPivot learners)

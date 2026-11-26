@@ -250,7 +250,6 @@ How heads, necks and the camera are. `World` fields first.
 | `Branch.togetherDegrees` | 8° | the two poses have met when this close | tuned | |
 | `Pose.alternatives` range | 0.5 to 1.5 times the distance | which other poses are looked for | tuned | |
 | `Pose.alternatives` apart | 0.5° | another pose nearer than this is the same pose | tuned | |
-| `Pose.levelFromYaws` | 0.5 | too little turning to calibrate level from | tuned | |
 | `Tracker.Learners.calibrationSeconds` | 5 s | how long a requested calibration watches | tuned | |
 | `Response.yawRange`, `pitchRange`, `rollRange`, `leanRange` | 180°, 90°, 90°, 300 mm | the ends of the view's ranges, as games and the window have them | games; `cbits/gui.c` draws the same | (6) |
 | `Config.clipShape` tabs | radius 10 mm, tape 25 mm of arc, bend 37.5°, post leaning 45° | where a reflector's light is on its tab | measured from a TrackClip | |
@@ -364,7 +363,7 @@ How sure a decision must be.
 | `Branch.foundAfresh` | 0.5 | found afresh, either pose as likely | symmetry | |
 | `Calibration.windowSpan` | 8° | a window that turned less isn't learnt from (term `turn`) | tuned | (4) |
 | `Shape.windowSpan` | 12° | the same, for the shape (term `turn`) | tuned | (4) |
-| `Calibration.upConfident` | 180° | turning before the learnt up is applied or told | tuned | |
+| `Calibration.upConfident` | 180° | turning before the learnt up, saved, live or from a calibration asked for, is applied or told | tuned | |
 | `Calibration.pivotConfident` | 10 windows | windows before the pivot is told | tuned | |
 | `Calibration.upNews`, `pivotNews` | 0.5°, 5 mm | changes worth telling | tuned | |
 | `Shape.newsMM` | 1.5 mm | a change in the shape worth telling | tuned | |

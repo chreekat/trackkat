@@ -1,7 +1,7 @@
 -- | Poses solved from where the reflectors show, and level from turning.
 module Test.Pose (tests) where
 
-import Control.Monad (forM_)
+import Control.Monad (forM_, (<=<))
 import Data.Maybe (isNothing)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -10,6 +10,7 @@ import Test.Check
 import Test.Gen
 import Test.Instances ()
 import Test.Simulation (clipBent, deg, headset)
+import TrackKat.Calibration (levelFromTurns)
 import TrackKat.Config
 import TrackKat.Linear
 import TrackKat.Pose
@@ -66,8 +67,10 @@ tests = group "Pose" $ do
                         (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
             Nothing -> check "headset cold start solved" False
 
-    -- Level axes from turning the head left and right, seen by a camera tipped
-    -- 13 degrees down and 4 to its right.
+    -- Level axes from turning the head left and right, there and back
+    -- three times, seen by a camera tipped 13 degrees down and 4 to its right:
+    -- facing it as when recentered, or nodded 5 degrees from that, turning
+    -- either way or to one side only.
     let tilt = rodrigues (V3 0 0 (deg 4)) `mulMM` rodrigues (V3 (deg 13) 0 0)
         seenFrom rLevel tLevel = Pose (tilt `mulMM` rLevel) (mulMV tilt tLevel)
         neutral = seenFrom identity (V3 0 0 700)
@@ -75,12 +78,19 @@ tests = group "Pose" $ do
             let img = (project defaultIntrinsics truth (mLeft headset), project defaultIntrinsics truth (mRight headset), project defaultIntrinsics truth (mTop headset))
              in fst <$> solvePose defaultIntrinsics headset (Just truth) img
         relativeRot pose = poseR pose `mulMM` transpose (poseR neutral)
-        sweep = [seenFrom (rotYXZ y 0 0) (V3 0 0 700) | y <- [-40, -30 .. 40]]
-    case levelFromYaws . map relativeRot =<< traverse observe sweep of
-        Nothing -> check "level from yaws" False
-        Just level -> do
-            let (down, right) = cameraTilt level
-            checkShowing "camera tilt" (show (down, right)) (abs (down - 13) < 0.01 && abs (right - 4) < 0.01)
+        calibratedFrom = levelFromTurns . map relativeRot <=< traverse observe
+        sweep nodded from to =
+            let there = [from, from + 0.7 .. to]
+             in [seenFrom (rotYXZ y nodded 0) (V3 0 0 700) | y <- concat (replicate 3 (there ++ reverse there))]
+    forM_ [("either way", sweep 0 (-40) 40), ("either way, nodded", sweep 5 (-40) 40), ("to one side, nodded", sweep 5 0 40)] $ \(how, turning) ->
+        case calibratedFrom turning of
+            Nothing -> check ("level from turning " ++ how) False
+            Just level -> do
+                let (down, right) = cameraTilt level
+                checkShowing ("camera tilt from turning " ++ how) (show (down, right)) (abs (down - 13) < 0.01 && abs (right - 4) < 0.01)
+    case calibratedFrom (sweep 0 (-40) 40) of
+        Nothing -> check "level from turning" False
+        Just level ->
             forM_ [(20, 10, 5), (-30, -15, 0), (0, 0, 25)] $ \(y, p, r) ->
                 case observe (seenFrom (rotYXZ y p r) (V3 0 0 700)) of
                     Nothing -> check "levelled pose solved" False
@@ -89,7 +99,10 @@ tests = group "Pose" $ do
                         check
                             ("levelled pose " ++ show (y, p, r) ++ " got " ++ show hp)
                             (all (< 0.01) [abs (yaw hp - y), abs (pitch hp - p), abs (roll hp - r)])
-    check "too little turning" $ isNothing (levelFromYaws [identity, rotYXZ 2 0 0])
+    check "too little turning" $ isNothing (levelFromTurns [identity, rotYXZ 2 0 0])
+    -- Five seconds at 120 frames a second of a head held still, nodded 3
+    -- degrees from where it was recentered, is no turning at all.
+    check "a head held still is too little turning" $ isNothing (calibratedFrom (replicate 600 (seenFrom (rotYXZ 0 3 0) (V3 0 0 700))))
 
     check "identify" $ identify trackClip id [(297, 154), (254, 122), (249, 154)] == Just ((249, 154), (297, 154), (254, 122))
 

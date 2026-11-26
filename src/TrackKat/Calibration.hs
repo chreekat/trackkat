@@ -46,6 +46,7 @@ module TrackKat.Calibration (
     lostSight,
     changeClip,
     calibrateLevel,
+    levelFromTurns,
 
     -- * Windows of turning
     TurnWindow,
@@ -355,6 +356,19 @@ addTurn rot c
 -- that everyday turning goes on refining it.
 withLevel :: Level -> Calibration -> Calibration
 withLevel l = turnedAbout (upMemory / 2) (levelUp l)
+
+-- | Level axes whose vertical is the main axis of the given rotations of
+-- the head, one after another, each from the same reference, in camera
+-- axes, as from turning the head left and right when asked to: their turns
+-- counted as learning counts them (see Note [Learning up]). The result is
+-- Nothing if they come to less turning than learning uses an up after.
+levelFromTurns :: [M33] -> Maybe Level
+levelFromTurns rots = levelFromUp (pointingUp (snd (maximumBy (comparing fst) (turningAxes (upScatter swept))))) <$ usableUp swept
+  where
+    swept = fst (foldl' turn (defaultCalibration, Nothing) rots)
+    -- A turn ends once it shows an axis.
+    turn (c, Nothing) r = (c, Just r)
+    turn (c, Just r0) r = maybe (c, Just r0) (\c' -> (c', Just r)) (addTurn (r `mulMM` transpose r0) c)
 
 -- | A calibration whose turning, so many degrees of it, was all about the
 -- given up.
