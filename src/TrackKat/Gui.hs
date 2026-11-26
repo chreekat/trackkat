@@ -146,7 +146,7 @@ choose QuitChoice = ask QuitAction
 
 -- | Ask for something, as the window does, for 'takeActions'.
 ask :: Action -> IO ()
-ask a = forM_ (lookup a actionBits) (c_ask . shiftL 1)
+ask a = forM_ [b | (Asked a', b) <- actBits, a' == a] (c_ask . shiftL 1)
 
 windowCode :: WindowAtStart -> CInt
 windowCode WindowShown = 1
@@ -239,31 +239,43 @@ data Action
       KeyChosen Hotkey (Maybe KeyOrButton)
     deriving (Eq, Show)
 
--- | What the user asked for since the last call.
+-- | What the user asked for since the last call, in the order to act on
+-- it.
 takeActions :: IO [Action]
 takeActions = do
     bits <- c_take_actions
-    keys <- sequence [chosen k | (k, b) <- [(RecenterKey, 5), (PauseKey, 6), (TrimKey, 8), (AimKey, 13)], testBit bits b]
-    pure ([a | (a, b) <- actionBits, testBit bits b] ++ keys)
+    mapM taken [asked | (asked, b) <- actBits, testBit bits b]
   where
-    chosen k = do
+    taken (Asked a) = pure a
+    taken (KeyChosenFor k) = do
         code <- maybe (pure 0) (fmap fromIntegral . c_chosen_key) (list k)
         pure (KeyChosen k (keyFromCodes (code `shiftR` 16) (code .&. 0xFFFF)))
 
--- | As cbits/gui.c's ACT_ bits.
-actionBits :: [(Action, Int)]
-actionBits =
-    [ (RecenterAction, 0)
-    , (PauseAction, 1)
-    , (CalibrateAction, 2)
-    , (QuitAction, 3)
-    , (SaveAction, 4)
-    , (TrimAction, 7)
-    , (ClearCalibrationAction, 9)
-    , (OfferAction, 10)
-    , (CheckForUpdatesAction, 11)
-    , (AimAction, 12)
-    , (OpenSettingsAction, 14)
+-- | What an ACT_ bit of cbits/gui.c's asks for.
+data Asked
+    = Asked Action
+    | -- | a key was chosen for the hotkey's binding list: see hts_gui_chosen_key
+      KeyChosenFor Hotkey
+
+-- | cbits/gui.c's ACT_ bits, in the order 'takeActions' lists them.
+actBits :: [(Asked, Int)]
+actBits =
+    [ (Asked RecenterAction, 0)
+    , (Asked PauseAction, 1)
+    , (Asked CalibrateAction, 2)
+    , (Asked QuitAction, 3)
+    , (Asked SaveAction, 4)
+    , (Asked TrimAction, 7)
+    , (Asked ClearCalibrationAction, 9)
+    , (Asked OfferAction, 10)
+    , (Asked CheckForUpdatesAction, 11)
+    , (Asked AimAction, 12)
+    , -- After SaveAction, so the editor opens on the change saved with it.
+      (Asked OpenSettingsAction, 14)
+    , (KeyChosenFor RecenterKey, 5)
+    , (KeyChosenFor PauseKey, 6)
+    , (KeyChosenFor TrimKey, 8)
+    , (KeyChosenFor AimKey, 13)
     ]
 
 -- | The binding list waiting for a key or joystick button to add, if any.
