@@ -53,8 +53,6 @@ module TrackKat.Trackers (
     describeLightMoved,
 ) where
 
-import Data.Maybe (fromMaybe)
-
 import TrackKat.Branch (Evidence (..), describeEvidence)
 import TrackKat.Calibration (Calibration)
 import TrackKat.Config (WhichTracker (..))
@@ -76,7 +74,8 @@ import TrackKat.Tracker (
     describeSeen,
  )
 import qualified TrackKat.Tracker as New
-import TrackKat.World (Instant, Seconds, seconds, (.-.))
+import TrackKat.Tracker.Absence (Telling, noTelling, telling)
+import TrackKat.World (Instant)
 
 -- Note [Two trackers]
 -- ~~~~~~~~~~~~~~~~~~~
@@ -271,39 +270,20 @@ explainWhy :: Why -> String
 explainWhy (OldWhy why held) = Old.explainWhy why ++ maybe "" (("; " ++) . Old.explainHeld) held
 explainWhy (NewWhy why rivals) = New.explainWhy why ++ New.explainRivals (take 3 rivals)
 
--- | Since when the clip has been out of sight in every frame, if it is,
--- and when a user was last told why, with the reason given.
-data Absence = Absence !(Maybe Instant) !(Maybe (Instant, Why))
+-- | What is told of the clip staying out of sight, as either tracker
+-- gives reasons.
+type Absence = Telling Why
 
--- | The clip in sight, and nothing told.
+-- | See 'noTelling'.
 noAbsence :: Absence
-noAbsence = Absence Nothing Nothing
-
--- | How long the clip is out of sight, with lights enough in view to be
--- it, before a user is told why; and the least between two tellings.
-absenceSeconds, absenceQuiet :: Seconds
-absenceSeconds = seconds 1
-absenceQuiet = seconds 10
+noAbsence = noTelling
 
 -- | Take in a frame's outcome at the given time: a line for a user's log,
--- once the clip has been out of sight for 'absenceSeconds' with three
--- lights or more in view, saying why they aren't taken for it. It is told
--- once each time the clip goes out of sight, and again if the reason
--- changes, but never within 'absenceQuiet' of the last time. (As each
--- tracker's own @absence@ does of its own outcomes.)
+-- as 'telling' says.
 absence :: Instant -> Outcome -> Absence -> (Absence, Maybe String)
-absence _ Tracked{} (Absence _ told) = (Absence Nothing told, Nothing)
-absence now Lost{outBlobs = n, outWhy = why} (Absence since told)
-    | n >= 3 && now .-. began > absenceSeconds && due =
-        ( began `seq` Absence (Just began) (Just (now, why))
-        , Just ("The clip is out of sight, though " ++ show n ++ " lights are in view: " ++ describeWhy why ++ ".")
-        )
-    | otherwise = (began `seq` Absence (Just began) told, Nothing)
-  where
-    began = fromMaybe now since
-    due = case told of
-        Nothing -> True
-        Just (at, was) -> now .-. at >= absenceQuiet && (at < began || not (sameWhy was why))
+absence now outcome = telling sameWhy describeWhy now $ case outcome of
+    Tracked{} -> Nothing
+    Lost{outBlobs = n, outWhy = why} -> Just (n, why)
 
 -- * The old tracker's, as the new one's
 
