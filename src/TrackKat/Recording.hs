@@ -58,7 +58,7 @@ import TrackKat.Calibration (Calibration, defaultCalibration, parseCalibration)
 import TrackKat.Config (Config (..), clipModel, parseConfig, settingValues)
 import TrackKat.Frame (Stripe (..))
 import TrackKat.Number (parseExact, parseNatural, renderExact)
-import TrackKat.Pose (Intrinsics (..), defaultIntrinsics)
+import TrackKat.Pose (Intrinsics (..), Model (..), defaultIntrinsics)
 import TrackKat.Trackers
 import TrackKat.World (Instant, clockAt)
 
@@ -434,7 +434,7 @@ startTracking s = do
     config <- parseSettings (startSettings s)
     calibration <- case startCalibration s of
         FreshCalibration -> Right defaultCalibration
-        SavedCalibration text -> either (Left . ("calibration: " ++)) Right (parseCalibration text)
+        SavedCalibration text -> either (Left . ("calibration: " ++)) Right (parseCalibration (mMount (clipModel (clip config))) text)
     pure (Tracking (startIntrinsics s) (startSettings s) config (trackerFor (startIntrinsics s) config calibration))
 
 -- | A tracker as a recording's start describes it, unless its settings or

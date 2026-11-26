@@ -33,7 +33,7 @@ simulations = group "Visibility" $ do
     let temple = Clip tabs AsTape (Wear (rotYXZ 0 (-23) 0) side)
         truthHead = HeadShape (V3 0 (-90) (-15)) (V3 78 110 98)
         V3 px py pz = pivotInClip (clipWear temple)
-        learnt = either error id (parseCalibration ("up = 0 -0.9781476 -0.2079117\nturning = 900\npivot = " ++ unwords (map show [px, py, pz]) ++ "\npivot windows = 100\npivot information = 10 0 0 10 0 10\n"))
+        learnt = either error id (parseCalibration standardMounting ("up = 0 -0.9781476 -0.2079117\nturning = 900\npivot = " ++ unwords (map show [px, py, pz]) ++ "\npivot windows = 100\npivot information = 10 0 0 10 0 10\n"))
         turning t = 110 * sin (2 * pi * t / 12)
         path = [(t, headPose userCamera (clipWear temple) (turning t) (5 * sin (2 * pi * t / 5)) 0) | t <- framesAt 60 24]
         shown pose = length (clipDiscsOnHead defaultIntrinsics temple truthHead allLit pose)

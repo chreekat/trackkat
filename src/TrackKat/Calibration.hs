@@ -867,17 +867,17 @@ windowInfo saved = foldr add zeroM [(min limit (max 0 e), u) | (e, u) <- eigenSy
 olderWindowPoses :: Int
 olderWindowPoses = round (inSeconds windowSeconds * inPerSecond (frameRate world))
 
--- | Read a calibration file. Settings it lacks start from scratch; the
--- error names the offending line.
-parseCalibration :: String -> Either String Calibration
-parseCalibration str = do
+-- | Read a calibration file saved for a clip mounted as given. Settings it
+-- lacks start from scratch; the error names the offending line.
+parseCalibration :: Mounting -> String -> Either String Calibration
+parseCalibration mount str = do
     s <- foldl' line (Right emptyFile) (zip [1 :: Int ..] (lines str))
     let up = maybe cameraUp normalize (fUp s)
         -- Earlier builds remembered twice as much turning.
         weight = min upMemory (fromMaybe 0 (fTurning s))
         info = maybe zeroM windowInfo (fInfo s)
-        pivot = fromMaybe (estimatedPivot defaultCalibration) (fPivot s)
-        prior = pivotPrior defaultCalibration
+        prior = mountPivot mount
+        pivot = fromMaybe prior (fPivot s)
     pure
         ( turnedAbout
             weight

@@ -28,7 +28,7 @@ tests = group "Calibration" $ do
     -- behind it, is above and in front of the pivot, its left reflector
     -- (as the camera sees it) on the wearer's right; a clip turned 90
     -- degrees, facing the camera from the side of the head, is on that side.
-    let calibrated up = either error id (parseCalibration ("up = " ++ up ++ "\nturning = 900\npivot = 0 100 100\npivot windows = 40\n"))
+    let calibrated up = either error id (parseCalibration standardMounting ("up = " ++ up ++ "\nturning = 900\npivot = 0 100 100\npivot windows = 40\n"))
         middle (l, r, _) = 0.5 *^ (l ^+^ r)
         sides (l, r, t) = map norm [r ^-^ l, t ^-^ l, t ^-^ r]
         clipSides = sides (mLeft headset, mRight headset, mTop headset)
@@ -36,7 +36,7 @@ tests = group "Calibration" $ do
     check "no clip on the head before anything is learnt" $
         all isNothing [learntClip headset (Just facing) defaultCalibration, learntClip headset Nothing (calibrated "0 -1 0")]
     check "no clip on the head with only the level learnt" $
-        isNothing (learntClip headset (Just facing) (either error id (parseCalibration "up = 0 -1 0\nturning = 900\n")))
+        isNothing (learntClip headset (Just facing) (either error id (parseCalibration standardMounting "up = 0 -1 0\nturning = 900\n")))
     case learntClip headset (Just facing) (calibrated "0 -1 0") of
         Nothing -> check "clip on the head once learnt" False
         Just placed@(l, r, _) -> do
@@ -49,7 +49,7 @@ tests = group "Calibration" $ do
     -- A pivot learnt 192 mm below the clip, 26 behind it and 1 to the
     -- left, as the user's was: the lower pair sits that far above and in
     -- front of it.
-    let lowPivot = either error id (parseCalibration "up = 0 -1 0\nturning = 900\npivot = 1 192 26\npivot windows = 40\n")
+    let lowPivot = either error id (parseCalibration standardMounting "up = 0 -1 0\nturning = 900\npivot = 1 192 26\npivot windows = 40\n")
     checkShowing "a low pivot described" (describePivotBriefly (Just facing) lowPivot) $
         "Neck pivot 192±40 mm below the clip, 26±40 behind, 1±40 to your left;" `isPrefixOf` describePivotBriefly (Just facing) lowPivot
     case learntClip headset (Just facing) lowPivot of
@@ -76,20 +76,28 @@ tests = group "Calibration" $ do
         closeTo (appliedPivot (newLearner (mounted sideways headset) defaultCalibration)) (V3 (-60) 100 60)
             && closeTo (appliedPivot (newLearner headset defaultCalibration)) (V3 0 100 100)
 
+    -- A pivot learnt for a clip mounted otherwise loads as it was saved,
+    -- start after start.
+    let sidewaysClip = mounted sideways headset
+        restarted c = parseCalibration (mMount sidewaysClip) (renderCalibration (learnerCalibration (newLearner sidewaysClip c)))
+        savedSideways = parseCalibration (mMount sidewaysClip) "up = 0 -1 0\nturning = 900\npivot = -50 120 70\npivot windows = 40\npivot information = 4 0.5 0 2 0 3\n"
+    checkShowing "a pivot of a clip mounted otherwise, loaded again and again" (show (estimatedPivot <$> (restarted =<< restarted =<< savedSideways))) $
+        either (const False) (closeV (V3 (-50) 120 70) . estimatedPivot . learnerCalibration . newLearner sidewaysClip) (restarted =<< restarted =<< savedSideways)
+
     -- A calibration saved by earlier builds, whose information was the
     -- windows' normal matrices, loads with its pivot as it was, but is taken
     -- for no surer than a tenth of what is now remembered.
     let older = "up = 0 -0.9 0.4\nturning = 3000\npivot = 3 192 26\npivot windows = 160\npivot information = 400 10 5 30 2 380\n"
-    case parseCalibration older of
+    case parseCalibration standardMounting older of
         Left err -> checkShowing "an older calibration loads" (err) False
         Right loaded -> do
             check "an older calibration's pivot" $ closeV (estimatedPivot loaded) (V3 3 192 26)
             checkShowing "an older calibration's pivot is taken as unsure" (show [pivotSpreadAlong loaded u | u <- [V3 1 0 0, V3 0 1 0, V3 0 0 1]]) $
                 all (\u -> pivotSpreadAlong loaded u > 9) [V3 1 0 0, V3 0 1 0, V3 0 0 1]
-    check "empty calibration file" $ fmap renderCalibration (parseCalibration "") == Right (renderCalibration defaultCalibration)
-    check "bad up" $ isLeft (parseCalibration "up = 0 0 0\n")
-    check "bad line" $ isLeft (parseCalibration "# fine\nnonsense\n")
-    check "unknown calibration setting" $ either id (const "") (parseCalibration "tilt = 3\n") == "line 1: unknown setting \"tilt\""
+    check "empty calibration file" $ fmap renderCalibration (parseCalibration standardMounting "") == Right (renderCalibration defaultCalibration)
+    check "bad up" $ isLeft (parseCalibration standardMounting "up = 0 0 0\n")
+    check "bad line" $ isLeft (parseCalibration standardMounting "# fine\nnonsense\n")
+    check "unknown calibration setting" $ either id (const "") (parseCalibration standardMounting "tilt = 3\n") == "line 1: unknown setting \"tilt\""
     tree properties
 
 properties :: TestTree
@@ -98,7 +106,7 @@ properties =
         "properties"
         [ testProperty "a calibration file is loaded as it says" $
             \file ->
-                case parseCalibration (savedText file) of
+                case parseCalibration standardMounting (savedText file) of
                     Left err -> counterexample err False
                     Right c ->
                         conjoin
@@ -111,13 +119,13 @@ properties =
                             ]
         , testProperty "a calibration saved, loaded and saved again is saved the same" $
             \file ->
-                case parseCalibration (savedText file) of
+                case parseCalibration standardMounting (savedText file) of
                     Left err -> counterexample err False
                     Right c ->
                         let settings = map (unwords . map unsigned . words) . filter ((/= "#") . take 1) . lines
                             -- A number that rounds to nothing from below is written so.
                             unsigned number = if number == "-0" then "0" else number
-                         in fmap (settings . renderCalibration) (parseCalibration (renderCalibration c)) === Right (settings (renderCalibration c))
+                         in fmap (settings . renderCalibration) (parseCalibration standardMounting (renderCalibration c)) === Right (settings (renderCalibration c))
         ]
 
 -- | What a calibration file says: up, the turning it was learnt from, the
@@ -279,7 +287,7 @@ simulations = group "Calibration" $ do
     -- Saving and loading.
     let saved = renderCalibration c
         closeV a b = norm (a ^-^ b) < 1e-3
-        reloaded = parseCalibration saved
+        reloaded = parseCalibration standardMounting saved
         loadedSo holds = either (const False) holds reloaded
     checkShowing "calibration loads" (either id (const "") reloaded) $ loadedSo (const True)
     check "calibration round-trips" $ loadedSo $ \loaded -> renderCalibration loaded == saved
@@ -297,9 +305,9 @@ simulations = group "Calibration" $ do
     -- A saved pivot in front of and above the clip was learnt from mirror
     -- images; it is forgotten on loading, and the level with it.
     let polluted = "up = 0 -0.9 0.4\nturning = 3000\npivot = 0 -60 -40\npivot windows = 120\npivot information = 500 0 0 500 0 500\n"
-    check "a saved pivot in front of the clip is forgotten" $ case screenCalibration clipBent <$> parseCalibration polluted of
+    check "a saved pivot in front of the clip is forgotten" $ case screenCalibration clipBent <$> parseCalibration standardMounting polluted of
         Right (Left _) -> True
         _ -> False
-    check "a plausible saved pivot is kept" $ case screenCalibration headset <$> parseCalibration saved of
+    check "a plausible saved pivot is kept" $ case screenCalibration headset <$> parseCalibration standardMounting saved of
         Right (Right kept) -> renderCalibration kept == saved
         _ -> False

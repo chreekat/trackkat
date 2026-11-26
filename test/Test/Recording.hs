@@ -447,7 +447,7 @@ instance Arbitrary Beginning where
 beginning :: Beginning -> Either String (Start, Session)
 beginning (Beginning settings calibration) = do
     config <- parseConfig settings
-    learnt <- maybe (Right defaultCalibration) parseCalibration calibration
+    learnt <- maybe (Right defaultCalibration) (parseCalibration (mMount (clipModel (clip config)))) calibration
     pure (startOfSession ["a session of trackkat"] settings calibration 0, newSession config learnt)
 
 -- | What a calibration file may say, if there is one: nothing learnt, or

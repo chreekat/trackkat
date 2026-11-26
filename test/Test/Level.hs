@@ -47,7 +47,7 @@ simulations = group "Level" $ do
         upOf (down, right) = mulMV (rotYXZ 0 down 0 `mulMM` rotYXZ 0 0 right) (V3 0 (-1) 0)
         off c up = angleBetween (levelUp (estimatedLevel c)) up * 180 / pi
         camera = (12, 4)
-        startingAt (down, right) = either error id (parseCalibration ("up = " ++ unwords (map show (let V3 x y z = upOf (down, right) in [x, y, z])) ++ "\nturning = 3600\n"))
+        startingAt (down, right) = either error id (parseCalibration standardMounting ("up = " ++ unwords (map show (let V3 x y z = upOf (down, right) in [x, y, z])) ++ "\nturning = 3600\n"))
     -- A level learnt 25 degrees off, as an earlier way of learning could
     -- hold on to, is learnt again within three minutes, and with it the
     -- pivot of a centred clip is told under the head again, not off to one

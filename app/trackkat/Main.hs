@@ -459,7 +459,7 @@ loadCalibration m path = do
     let (calibration, told) = startingCalibration path (fmap snd <$> found)
     pure (calibration, told, either (const Nothing) (Just . fst) =<< found)
   where
-    read' text = (text,) <$> (screenCalibration m =<< parseCalibration text)
+    read' text = (text,) <$> (screenCalibration m =<< parseCalibration (mMount m) text)
 
 -- | Save each calibration handed over, only the latest when several wait,
 -- so that saving never holds up tracking. The file is replaced whole.
