@@ -201,8 +201,13 @@ handOver exe args = do
 -- | Start a program, such as a trackkat.exe, with these arguments, and no
 -- console window. Left is a Windows error code.
 launch :: FilePath -> [String] -> IO (Either Int ())
-launch exe args =
-    withCWString exe $ \e -> withCWString (unwords (quote exe : args)) $ \c -> withCWString (takeDirectory exe) $ \d -> do
+launch exe args = start exe (unwords (quote exe : args))
+
+-- | Start a program with a command line, which names it first, as 'launch'
+-- does: for cmd, which splits its command line its own way.
+start :: FilePath -> String -> IO (Either Int ())
+start exe line =
+    withCWString exe $ \e -> withCWString line $ \c -> withCWString (takeDirectory exe) $ \d -> do
         rc <- c_start e c d
         pure (if rc < 0 then Left (fromIntegral (negate rc)) else Right ())
 
@@ -343,18 +348,17 @@ uninstall how = do
         names <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
         mapM_ (\n -> deleteAll (installRoot p </> n)) names
         _ <- try (removeDirectory (installRoot p)) :: IO (Either IOException ())
+        left <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
         rest <- doesDirectoryExist (installRoot p)
         comspec <- fromMaybe "C:\\Windows\\System32\\cmd.exe" <$> lookupEnv "ComSpec"
-        let removeRoot = comspec ++ " /d /c rd /s /q " ++ quote (installRoot p)
+        let root = quote (installRoot p)
+            cmd command = quote comspec ++ " /d /c " ++ command
         lockedByGames <-
             if not rest
                 then pure False
                 else do
-                    -- This trackkat.exe, and the DLLs it loaded, go once it has quit.
-                    _ <- launch comspec ["/d", "/c", "ping -n 4 127.0.0.1 >nul & rd /s /q", quote (installRoot p)]
-                    others <- filter (not . inside (exeDir p)) <$> filesUnder (installRoot p)
-                    unless (null others) $ () <$ withCWString pendingUninstall (\n -> withCWString removeRoot (\c -> c_set_run n c 1))
-                    pure (not (null others))
+                    _ <- withCWString pendingUninstall $ \n -> withCWString (cmd ("rd /s /q " ++ root)) $ \c -> c_set_run n c 1
+                    any (not . inside (exeDir p)) <$> filesUnder (installRoot p)
         unless keepSettings $ () <$ (try (removePathForcibly (settingsDir p)) :: IO (Either IOException ()))
         let done =
                 "trackkat is uninstalled."
@@ -364,6 +368,12 @@ uninstall how = do
         case how of
             AskFirst -> () <$ ask done 0
             Quietly -> pure ()
+        -- What this process holds, its trackkat.exe and the DLLs it loaded,
+        -- goes once it has quit: tried each second for half a minute.
+        when rest $ do
+            -- The folders left now, so that one a reinstall makes meanwhile stays.
+            let removeLeft = concatMap (\n -> "rd /s /q " ++ quote (installRoot p </> n) ++ " 2>nul & ") left
+            () <$ start comspec (cmd ("for /l %i in (1,1,30) do @if exist " ++ root ++ " (" ++ removeLeft ++ "rd " ++ root ++ " 2>nul & if exist " ++ root ++ " ping -n 2 127.0.0.1 >nul)"))
   where
     ask text kind = withCWString text $ \t -> c_ask t kind
     inside dir path = map toLower (addTrailingPathSeparator (normalise dir)) `isPrefixOf` map toLower (addTrailingPathSeparator (normalise path))
