@@ -10,9 +10,10 @@ import Data.Char (toLower, toUpper)
 import Data.Either (isLeft)
 import Data.List (intercalate, isPrefixOf, isSuffixOf, sort)
 import Data.Maybe (isNothing)
-import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removePathForcibly)
+import System.Directory (doesFileExist)
 import System.FilePath (pathSeparator, (</>))
 import System.IO (readFile')
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase)
 import Test.Tasty.QuickCheck
@@ -111,15 +112,11 @@ tests = group "Release" $ do
 -- outside its folder, has folders, lacks trackkat.exe or isn't a zip is
 -- refused, nothing written outside.
 unpacking :: TestTree
-unpacking = testCase "unpacking a release's zip" $ do
-    tmp <- getTemporaryDirectory
-    let work = tmp </> "trackkat-test-unzip"
-        zipOf files = fromArchive (foldr (addEntryToArchive . (\(n, b) -> toEntry n 0 (BL.fromStrict (C.pack b)))) emptyArchive files)
+unpacking = testCase "unpacking a release's zip" $ withSystemTempDirectory "trackkat-test-unzip" $ \work -> do
+    let zipOf files = fromArchive (foldr (addEntryToArchive . (\(n, b) -> toEntry n 0 (BL.fromStrict (C.pack b)))) emptyArchive files)
         unpack name files = do
             BL.writeFile (work </> (name ++ ".zip")) (zipOf files)
             extractRelease (work </> (name ++ ".zip")) (work </> name)
-    removePathForcibly work
-    createDirectory work
     good <- unpack "good" [("trackkat.exe", "exe"), ("README.md", replicate 5000 'x')]
     exe <- readFile' (work </> "good" </> "trackkat.exe")
     readme <- readFile' (work </> "good" </> "README.md")
@@ -140,7 +137,6 @@ unpacking = testCase "unpacking a release's zip" $ do
     B.writeFile (work </> "junk.zip") (C.pack "not a zip")
     junk <- extractRelease (work </> "junk.zip") (work </> "junk")
     assertBool "a file that isn't a zip" (isLeft junk)
-    removeDirectoryRecursive work
 
 properties :: TestTree
 properties =

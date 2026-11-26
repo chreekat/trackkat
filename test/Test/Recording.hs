@@ -21,8 +21,8 @@ import Data.Either (isLeft)
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf, mapAccumL, nub)
 import Data.Word (Word64, Word8)
-import System.Directory (getTemporaryDirectory, removePathForcibly)
 import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup, withResource)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
@@ -78,9 +78,8 @@ simulations =
                             _ -> False
                         Left _ -> False
                 ]
-        , testCase "a session of trackkat, its threads recording it to a file as it goes, replays from the file to what its tracker came to" $ do
-            tmp <- getTemporaryDirectory
-            let path = tmp </> "trackkat-test-session-recording.txt"
+        , testCase "a session of trackkat, its threads recording it to a file as it goes, replays from the file to what its tracker came to" $ withSystemTempDirectory "trackkat-test-session" $ \tmp -> do
+            let path = tmp </> "recording.txt"
                 moves = [Connect, See 0 0, Ask ToMark, See 2 0, Save defaultConfig{lightMasking = NoMasking}, See 4 1, Ask ToClear, Corrupt, See 6 1, Ask ToCalibrate, See 4 0, Stop "The camera stopped.", Ask ToRecenter, See 2 0]
                 began = Beginning (renderConfig defaultConfig) Nothing
             (start, session0) <- either (assertFailure . ("the session's start: " ++)) pure (beginning began)
@@ -93,7 +92,6 @@ simulations =
                 ending @?= Whole
                 pure came
             whole <- B.readFile path
-            removePathForcibly path
             fmap replayedTo (replay =<< parseRecording (BL.fromStrict whole)) @?= Right live
             assertBool (show live) (length live == 6)
         , testCase "a recording is replayed by the tracker it says, and by the old one if it doesn't say, as those made before there were two" $
@@ -132,9 +130,8 @@ reading session holds = do
 -- fewer entries than a recorder's 'backlog', so that however slowly they
 -- are written, none is dropped.
 recordSession :: IO ([String], BL.ByteString)
-recordSession = do
-    tmp <- getTemporaryDirectory
-    let path = tmp </> "trackkat-test-recording.txt"
+recordSession = withSystemTempDirectory "trackkat-test-recording" $ \tmp -> do
+    let path = tmp </> "recording.txt"
     t0 <- orFail "the session's start: " (startTracking sessionStart)
     live <- withRecorder path sessionStart (const (pure ())) $ \opened -> do
         rec <- orFail "the session's file: " opened
@@ -145,7 +142,6 @@ recordSession = do
                 (stepped (trackingTracker t') o evs :) <$> go t' rest
         go t0 recordedSession
     whole <- B.readFile path
-    removePathForcibly path
     pure (live, BL.fromStrict whole)
   where
     orFail what = either (\err -> ioError (userError (what ++ err))) pure
@@ -329,9 +325,8 @@ properties =
             readIORef told >>= \whys -> assertBool (show whys) (map ("no space left" `isInfixOf`) whys == [True])
             got <- text
             fmap recEntries (parseRecording got) @?= Right [InputEntry sessionClock (Mark i) | i <- [1, 2]]
-        , testCase "a file that can't be written to is no recorder, and says why" $ do
-            tmp <- getTemporaryDirectory
-            said <- withRecorder (tmp </> "trackkat-test-no-such-folder" </> "recording.txt") sessionStart (const (pure ())) $ \case
+        , testCase "a file that can't be written to is no recorder, and says why" $ withSystemTempDirectory "trackkat-test-recorder" $ \tmp -> do
+            said <- withRecorder (tmp </> "no-such-folder" </> "recording.txt") sessionStart (const (pure ())) $ \case
                 Left why -> pure (Just why)
                 Right _ -> pure Nothing
             assertBool (show said) (maybe False (not . null) said)
