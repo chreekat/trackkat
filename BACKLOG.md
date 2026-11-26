@@ -91,81 +91,101 @@ Roughly in order.
     view). Still open: keeping the user's own comments and order when the
     window saves a change, as the file does now; and reading an old
     trackkat.conf once, to write it anew.
+13. Whether the camera comes back by itself after the computer sleeps with
+    reads that never finish is untested on real hardware: try it.
+14. Calibrate now needs 180 degrees of counted turning in its 5 s: check with
+    the real camera that an ordinary left-right sweep passes, and if not
+    lengthen the sweep or give it its own threshold.
+15. The memory tests (`Test.Memory`, `Test.Old.Memory`, and the one in
+    `Test.Trackers`) measure the whole process's live heap, so they would be
+    wrong if tests ran in parallel. The suite should run in parallel and
+    still pass: they want a measure of what the tracker itself holds that
+    leans neither on a GHC-internal heap walk nor on running one test at a
+    time.
 
 ## Low priority
 
-13. Everyday learning takes up as the main axis of turning nearest the
+16. Everyday learning takes up as the main axis of turning nearest the
     camera's own up (see Note [Learning up]), so a camera tipped or rolled
     more than 45 degrees, which Calibrate now can still level, has its level
     pulled onto the axis of nods or tilts as turning goes on. Keep the
     calibrated up as the axis to stay nearest, if such cameras turn up.
 
-14. Predict which reflectors are out of sight in tracking: `TrackKat.Visibility`
+17. Predict which reflectors are out of sight in tracking: `TrackKat.Visibility`
     says which tape faces away and which the head hides, but in simulation
     leaving those out of matching, and following two reflectors longer while
     the third is predicted hidden, didn't help (see Note [Seeing the
     reflectors]). Try again once merged blobs split well looking up, where it
     made poses wrong less often but lost the clip more.
-15. Tune the RTS only if the status line's latency and GC figures show a need.
-16. Apply the clip shape estimated from movement (see docs/details.md), once
+18. Tune the RTS only if the status line's latency and GC figures show a need.
+19. Apply the clip shape estimated from movement (see docs/details.md), once
     it has proven itself on real clips: re-solve its linearization about the
     estimate (it falls short of a far different shape by about a tenth), keep
     it with the calibration, and offer to write it to `clip`.
-17. Find the source of the wiggle after a fast head turn (the view overshoots
+20. Find the source of the wiggle after a fast head turn (the view overshoots
     and comes back): print, per snap, the overshoot in the raw pose, the fit
     error during it, and the overshoot sent to the game. If the rebound is real
     head motion, consider negative inertia (IBM TrackPoint) to make stops crisp;
     if the fit worsens, the clip's post is swinging.
-18. Per-game profiles. Not wanted for now: good defaults instead.
-19. The window (880 px tall at 100%) scrolls when the screen is shorter, but
+21. Per-game profiles. Not wanted for now: good defaults instead.
+22. The window (880 px tall at 100%) scrolls when the screen is shorter, but
     tabbing to a control scrolled out of sight doesn't scroll it into view.
-20. Two identical controllers (e.g. a pair of T.16000Ms for "HOSAS"): they are
+23. Two identical controllers (e.g. a pair of T.16000Ms for "HOSAS"): they are
     told apart by sorting device paths, so unplugging one renumbers the other.
     Identify each by its USB port, so a binding follows the stick in that
     port. Thrustmaster sticks report no serial number (their instance ids
     end in a port-derived 6&...&0&N), so the port is all there is. The T.16000M's left/right-handed
     switch doesn't change its USB identity, so it doesn't help.
-21. Head movements as desktop controls (switching virtual desktops or window
+24. Head movements as desktop controls (switching virtual desktops or window
     manager panes), on Linux too.
+25. Changing hotkey bindings from two threads at once can apply the older
+    settings last. A lock around reading the session's settings and
+    rebinding would order them; rare, since each change is one call.
+26. A game whose process ID is reused before trackkat looks again counts as
+    still tracking. If it matters, hold a SYNCHRONIZE handle per game slot:
+    an ID can't be reused while one is open.
+27. C files don't recompile when only a header they include changes (cabal
+    compares the .c with its .o): touch the .c, or build clean, after
+    editing a header.
 
 ## Promises that don't hold yet
 
 Things the code looks as if it promises, or that would be good to promise,
 that tests found false. None is fixed.
 
-22. A frame is dropped if its stripe bytes happen to spell the next frame's
+28. A frame is dropped if its stripe bytes happen to spell the next frame's
     header.
-23. The mirror-image belief's least chance (`Belief.leastChance`) is applied
+29. The mirror-image belief's least chance (`Belief.leastChance`) is applied
     before scaling, so strong evidence goes below it; `normalise` is not
     idempotent.
-24. A saved level more than about 45° from the camera's reloads as a
+30. A saved level more than about 45° from the camera's reloads as a
     perpendicular one.
-25. `verdict`'s accepted score and `score` sum in different orders and can
+31. `verdict`'s accepted score and `score` sum in different orders and can
     differ in the last bit; a NaN score is accepted.
-26. `rotationVector` loses turns below about 1e-7 rad; `rotateToward` does
+32. `rotationVector` loses turns below about 1e-7 rad; `rotateToward` does
     not turn toward the exactly opposite direction; `levelFromUp (V3 0 0 1)`
     is not a rotation.
-27. Not every `Config` value survives render-then-parse: out-of-range
+33. Not every `Config` value survives render-then-parse: out-of-range
     steadiness, empty or sub-0.0001 Points, joystick names ending in "(n)".
-28. `parseNumber` is not correctly rounded and accepts "--5"; `renderNumber`
+34. `parseNumber` is not correctly rounded and accepts "--5"; `renderNumber`
     can write "-0".
-29. A Points curve can turn back by one ulp at a knot.
-30. `Belief.weighed` given a score that is impossible both ways, alike and
+35. A Points curve can turn back by one ulp at a knot.
+36. `Belief.weighed` given a score that is impossible both ways, alike and
     unalike, gives no belief but not-a-numbers; nothing gives it one today,
     as how far a head is turned is never scored impossible.
-31. `NoTrim` and a trim of zero disagree once the curved view passes half a
+37. `NoTrim` and a trim of zero disagree once the curved view passes half a
     turn.
-32. `solvePose` promises reprojection, not pose: up to about 0.07° and
+38. `solvePose` promises reprojection, not pose: up to about 0.07° and
     0.16 mm off at under 1e-3 px.
-33. `parseVersion "0.1" < parseVersion "0.1.0"`.
-34. `matches` considers only the first 8 blobs, in the order given.
-35. The most a way of making out the clip is reckoned to score, before it is
+39. `parseVersion "0.1" < parseVersion "0.1.0"`.
+40. `matches` considers only the first 8 blobs, in the order given.
+41. The most a way of making out the clip is reckoned to score, before it is
     solved, is right only to within a slack (`Tracker.Choose.boundSlack`):
     what the sizes say is reckoned at a few distances, not all.
-36. One frame of the clip's three blobs, with nothing else known, is at
+42. One frame of the clip's three blobs, with nothing else known, is at
     some poses less than nine times likelier the clip than not, nearer than
     about 400 mm, and isn't taken until it is.
-37. Before any size is learnt, a blob just where a reflector should be, a
+43. Before any size is learnt, a blob just where a reflector should be, a
     ninth the size of the other two or less, ranks below that reflector
     unseen and the blob a stray. `alikeness` counts a blob as all of its
     reflector by how likely that is of the blob alone (`readWhole`), which
@@ -176,32 +196,32 @@ that tests found false. None is fixed.
     small blob teaches (`learntFrom`) and how much its place counts
     (`sightWeight`, by the size expected before any is learnt) are reckoned
     of the blob alone likewise.
-38. Two blobs are one reflector's pieces only inside a round disc of their
+44. Two blobs are one reflector's pieces only inside a round disc of their
     pixels, and tape on a curved tab shows wider than tall: a piece at its
     end is left a stray. And what the second piece gains (`pieces`) is
     reckoned as for halves, the least it can be; a chip's centre has a
     quarter the room.
-39. The clip followed onto a light beside a reflector gone dark keeps to
+45. The clip followed onto a light beside a reflector gone dark keeps to
     the light for a few frames after the reflector shows again, until doubt
     outweighs the turn back.
-40. A settings reload that changes nothing still rebinds hotkeys and
+46. A settings reload that changes nothing still rebinds hotkeys and
     re-shows settings.
-41. Keys and buttons are only looked at when frames arrive, so they do nothing
+47. Keys and buttons are only looked at when frames arrive, so they do nothing
     while the camera is away, and then every press made meanwhile acts at
     once when it is back, up to 64 presses and releases; and a hold begins,
     and a tap that waited on a double is made, only at a frame.
-42. A key whose release Windows never tells of, as when the screen is locked
+48. A key whose release Windows never tells of, as when the screen is locked
     while it is down, stays held, and aiming its hold began stays on, until
     the key is next pressed.
-43. With two keys down that each aim while held, letting go of either ends
+49. With two keys down that each aim while held, letting go of either ends
     aiming.
-44. `describeChanges` says a list of bindings emptied as `trim = `, with a
+50. `describeChanges` says a list of bindings emptied as `trim = `, with a
     space after it.
-45. Pause after a recenter with the clip out of sight holds the centered
+51. Pause after a recenter with the clip out of sight holds the centered
     view, not the pose games last saw.
-46. A "Check for updates" click with no network still puts off the next
+52. A "Check for updates" click with no network still puts off the next
     automatic look by four hours.
-47. The trim log line can print "-0".
-48. A failed write of the served-game file is never retried.
-49. Camera diagnostics ("# …" lines) are developer lines but go to the
+53. The trim log line can print "-0".
+54. A failed write of the served-game file is never retried.
+55. Camera diagnostics ("# …" lines) are developer lines but go to the
     window log.
