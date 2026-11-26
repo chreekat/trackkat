@@ -107,8 +107,9 @@ jobs:
         run: |
           $usb = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "ucrt64"
           "USB_PREFIX=$usb" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # trackkat.exe links the icon, and knows its version (TrackKat.Build).
-          @('package trackkat', '  flags: +icon', ('  ghc-options: "-DTRACKKAT_VERSION=\"{0}\""' -f $env:TRACKKAT_VERSION)) |
+          # trackkat.exe links the icon, and knows its version (TrackKat.Build);
+          # trackkat builds without warnings, as its C does.
+          @('package trackkat', '  flags: +icon', ('  ghc-options: -Werror "-DTRACKKAT_VERSION=\"{0}\""' -f $env:TRACKKAT_VERSION)) |
             Out-File -FilePath cabal.project.local -Encoding ascii
           cabal build all --enable-tests `
             --extra-include-dirs="$usb\include" --extra-lib-dirs="$usb\lib"
