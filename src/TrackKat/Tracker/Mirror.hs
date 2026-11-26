@@ -11,7 +11,7 @@ module TrackKat.Tracker.Mirror (
     tellApart,
 ) where
 
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (isJust)
 
 import TrackKat.Branch
 import TrackKat.Frame (Blob)
@@ -67,14 +67,18 @@ data Told = Told
 -- its mirror image whichever of the pose and the centre is surely that.
 tellApart :: Intrinsics -> Model -> V3 -> Instant -> Clarity -> Pose -> Three (Maybe Sight) -> Centre -> Told
 tellApart k m pivot now clear seenPose sights (Centre centre believed) =
-    Told pose (Centre reference (corrected fix seenPose watched)) fix (branchEvidence watched)
+    Told pose (Centre reference (corrected fix seenPose watched)) fix (branchEvidence watched){evCorrection = fix}
   where
     others = if all isJust sights then Just (alternatives k m seenPose) else Nothing
     watched = watch now pivot centre clear seenPose others believed
-    (pose, fix) = case (correction watched, followedMirror watched) of
-        (c, Just other) | c `elem` [MirrorTracked, MirrorBoth] -> (other, c)
-        (MirrorReference, _) -> (seenPose, MirrorReference)
+    -- A pose is switched only for a mirror image it has, and what is
+    -- believed is switched only for the poses switched.
+    referenceMirror = centre >>= mirrorPose k m
+    (pose, fix) = case (correction watched, followedMirror watched, referenceMirror) of
+        (MirrorBoth, Just other, Just _) -> (other, MirrorBoth)
+        (c, Just other, _) | c `elem` [MirrorTracked, MirrorBoth] -> (other, MirrorTracked)
+        (MirrorReference, _, Just _) -> (seenPose, MirrorReference)
         _ -> (seenPose, MirrorNeither)
     reference
-        | fix `elem` [MirrorReference, MirrorBoth] = (\old -> fromMaybe old (mirrorPose k m old)) <$> centre
+        | fix `elem` [MirrorReference, MirrorBoth] = referenceMirror
         | otherwise = centre
