@@ -62,6 +62,7 @@ import System.FilePath (dropTrailingPathSeparator, equalFilePath, isAbsolute, sp
 import Codec.Archive.Zip (Entry (..), fromEntry, toArchiveOrFail, zEntries)
 
 import TrackKat.Number (parseNatural, renderNatural)
+import TrackKat.World (Seconds, seconds)
 
 -- | A release's version: numbers compared in order, as 0.1.123, and what
 -- built it, as a commit, which comparisons ignore.
@@ -308,14 +309,18 @@ newerInstalled Portable _ = Nothing
 newest :: [Version] -> Maybe Version
 newest = listToMaybe . sortOn Down
 
--- | Which of the install root's entries to delete, given where trackkat
--- runs from: the folders of older versions, and unpacking left unfinished.
--- Only the newest installed version cleans up.
-staleFolders :: Placement -> [String] -> [String]
+-- | Which of the install root's entries, each with how long since it last
+-- changed, to delete, given where trackkat runs from: the folders of older
+-- versions, and unpacking left unfinished. Only the newest installed
+-- version cleans up.
+staleFolders :: Placement -> [(String, Seconds)] -> [String]
 staleFolders Portable _ = []
-staleFolders (Installed own) names = filter stale names
+staleFolders (Installed own) entries = [n | (n, untouched) <- entries, stale n untouched]
   where
-    stale n = partialSuffix `isSuffixOf` n || maybe False (< own) (folderVersion n)
+    -- Unpacking younger than an hour may be another trackkat's, installing.
+    stale n untouched
+        | partialSuffix `isSuffixOf` n = untouched >= seconds 3600
+        | otherwise = maybe False (< own) (folderVersion n)
 
 -- | What to do with a settings file found beside trackkat.exe, as older
 -- versions kept them.

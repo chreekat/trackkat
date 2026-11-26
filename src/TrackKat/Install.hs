@@ -27,6 +27,7 @@ import Control.Monad (filterM, forM, forM_, unless, when)
 import Data.Char (toLower)
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Data.Word (Word32)
 import Foreign.C.String (CString, CWString, peekCString, peekCWString, withCWString)
 import Foreign.C.Types (CInt (..))
@@ -42,6 +43,7 @@ import TrackKat.Config (Startup (..))
 import TrackKat.Gui (quitRunning)
 import TrackKat.Release
 import TrackKat.TextFile (readText)
+import qualified TrackKat.World as World
 
 foreign import ccall unsafe "hts_known_folder" c_known_folder :: CInt -> CWString -> CInt -> IO CInt
 foreign import ccall safe "hts_make_shortcut" c_make_shortcut :: CWString -> CWString -> CWString -> IO CInt
@@ -209,7 +211,11 @@ waitForExit pid seconds = (/= 0) <$> c_wait_exit (fromIntegral pid) (fromIntegra
 cleanUp :: (String -> IO ()) -> Paths -> Placement -> IO Bool
 cleanUp say p place = do
     names <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
-    left <- forM (staleFolders place names) $ \name -> do
+    now <- getCurrentTime
+    entries <- forM names $ \name -> do
+        changed <- either (\e -> const now (e :: IOException)) id <$> try (getModificationTime (installRoot p </> name))
+        pure (name, World.seconds (realToFrac (diffUTCTime now changed)))
+    left <- forM (staleFolders place entries) $ \name -> do
         gone <- deleteFolder (installRoot p </> name)
         when (gone && not (partialSuffix `isSuffixOf` name)) $ say ("Removed trackkat " ++ name ++ ", which is no longer used.")
         pure (not gone)

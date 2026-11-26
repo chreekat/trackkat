@@ -24,6 +24,7 @@ import Test.Check
 import Test.Gen (earlier, forAnyOrder, shrinkFrom, shrinkParts, shrinkTo)
 import TrackKat.Number (renderNatural)
 import TrackKat.Release
+import TrackKat.World (Seconds, seconds)
 
 tests :: TestTree
 tests = group "Release" $ do
@@ -93,7 +94,7 @@ tests = group "Release" $ do
     check "a portable copy doesn't hand over" $ (newerInstalled Portable <$> vs) == Just Nothing
 
     -- Cleaning up older versions, games' DLLs first.
-    let names = ["0.1.8", "0.1.9", "0.1.10", "0.1.11", "0.1.11.partial", "notes", "0.1.7+x"]
+    let names = [(n, seconds 86400) | n <- ["0.1.8", "0.1.9", "0.1.10", "0.1.11", "0.1.11.partial", "notes", "0.1.7+x"]] ++ [("0.1.12.partial", seconds 60)]
     check "stale folders" $ staleFolders (installedAt "0.1.10") names == ["0.1.8", "0.1.9", "0.1.11.partial"]
     check "portable copies clean nothing" $ null (staleFolders Portable names)
     check "deletion order" $
@@ -183,12 +184,14 @@ properties =
                         .&&. newerInstalled (Installed (version own)) vs === newer
                         .&&. newerInstalled Portable vs === Nothing
                         .&&. offer Nothing (Installed (version own)) vs === NoOffer
-        , testProperty "stale folders are the unfinished ones and older versions', never the running one's or a newer's" $
+        , testProperty "stale folders are older versions' and those left unfinished an hour or more, never the running one's or a newer's" $
             \own others ->
-                forAnyOrder (versionFolder (version own) : "notes" : concat [[versionFolder (version v), versionFolder (version v) ++ partialSuffix] | v <- others]) $ \names ->
-                    let stale = staleFolders (Installed (version own)) names
+                forAnyOrder (versionFolder (version own) : "notes" : concat [[versionFolder (version v), versionFolder (version v) ++ partialSuffix] | (v, _) <- others]) $ \folders ->
+                    let names = [(n, maybe (seconds 0) untouched (lookup n [(versionFolder (version v) ++ partialSuffix, u) | (v, u) <- others])) | n <- folders]
+                        stale = staleFolders (Installed (version own)) names
                         older n = maybe False (< version own) (folderVersion n)
-                     in stale === filter (\n -> partialSuffix `isSuffixOf` n || older n) names
+                        abandoned (n, u) = partialSuffix `isSuffixOf` n && u >= seconds 3600
+                     in stale === [n | (n, u) <- names, abandoned (n, u) || older n]
                             .&&. property (versionFolder (version own) `notElem` stale)
                             .&&. staleFolders Portable names === []
         , testProperty "files are deleted each once, games' DLLs first and trackkat.exe last, the rest in their order" $
@@ -250,6 +253,18 @@ suffixes = ["", ".partial", "x", " "]
 
 -- | Some of a release's files and a few others, in any order; simpler of
 -- fewer.
+-- | How long since a folder last changed: around the hour after which
+-- unpacking is taken as abandoned. Simpler the shorter.
+newtype Untouched = Untouched {untouched :: Seconds}
+    deriving (Show)
+
+instance Arbitrary Untouched where
+    arbitrary = Untouched <$> elements ages
+    shrink (Untouched u) = Untouched <$> earlier ages u
+
+ages :: [Seconds]
+ages = map seconds [0, 60, 3599, 3600, 86400]
+
 newtype Files = Files [FilePath]
     deriving (Show)
 
