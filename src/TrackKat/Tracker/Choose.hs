@@ -97,8 +97,9 @@ import TrackKat.World (Instant, World (..), inPixels, world, (.-.))
 -- nothing: it is the cumulative sum of a sequential test for a change
 -- (Page's), whose forgetting is that floor and nothing tuned. It starts
 -- over when there are no three blobs to weigh against the pose followed,
--- when a pose is taken afresh, and when the clip isn't made out. A pose
--- come afresh as three blobs is credited with it ('howItCame', as
+-- when a pose is taken afresh, when the clip isn't made out, and when the
+-- poses followed are dropped for a clip of another shape ('setModel'). A
+-- pose come afresh as three blobs is credited with it ('howItCame', as
 -- "doubt"): once the frames have said for long enough that the clip is
 -- elsewhere, elsewhere wins.
 --
@@ -209,25 +210,30 @@ hypotheses known now (Trail following left) shown = away : go (judgedScore away)
 -- to be told, why, with every hypothesis' score (see Note [Choosing]);
 -- and the doubt of the pose followed after the frame (see Note [Doubt]).
 makeOut :: Known -> Instant -> Trail -> Shown -> (Double, Either (Why, [Rival]) (Chosen, Sighting))
-makeOut known now trail@(Trail following _) shown = (,) (maybe 0 (uncurry (doubted (knownDoubt known))) chosen) $ case chosen of
-    Just (won, others)
-        | Just candidate <- judgedSeen won
-        , InView way source <- judgedGuess won ->
-            let pose = candidatePose candidate
-                sights = candidateSights candidate
-                expect = expecting known now pose
-                told = about fst (partlySeen expect now (recentAllSeen <$> poseContinued way trail)) <> about snd (if way == Appeared then surely else mempty)
-                lead = oddsNats (judgedScore won `over` maximum (impossible : [judgedScore j | j <- others, judgedGuess j == OutOfView]))
-             in if accepts told (sights, lead)
-                    then
-                        Right
-                            ( Chosen way source (judgedScore won) (map rival others)
-                            , Sighting pose (candidateFit candidate) sights (candidateStrays candidate) (candidateMasked candidate) (judgedFindings won)
-                            )
-                    else Left (Why (looking way) (Unfit (rejections told (sights, lead))), map rival (won : others))
-    Just (won, others) -> Left (unlikely others, map rival (won : others))
-    Nothing -> Left (unlikely [], [])
+makeOut known now trail@(Trail following _) shown = (doubt, made)
   where
+    -- See Note [Doubt].
+    doubt = case (made, chosen) of
+        (Right _, Just (won, others)) -> doubted (knownDoubt known) won others
+        _ -> 0
+    made = case chosen of
+        Just (won, others)
+            | Just candidate <- judgedSeen won
+            , InView way source <- judgedGuess won ->
+                let pose = candidatePose candidate
+                    sights = candidateSights candidate
+                    expect = expecting known now pose
+                    told = about fst (partlySeen expect now (recentAllSeen <$> poseContinued way trail)) <> about snd (if way == Appeared then surely else mempty)
+                    lead = oddsNats (judgedScore won `over` maximum (impossible : [judgedScore j | j <- others, judgedGuess j == OutOfView]))
+                 in if accepts told (sights, lead)
+                        then
+                            Right
+                                ( Chosen way source (judgedScore won) (map rival others)
+                                , Sighting pose (candidateFit candidate) sights (candidateStrays candidate) (candidateMasked candidate) (judgedFindings won)
+                                )
+                        else Left (Why (looking way) (Unfit (rejections told (sights, lead))), map rival (won : others))
+        Just (won, others) -> Left (unlikely others, map rival (won : others))
+        Nothing -> Left (unlikely [], [])
     judged = hypotheses known now trail shown
     chosen = best judgedScore judged
     rival j = Rival (judgedGuess j) (judgedScore j)

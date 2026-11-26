@@ -14,7 +14,7 @@ import Test.Simulation (headset)
 import Test.Tracker.Known
 import TrackKat.Frame (Blob (..))
 import TrackKat.Lights (noMask)
-import TrackKat.Match (Kind (..), Sight (..))
+import TrackKat.Match (Kind (..), Sight (..), Three (..))
 import TrackKat.Pose
 import TrackKat.Term
 import TrackKat.Tracker.Account
@@ -22,6 +22,7 @@ import TrackKat.Tracker.Blobs
 import TrackKat.Tracker.Choose
 import TrackKat.Tracker.Follow (Showing (..), showingSeconds)
 import TrackKat.Tracker.Outcome
+import TrackKat.Tracker.Presence (Presence (..))
 import TrackKat.Tracker.Sighting
 import TrackKat.Tracker.Trail
 import TrackKat.World (Seconds, clockAt, inSeconds, seconds, (.+^))
@@ -139,6 +140,18 @@ properties =
                  in case snd (makeOut (taught placing) aFrameOn (Trail (Just last') Nothing) (sortBlobs noMask two)) of
                         Right (_, sighting) -> property (since <= showingSeconds OneOut) .&&. length (filter isJust (toList (sightingSights sighting))) === 2
                         Left (why, _) -> counterexample (explainWhy why) (since > showingSeconds OneOut) .&&. whyRejectedBy why === ["partly seen"]
+        , testProperty "a frame lost, for the pose followed showing two reflectors for too long, leaves no doubt, though three blobs elsewhere fit better" $
+            \(Apart30 placing) ->
+                let last' = (lastAt (placed placing)){recentAllSeen = aFrameOn .+^ seconds (-4)}
+                    known = (taught placing){knownDoubt = 5, knownShowed = Just (Three Present Present Gone, lastTracked)}
+                    blobs = clipBlobs headset placing
+                    aside = if sum (map blobX blobs) < 3 * 320 then 250 else -250
+                    shown = case asReflectors placing of
+                        Just (Three l r _) -> [l, r] ++ [b{blobX = blobX b + aside} | b <- blobs]
+                        Nothing -> []
+                 in case makeOut known aFrameOn (Trail (Just last') Nothing) (sortBlobs noMask shown) of
+                        (doubt, Left (why, _)) -> counterexample (explainWhy why) (whyRejectedBy why === ["partly seen"]) .&&. doubt === 0
+                        (_, Right (chosen, _)) -> counterexample (explainChosen chosen) False
         , testProperty "one blob isn't the clip, whatever it is, and no blobs are nothing to go by" $
             \(Apart30 placing) (Stray b) ->
                 let made known trail blobs = snd (makeOut known aFrameOn trail (sortBlobs noMask blobs))

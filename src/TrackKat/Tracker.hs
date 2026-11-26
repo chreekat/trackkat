@@ -195,7 +195,7 @@ takingOver centre pending t = t{trCentre = (trCentre t){centrePose = centre}, tr
 -- | Track a differently shaped clip from the next frame, recentering then,
 -- since the model's axes move with its shape.
 setModel :: Model -> Tracker -> Tracker
-setModel m t = request Recenter t{trClip = m, trTrail = noTrail, trLearners = changeClipOf m (trLearners t), trCentre = (trCentre t){centreBelief = newBranch m}}
+setModel m t = request Recenter t{trClip = m, trTrail = noTrail, trDoubt = 0, trLearners = changeClipOf m (trLearners t), trCentre = (trCentre t){centreBelief = newBranch m}}
 
 -- | A frame as it is looked at: what the stages that take it into what is
 -- kept are given of it.
