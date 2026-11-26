@@ -8,7 +8,7 @@ module TrackKat.Gui.Tray (makeTray) where
 #include <windows.h>
 #include <shellapi.h>
 
-import Control.Exception (SomeAsyncException, bracket, catch, displayException, fromException, throwIO)
+import Control.Exception (bracket)
 import Control.Monad (forM_, unless, void, when)
 import Data.Bits ((.&.), (.|.))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
@@ -17,7 +17,7 @@ import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Alloc (alloca, allocaBytes)
 import Foreign.Marshal.Array (allocaArray, copyArray)
 import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr, wordPtrToPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.Storable (peek, pokeByteOff)
 import Graphics.Win32.GDI.Types (HICON, HMENU, HWND, LPRECT)
 import Graphics.Win32.Menu (appendMenu, createPopupMenu, destroyMenu, setMenuDefaultItem)
@@ -38,6 +38,7 @@ import System.Win32.DLL (getModuleHandle)
 import System.Win32.Types (BOOL, DWORD, HINSTANCE, LPCTSTR, LPVOID, UINT, getLastError)
 
 import TrackKat.Display (CameraState (..))
+import TrackKat.Gui.Paint (guarded, resourceIcon)
 import TrackKat.UI.Tray
 
 foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
@@ -53,9 +54,6 @@ foreign import ccall safe "windows.h CreateWindowExW"
 foreign import ccall safe "shellapi.h Shell_NotifyIconW" c_Shell_NotifyIcon :: DWORD -> Ptr () -> IO BOOL
 foreign import ccall safe "windows.h TrackPopupMenu"
     c_TrackPopupMenu :: HMENU -> UINT -> CInt -> CInt -> CInt -> HWND -> LPRECT -> IO BOOL
-foreign import ccall unsafe "windows.h LoadImageW"
-    c_LoadImage :: HINSTANCE -> LPCTSTR -> UINT -> CInt -> CInt -> UINT -> IO HICON
-foreign import ccall unsafe "windows.h LoadIconW" c_LoadIcon :: HINSTANCE -> LPCTSTR -> IO HICON
 foreign import ccall unsafe "windows.h GetSystemMetrics" c_GetSystemMetrics :: CInt -> IO CInt
 foreign import ccall unsafe "windows.h RegisterWindowMessageW" c_RegisterWindowMessage :: LPCTSTR -> IO WindowMessage
 
@@ -96,13 +94,8 @@ makeTray report choose = do
     -- As cbits/gui.c's hts_gui_quit_running and hts_gui_show_running find it.
     className = mkClassName "trackkat"
 
--- | An exception can't leave a window procedure but by ending the process,
--- so one that fails is reported, and the message left to Windows' handling.
 trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
-trayProc report choose taskbarCreated shown w msg wp lp =
-    respond choose taskbarCreated shown w msg wp lp `catch` \e -> case fromException e of
-        Just async -> throwIO (async :: SomeAsyncException)
-        Nothing -> report ("The tray icon failed: " ++ displayException e) >> defWindowProc (Just w) msg wp lp
+trayProc report choose taskbarCreated shown = guarded report "The tray icon" (respond choose taskbarCreated shown)
 
 respond :: (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
 respond choose taskbarCreated shown w msg wp lp
@@ -200,20 +193,10 @@ trayState =
 tipMax :: Int
 tipMax = 128
 
--- | The look's icon from the program's resources (icons/trackkat.rc, from 2
--- in the order of 'TrayLook'), at the size the tray shows, or Windows' own
--- if the build left it out. Shared: never destroyed.
+-- | The look's icon (icons/trackkat.rc numbers them from 2 in the order of
+-- 'TrayLook'), at the size the tray shows.
 trayIcon :: TrayLook -> IO HICON
-trayIcon look = do
-    inst <- getModuleHandle Nothing
-    size <- c_GetSystemMetrics #{const SM_CXSMICON}
-    icon <- c_LoadImage inst (resource (2 + fromEnum look)) #{const IMAGE_ICON} size size #{const LR_SHARED}
-    if icon /= nullPtr then pure icon else c_LoadIcon nullPtr (resource idiApplication)
-  where
-    resource :: Int -> LPCTSTR
-    resource = wordPtrToPtr . fromIntegral
-    -- IDI_APPLICATION, a resource number cast to a pointer.
-    idiApplication = 32512
+trayIcon look = c_GetSystemMetrics #{const SM_CXSMICON} >>= resourceIcon (2 + fromEnum look)
 
 -- | Add, modify or delete the window's icon, uID 1, with a tooltip.
 notifyIcon :: DWORD -> HWND -> HICON -> String -> IO BOOL
