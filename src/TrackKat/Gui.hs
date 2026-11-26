@@ -408,4 +408,5 @@ takeSavedSettings names = concat <$> mapM saved names
     saved name = withCWString name $ \n -> allocaArray size $ \buf -> do
         shown <- c_take_saved_setting n buf (fromIntegral size)
         if shown /= 0 then (\v -> [(name, v)]) <$> peekCWString buf else pure []
-    size = 256
+    -- cbits/gui.c's FIELD_MAX
+    size = 4096

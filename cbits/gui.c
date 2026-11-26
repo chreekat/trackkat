@@ -40,7 +40,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 #define TEXT_MAX 512
-#define FIELD_MAX 256
+#define FIELD_MAX 4096 /* a setting's value, in characters with the NUL */
 #define OFFER_TRAY_MAX 128 /* the tray menu's item for an offer, in characters with the NUL */
 
 /* The settings the window edits, by their names in trackkat.conf. The
@@ -326,11 +326,12 @@ static int field_index(const wchar_t *name)
     return -1;
 }
 
-/* Show a setting's value in the window. Unknown names are ignored. */
+/* Show a setting's value in the window. Unknown names, and values too long
+ * for a field, are ignored. */
 void hts_gui_set_setting(const wchar_t *name, const wchar_t *value)
 {
     int i = field_index(name);
-    if (i < 0)
+    if (i < 0 || wcslen(value) >= FIELD_MAX)
         return;
     AcquireSRWLockExclusive(&lock);
     copy_text(pushed[i], FIELD_MAX, value);
@@ -1918,13 +1919,16 @@ static void edited(int field) { changed |= 1u << field; }
 static void save_soon(UINT ms) { SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL); }
 
 /* A binding list as trackkat.conf writes it, separated by commas, from its
- * box, which has one to a line; commas typed there separate them too. */
-static void list_from_box(int field, wchar_t *out, size_t size)
+ * box, which has one to a line; commas typed there separate them too.
+ * Nonzero if out holds it whole. */
+static int list_from_box(int field, wchar_t *out, size_t size)
 {
     wchar_t text[FIELD_MAX * 2];
+    out[0] = 0;
+    if (GetWindowTextLengthW(field_ctl[field]) >= FIELD_MAX * 2)
+        return 0;
     GetWindowTextW(field_ctl[field], text, FIELD_MAX * 2);
     size_t n = 0;
-    out[0] = 0;
     for (const wchar_t *p = text; *p;) {
         while (*p == L' ' || *p == L'\t' || *p == L',' || *p == L'\r' || *p == L'\n')
             p++;
@@ -1938,12 +1942,13 @@ static void list_from_box(int field, wchar_t *out, size_t size)
             int k = _snwprintf(out + n, size - n, n ? L", %.*ls" : L"%.*ls", (int)(last - p), p);
             if (k < 0 || (size_t)k >= size - n) {
                 out[size - 1] = 0;
-                return;
+                return 0;
             }
             n += (size_t)k;
         }
         p = end;
     }
+    return 1;
 }
 
 /* Show a binding list, as trackkat.conf writes it, one to a line. */
@@ -1965,11 +1970,13 @@ static void list_to_box(int field, const wchar_t *list)
     syncing--;
 }
 
-/* Add a binding to a list, unless it is there already. */
+/* Add a binding to a list, unless it is there already or would make the list
+ * too long for its field. */
 static void add_binding(int field, const wchar_t *binding)
 {
     wchar_t text[FIELD_MAX];
-    list_from_box(field, text, FIELD_MAX);
+    if (!list_from_box(field, text, FIELD_MAX))
+        return;
     size_t blen = wcslen(binding);
     for (const wchar_t *p = text; *p;) {
         while (*p == L' ' || *p == L',')
@@ -1982,12 +1989,9 @@ static void add_binding(int field, const wchar_t *binding)
         p = end;
     }
     wchar_t joined[FIELD_MAX];
-    if (!text[0])
-        copy_text(joined, FIELD_MAX, binding);
-    else {
-        _snwprintf(joined, FIELD_MAX, L"%ls, %ls", text, binding);
-        joined[FIELD_MAX - 1] = 0;
-    }
+    int k = _snwprintf(joined, FIELD_MAX, text[0] ? L"%ls, %ls" : L"%ls%ls", text, binding);
+    if (k < 0 || k >= FIELD_MAX)
+        return;
     list_to_box(field, joined);
     edited(field);
     save_soon(1);
@@ -2043,8 +2047,9 @@ static void show_field(int i, const wchar_t *value)
 
 static int checked(int i) { return SendMessageW(field_ctl[i], BM_GETCHECK, 0, 0) == BST_CHECKED; }
 
-/* A field's value as trackkat.conf writes it, as its controls show it. */
-static void field_value(int i, wchar_t *out, size_t size)
+/* A field's value as trackkat.conf writes it, as its controls show it.
+ * Nonzero if out holds it whole. */
+static int field_value(int i, wchar_t *out, size_t size)
 {
     switch (i) {
     case F_SMOOTHING:
@@ -2072,10 +2077,11 @@ static void field_value(int i, wchar_t *out, size_t size)
         break;
     default:
         if (i < F_RECENTER + LISTS)
-            list_from_box(i, out, size);
-        else
-            GetWindowTextW(field_ctl[i], out, (int)size);
+            return list_from_box(i, out, size);
+        GetWindowTextW(field_ctl[i], out, (int)size);
+        return (size_t)GetWindowTextLengthW(field_ctl[i]) < size;
     }
+    return 1;
 }
 
 /* Note [The window's changes]
@@ -2095,9 +2101,10 @@ static void save_settings(void)
     changed = 0;
     if (!fields)
         return;
+    /* A value too long for its field is left unsaved. */
     for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
-            field_value(i, values[i], FIELD_MAX);
+        if (fields & 1u << i && !field_value(i, values[i], FIELD_MAX))
+            fields &= ~(1u << i);
     AcquireSRWLockExclusive(&lock);
     for (int i = 0; i < F_COUNT; i++)
         if (fields & 1u << i)
