@@ -287,7 +287,7 @@ jumpPersistence = 3
 -- says so, by the yaw the game will show, and the view is moved by the
 -- trim. Whether aiming is asked for tells on the frames after this one.
 shape :: Response -> Trim -> Aiming -> Instant -> HeadPose -> Shaper -> (HeadPose, Shaper)
-shape r forward wanted now pose s = case shLast s of
+shape r forward wanted seen pose s = case shLast s of
     Just (_, previous)
         | jump previous pose && shRejected s + 1 < jumpPersistence ->
             (output (maybe (values previous) (map (\(Axis v _) -> v)) (shAxes s)) previous, s{shRejected = shRejected s + 1})
@@ -299,10 +299,14 @@ shape r forward wanted now pose s = case shLast s of
     values p = [yaw p, pitch p, roll p, tx p, ty p, tz p]
     jump a b =
         or (zipWith3 (\limit u v -> abs (u - v) > limit) (replicate 3 maxStepDegrees ++ replicate 3 maxStepMm) (values a) (values b))
+    -- A frame no later than the last is taken as no time passing.
+    now = maybe seen (max seen . fst) (shLast s)
     smoothAll lastTime axes = case (lastTime, axes) of
-        (Just t, Just old) | now > t -> zipWith3 (smooth (inSeconds (now .-. t))) smoothings old (values pose)
+        (Just t, Just old) -> zipWith3 (smooth (inSeconds (now .-. t))) smoothings old (values pose)
         _ -> [Axis v 0 | v <- values pose]
-    smooth dt (Smoothing mc b) old v = oneEuro mc b dt old v
+    smooth dt (Smoothing mc b) old v
+        | dt > 0 = oneEuro mc b dt old v
+        | otherwise = old
     smooth _ NoSmoothing _ v = Axis v 0
     smoothings = replicate 3 turningSmoothing ++ replicate 3 (smoothing r)
     turningSmoothing = case shAim s of

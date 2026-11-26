@@ -170,6 +170,17 @@ properties =
         , testProperty "a jump no head makes is left out for a frame" $
             \(Seated p) (Jump beyond) (Axis axis) ->
                 shaped straight NoTrim [p, jumped axis beyond p, p] === [p, p, p]
+        , testProperty "a smoothed view stays where it was on a frame no later than the last, but for rounding" $
+            \r (Walk walk) (Seated p) (Fraction back) ->
+                let smoothed = r{smoothing = steady (smoothing r), aim = (aim r){aimSmoothing = steady (aimSmoothing (aim r))}}
+                    steady NoSmoothing = tuned 50 50
+                    steady s = s
+                    (views, sh) = shapedFrom newShaper smoothed NoTrim walk
+                    late = clockAt ((fromIntegral (length walk - 1) - back) / 120)
+                    held = fst (shape smoothed NoTrim NotAiming late p sh)
+                    axes = [yaw, pitch, roll, tx, ty, tz]
+                    size = maximum (1 : [abs (axis v) | v <- held : views, axis <- axes])
+                 in conjoin [Gen.close (rounding 8 size) (axis held) (axis (last views)) | axis <- axes]
         , testProperty "no trim is a trim of nothing, and the view trimmed to is where a head at centre looks" $
             \(Seated p) ->
                 shaped straight (Trim centre) [p] === shaped straight NoTrim [p]
