@@ -9,6 +9,20 @@ It is about the new tracker (`TrackKat.Tracker`), which a user tries by
 lives beside it under `TrackKat.Old`, frozen: its numbers are as this file
 had them before the new tracker, and none of them is to be tuned.
 
+## The principle
+
+Tracking is Bayesian inference, and is built to say so. Every judgement of
+a frame is a likelihood, every head fact a prior, and what is carried from
+frame to frame a belief: updated by each frame by Bayes' rule, and fading
+at a stated rate where the world may have changed since. A new judgement
+is written as a term of that account (see `Term` below), not as a gate, a
+counter or a deadline; what tracking still decides otherwise is a shortcut
+to replace, listed under [What is a term, and what isn't
+yet](#what-is-a-term-and-what-isnt-yet). Approximations are welcome, such
+as the best hypothesis in place of the sum over all of them, or a few
+poses followed in place of every one, so long as each is named as an
+approximation of the posterior it stands for.
+
 ## The scheme
 
 Tracking's numbers are of five kinds, and each kind is to have one home and

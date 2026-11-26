@@ -143,6 +143,9 @@ random cases each run; one that fails says how to try its case again, as
 `TASTY_QUICKCHECK_REPLAY='(SMGen 1 3,0)' cabal test`, and
 `TASTY_QUICKCHECK_TESTS=100000` tries each with that many.
 
+Tracking is Bayesian inference: see [docs/heuristics.md](docs/heuristics.md)
+for the principle, and every number tracking judges by.
+
 ## Credits
 
 The USB protocol is ported from [linuxtrack](https://github.com/uglyDwarf/linuxtrack)
