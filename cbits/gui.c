@@ -1962,7 +1962,7 @@ static void list_from_box(int field, wchar_t *out, size_t size)
             last--;
         if (last > p) {
             int k = _snwprintf(out + n, size - n, n ? L", %.*ls" : L"%.*ls", (int)(last - p), p);
-            if (k < 0) {
+            if (k < 0 || (size_t)k >= size - n) {
                 out[size - 1] = 0;
                 return;
             }
