@@ -101,7 +101,7 @@ withCamera ctx logger settings act = do
     (h, _) <- openOrExplain
     seed <- newIORef . newSeed =<< getMonotonicTimeNSec
     let cam = Camera ctx h seed logger settings
-    (`finally` USB.close h) $ do
+    (`finally` close h) $ do
         explainClaim (USB.claim h)
         bracket_ (initialise cam) (shutdown cam) (act cam)
             `finally` USB.release h
@@ -122,6 +122,11 @@ withCamera ctx logger settings act = do
                         | USB.usbCode e == USB.errAccess -> InUse
                         | otherwise -> OpenFailed e
     isCamera d = USB.devVendor d == vendorId && USB.devProduct d == productIdV3
+    close h = do
+        r <- USB.close h
+        case r of
+            USB.Finished -> pure ()
+            USB.Stranded -> logger "warning: reads cancelled with the camera never finished, so it is left open"
     explainClaim io = do
         r <- try io
         case r of
