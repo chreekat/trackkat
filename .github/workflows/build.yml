@@ -32,16 +32,25 @@ jobs:
           "TRACKKAT_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
           "Building trackkat $v"
 
-      - name: Install libusb and C compilers
+      - name: Install C compilers
         id: msys2
         uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         with:
           msystem: UCRT64
           update: false
           install: >-
-            mingw-w64-ucrt-x86_64-libusb
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-i686-gcc
+
+      # The zip ships this libusb's DLL: the same one tools/wine.sh builds with.
+      - name: Install libusb
+        shell: msys2 {0}
+        run: |
+          pkg=mingw-w64-ucrt-x86_64-libusb-1.0.30-1-any.pkg.tar.zst
+          curl -fsSLo "$pkg" "https://repo.msys2.org/mingw/ucrt64/$pkg"
+          echo "20106e6ff31b4581bb111b28a68b6b79a50dc3e5fc3033944e1c4b3ff8cd812e  $pkg" | sha256sum -c
+          pacman -U --noconfirm "$pkg"
+          rm "$pkg"
 
       # Games load the DLLs, 64- and 32-bit; npgame and trackdemo stand in
       # for a game. Only trackkat.exe gets the cat icon.
