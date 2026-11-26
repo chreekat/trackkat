@@ -113,7 +113,8 @@ static wchar_t version_text[64] = L"development build"; /* set before the window
 static int updatable; /* whether Check for updates works; set before the window is made */
 static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
-static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings as the user asked to save them */
+static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings the user changed and asked to save */
+static unsigned saved_fields;              /* bit per field in saved not yet taken */
 
 /* The log, as a window of the last LOG_MAX characters of everything logged.
  * log_total counts every character ever logged, so the GUI can tell what it
@@ -339,17 +340,22 @@ void hts_gui_set_setting(const wchar_t *name, const wchar_t *value)
     ReleaseSRWLockExclusive(&lock);
 }
 
-/* A setting's value as the user last asked to save it. Returns 0, leaving
- * buf alone, for a setting the window doesn't show. */
-int hts_gui_saved_setting(const wchar_t *name, wchar_t *buf, int size)
+/* Take a setting's value as the user changed it in the window and asked to
+ * save it. Returns 0, leaving buf alone, if none waits: for a setting the
+ * window doesn't show, or one not changed since it was last taken. See
+ * Note [The window's changes]. */
+int hts_gui_take_saved_setting(const wchar_t *name, wchar_t *buf, int size)
 {
     int i = field_index(name);
     if (i < 0)
         return 0;
     AcquireSRWLockExclusive(&lock);
-    copy_text(buf, (size_t)size, saved[i]);
+    int waiting = (saved_fields >> i) & 1;
+    if (waiting)
+        copy_text(buf, (size_t)size, saved[i]);
+    saved_fields &= ~(1u << i);
     ReleaseSRWLockExclusive(&lock);
-    return 1;
+    return waiting;
 }
 
 /* What the user asked for since the last call, as ACT_* bits. */
@@ -445,7 +451,6 @@ static ULONGLONG cover_near; /* when the mouse was last near the lifted cover */
 static HWND list_heading[LISTS];
 static HWND field_ctl[F_COUNT];
 static HWND slider_value[2]; /* steadiness and responsiveness, as numbers */
-static wchar_t field_text[F_COUNT][FIELD_MAX]; /* values of the checkbox and sliders */
 static HWND add_button[LISTS];
 /* Each axis's curve: a plot, a multiplier with arrows to step it, a centre
  * precision, and what they mean; or, as text, the edit in field_ctl. */
@@ -764,8 +769,7 @@ static void text_at(HDC dc, HFONT font, COLORREF c, int x, int y, int w, int h, 
  * their names as the head view setting writes them. */
 enum { VIEW_VIRTUAL, VIEW_PHYSICAL, VIEW_CAMERA, VIEWS };
 static const wchar_t *const view_settings[VIEWS] = {L"virtual", L"physical", L"camera"};
-static int head_view;           /* the view shown */
-static int head_view_saved = -1; /* the view last saved, until the settings file says otherwise */
+static int head_view; /* the view shown */
 static void show_head_view(int view); /* with the window's help, which it changes */
 
 #define C_FRAME RGB(24, 27, 33)
@@ -1744,7 +1748,8 @@ static LRESULT CALLBACK curve_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
  * user is working. */
 enum { FROM_TEXT, FROM_MULTIPLIER, FROM_STEP, FROM_PRECISION };
 
-static int syncing; /* the window is changing curve controls itself */
+static int syncing; /* the window, not the user, is changing an edit's text */
+static void edited(int field);
 
 /* Show a curve's text in its controls, its note and its plot. A curve
  * that isn't a multiplier keeps its controls at its overall slope and no
@@ -1787,6 +1792,7 @@ static void set_multiplier(int axis, double factor, int precision, int from)
     syncing++;
     SetWindowTextW(field_ctl[F_YAW + axis], text);
     syncing--;
+    edited(F_YAW + axis);
     sync_curve(axis, from);
 }
 
@@ -1933,15 +1939,13 @@ static LRESULT CALLBACK add_button_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 
 #define ID_AUTOSAVE 1
 
+static unsigned changed; /* bit per field the user changed in the window, not yet saved */
+
+static void edited(int field) { changed |= 1u << field; }
+
 /* Save the settings after the given number of milliseconds without further
  * changes, so dragging a slider saves once, when it stops. */
-static int save_pending; /* a change in the window, not yet saved */
-
-static void save_soon(UINT ms)
-{
-    save_pending = 1;
-    SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL);
-}
+static void save_soon(UINT ms) { SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL); }
 
 /* A binding list as trackkat.conf writes it, separated by commas, from its
  * box, which has one to a line; commas typed there separate them too. */
@@ -1986,7 +1990,9 @@ static void list_to_box(int field, const wchar_t *list)
         } else
             text[n++] = *p++;
     text[n] = 0;
+    syncing++;
     SetWindowTextW(field_ctl[field], text);
+    syncing--;
 }
 
 /* Add a binding to a list, unless it is there already. */
@@ -2013,6 +2019,7 @@ static void add_binding(int field, const wchar_t *binding)
         joined[FIELD_MAX - 1] = 0;
     }
     list_to_box(field, joined);
+    edited(field);
     save_soon(1);
 }
 
@@ -2035,7 +2042,6 @@ static int slider_field(int i) { return i == F_STEADINESS || i == F_RESPONSIVENE
 /* Show a setting pushed from Haskell. */
 static void show_field(int i, const wchar_t *value)
 {
-    copy_text(field_text[i], FIELD_MAX, value);
     if (i == F_LEAN)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"screen") != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_NPCLIENT)
@@ -2045,13 +2051,9 @@ static void show_field(int i, const wchar_t *value)
     else if (i == F_TRACKER)
         SendMessageW(field_ctl[i], BM_SETCHECK, wcscmp(value, L"new") == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     else if (i == F_HEAD_VIEW) {
-        /* The file read back with the view last saved says nothing new, and
-         * may be older than a view clicked to since. */
         for (int v = 0; v < VIEWS; v++)
-            if (wcscmp(value, view_settings[v]) == 0 && v != head_view_saved) {
-                head_view_saved = -1;
+            if (wcscmp(value, view_settings[v]) == 0)
                 show_head_view(v);
-            }
     } else if (i == F_SMOOTHING) {
         int on = wcscmp(value, L"off") != 0;
         SendMessageW(field_ctl[i], BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -2069,23 +2071,68 @@ static void show_field(int i, const wchar_t *value)
         list_to_box(i, value);
 }
 
+static int checked(int i) { return SendMessageW(field_ctl[i], BM_GETCHECK, 0, 0) == BST_CHECKED; }
+
+/* A field's value as trackkat.conf writes it, as its controls show it. */
+static void field_value(int i, wchar_t *out, size_t size)
+{
+    switch (i) {
+    case F_SMOOTHING:
+    case F_UPDATES:
+    case F_STARTUP:
+    case F_LIGHTS:
+        copy_text(out, size, checked(i) ? L"on" : L"off");
+        break;
+    case F_LEAN:
+        copy_text(out, size, checked(i) ? L"view" : L"screen");
+        break;
+    case F_NPCLIENT:
+        copy_text(out, size, checked(i) ? L"trackir" : L"trackkat");
+        break;
+    case F_TRACKER:
+        copy_text(out, size, checked(i) ? L"new" : L"old");
+        break;
+    case F_HEAD_VIEW:
+        copy_text(out, size, view_settings[head_view]);
+        break;
+    case F_STEADINESS:
+    case F_RESPONSIVENESS:
+        _snwprintf(out, size, L"%d", (int)SendMessageW(field_ctl[i], TBM_GETPOS, 0, 0));
+        out[size - 1] = 0;
+        break;
+    default:
+        if (i < F_RECENTER + LISTS)
+            list_from_box(i, out, size);
+        else
+            GetWindowTextW(field_ctl[i], out, (int)size);
+    }
+}
+
+/* Note [The window's changes]
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ * The user can change a setting in the window or in the settings file, and
+ * neither undoes the other's changes. Saving hands Haskell just the fields
+ * the user changed in the window since they were last saved, and Haskell
+ * writes just those into the file, which keeps what it says of the rest. A
+ * setting the file pushes to a field changed and not yet saved is dropped:
+ * the user's change is the newer, and once saved, the file holds it and
+ * pushes it back. Every other push is shown, so the window and the file come
+ * to agree once neither is changing. */
 static void save_settings(void)
 {
+    unsigned fields = changed;
     wchar_t values[F_COUNT][FIELD_MAX];
-    save_pending = 0;
-    head_view_saved = head_view;
+    changed = 0;
+    if (!fields)
+        return;
     for (int i = 0; i < F_COUNT; i++)
-        if (i == F_SMOOTHING || i == F_LEAN || i == F_NPCLIENT || i == F_UPDATES || i == F_STARTUP || i == F_LIGHTS ||
-            i == F_TRACKER || slider_field(i))
-            copy_text(values[i], FIELD_MAX, field_text[i]);
-        else if (i == F_HEAD_VIEW)
-            copy_text(values[i], FIELD_MAX, view_settings[head_view]);
-        else if (i < F_RECENTER + LISTS)
-            list_from_box(i, values[i], FIELD_MAX);
-        else
-            GetWindowTextW(field_ctl[i], values[i], FIELD_MAX);
+        if (fields & 1u << i)
+            field_value(i, values[i], FIELD_MAX);
     AcquireSRWLockExclusive(&lock);
-    memcpy(saved, values, sizeof saved);
+    for (int i = 0; i < F_COUNT; i++)
+        if (fields & 1u << i)
+            memcpy(saved[i], values[i], sizeof saved[i]);
+    saved_fields |= fields;
     ReleaseSRWLockExclusive(&lock);
     InterlockedOr(&actions, ACT_SAVE);
 }
@@ -2555,8 +2602,9 @@ static void refresh(void)
     memcpy(additions, added, sizeof added);
     ReleaseSRWLockExclusive(&lock);
 
+    /* See Note [The window's changes]. */
     for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
+        if (fields & 1u << i && !(changed & 1u << i))
             show_field(i, values[i]);
     for (int i = 0; i < LISTS; i++)
         if (lists & 1u << i) {
@@ -2987,6 +3035,8 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             /* White while edited; otherwise the list reads as plain text. */
             if (code == EN_SETFOCUS || code == EN_KILLFOCUS)
                 InvalidateRect((HWND)lp, NULL, TRUE);
+            if (code == EN_CHANGE && !syncing)
+                edited(id - ID_FIELD);
             if (code == EN_KILLFOCUS) {
                 /* Back to the start of its lines, if a long one scrolled it. */
                 SendMessageW((HWND)lp, EM_SETSEL, 0, 0);
@@ -2996,18 +3046,21 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (id >= ID_FIELD + F_YAW && id <= ID_FIELD + F_Z) {
-            if (code == EN_CHANGE && !syncing)
+            if (code == EN_CHANGE && !syncing) {
+                edited(id - ID_FIELD);
                 sync_curve(id - ID_FIELD - F_YAW, FROM_TEXT);
-            else if (code == EN_KILLFOCUS)
+            } else if (code == EN_KILLFOCUS)
                 save_soon(1);
             return 0;
         }
         if (id >= ID_MULTIPLIER && id < ID_MULTIPLIER + 6) {
             int axis = id - ID_MULTIPLIER;
             double f;
-            if (code == EN_CHANGE && !syncing && typed_multiplier(axis, &f))
-                set_multiplier(axis, f, current_precision(axis), FROM_MULTIPLIER);
-            else if (code == EN_KILLFOCUS) {
+            if (code == EN_CHANGE && !syncing) {
+                edited(F_YAW + axis);
+                if (typed_multiplier(axis, &f))
+                    set_multiplier(axis, f, current_precision(axis), FROM_MULTIPLIER);
+            } else if (code == EN_KILLFOCUS) {
                 sync_curve(axis, FROM_TEXT);
                 save_soon(1);
             }
@@ -3034,6 +3087,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_HEAD_VIEW:
             show_head_view((head_view + 1) % VIEWS);
+            edited(F_HEAD_VIEW);
             save_soon(500);
             return 0;
         case ID_COVER: {
@@ -3076,38 +3130,20 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_OPEN_SETTINGS:
             /* A change waiting to be saved is saved first, so the editor
-             * shows it. Nothing else is: the window may not yet show an edit
-             * made to the file itself, and saving it would undo that. */
-            if (save_pending) {
-                KillTimer(main_hwnd, ID_AUTOSAVE);
-                save_settings();
-            }
+             * shows it. */
+            KillTimer(main_hwnd, ID_AUTOSAVE);
+            save_settings();
             InterlockedOr(&actions, ACT_OPEN_SETTINGS);
             return 0;
         case ID_FIELD + F_LEAN:
-            copy_text(field_text[F_LEAN], FIELD_MAX,
-                      SendMessageW(field_ctl[F_LEAN], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"view" : L"screen");
-            save_soon(1);
-            return 0;
         case ID_FIELD + F_TRACKER:
-            copy_text(field_text[F_TRACKER], FIELD_MAX,
-                      SendMessageW(field_ctl[F_TRACKER], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"new" : L"old");
-            save_soon(1);
-            return 0;
         case ID_FIELD + F_NPCLIENT:
-            copy_text(field_text[F_NPCLIENT], FIELD_MAX,
-                      SendMessageW(field_ctl[F_NPCLIENT], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"trackir" : L"trackkat");
-            save_soon(1);
-            return 0;
         case ID_FIELD + F_UPDATES:
         case ID_FIELD + F_STARTUP:
-        case ID_FIELD + F_LIGHTS: {
-            int i = id - ID_FIELD;
-            copy_text(field_text[i], FIELD_MAX,
-                      SendMessageW(field_ctl[i], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
+        case ID_FIELD + F_LIGHTS:
+            edited(id - ID_FIELD);
             save_soon(1);
             return 0;
-        }
         case ID_OFFER:
             InterlockedOr(&actions, ACT_OFFER);
             return 0;
@@ -3115,8 +3151,8 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             InterlockedOr(&actions, ACT_CHECK_UPDATES);
             return 0;
         case ID_FIELD + F_SMOOTHING:
-            show_field(F_SMOOTHING,
-                       SendMessageW(field_ctl[F_SMOOTHING], BM_GETCHECK, 0, 0) == BST_CHECKED ? L"on" : L"off");
+            show_field(F_SMOOTHING, checked(F_SMOOTHING) ? L"on" : L"off");
+            edited(F_SMOOTHING);
             save_soon(1);
             return 0;
         case IDOK: {
@@ -3150,6 +3186,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 _snwprintf(v, 16, L"%d", (int)SendMessageW(field_ctl[i], TBM_GETPOS, 0, 0));
                 v[15] = 0;
                 show_field(i, v);
+                edited(i);
             }
         for (int i = 0; i < 6; i++)
             if ((HWND)lp == precision_slider[i] && !syncing) {

@@ -474,11 +474,11 @@ saveCalibrations path pending = forever $ do
 showSettings :: String -> IO ()
 showSettings text = mapM_ (uncurry showSetting) (settingValues text)
 
--- | Write the settings from trackkat's window to the settings file, keeping
--- the rest of the file. 'watchSettings' then applies them.
+-- | Write the settings changed in trackkat's window into the settings file,
+-- keeping the rest of it. 'watchSettings' then applies them.
 saveSettings :: FilePath -> IO ()
 saveSettings path = do
-    edited <- savedSettings settingNames
+    edited <- takeSavedSettings settingNames
     result <- try (readFile' path)
     case result of
         Left e -> showSettingsMessage ("Not saved: " ++ displayException (e :: IOException))

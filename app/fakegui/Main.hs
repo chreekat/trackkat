@@ -149,7 +149,7 @@ act view a s = case a of
         guiLog (case aiming of Aiming -> "Aiming: sensitivity reduced for finer control."; NotAiming -> "Aiming ended.")
         pure s{sAiming = aiming}
     SaveAction -> do
-        saved <- savedSettings (map fst settings)
+        saved <- takeSavedSettings (map fst settings)
         forM_ saved $ \(name, value) -> putStrLn ("  " ++ name ++ " = " ++ value)
         showSettingsMessage "Saved."
         pure s

@@ -41,7 +41,7 @@ module TrackKat.Gui (
     showCalibration,
     showSetting,
     showSettingsMessage,
-    savedSettings,
+    takeSavedSettings,
 ) where
 
 import Control.Concurrent.Async (link, wait, withAsyncBound)
@@ -106,7 +106,7 @@ foreign import ccall unsafe "hts_gui_stats" c_stats :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_calibration" c_calibration :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_settings_message" c_settings_message :: CWString -> IO ()
 foreign import ccall unsafe "hts_gui_set_setting" c_set_setting :: CWString -> CWString -> IO ()
-foreign import ccall unsafe "hts_gui_saved_setting" c_saved_setting :: CWString -> CWString -> CInt -> IO CInt
+foreign import ccall unsafe "hts_gui_take_saved_setting" c_take_saved_setting :: CWString -> CWString -> CInt -> IO CInt
 
 -- | Run the window and tray icon chosen alongside some work, which is told
 -- whether they started (Left is a Windows error code), and remove them when
@@ -230,8 +230,7 @@ data Action
       OfferAction
     | -- | look for a newer version now
       CheckForUpdatesAction
-    | -- | a change in the window to save: read the settings with
-      -- 'savedSettings'
+    | -- | a change in the window to save: take it with 'takeSavedSettings'
       SaveAction
     | -- | the Edit settings file button, which first asks to save a change
       -- waiting to be ('SaveAction'), but nothing else
@@ -400,12 +399,13 @@ showSetting name value = withCWString name $ \n -> withCWString value (c_set_set
 showSettingsMessage :: String -> IO ()
 showSettingsMessage s = withCWString s c_settings_message
 
--- | The named settings' values as the user last saved them, leaving out
--- those the window doesn't show.
-savedSettings :: [String] -> IO [(String, String)]
-savedSettings names = concat <$> mapM saved names
+-- | Take the named settings the user changed in the window and asked to
+-- save, with their values, leaving out the rest. See Note [The window's
+-- changes] in cbits/gui.c.
+takeSavedSettings :: [String] -> IO [(String, String)]
+takeSavedSettings names = concat <$> mapM saved names
   where
     saved name = withCWString name $ \n -> allocaArray size $ \buf -> do
-        shown <- c_saved_setting n buf (fromIntegral size)
+        shown <- c_take_saved_setting n buf (fromIntegral size)
         if shown /= 0 then (\v -> [(name, v)]) <$> peekCWString buf else pure []
     size = 256
