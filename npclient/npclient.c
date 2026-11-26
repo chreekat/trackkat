@@ -24,6 +24,7 @@ static volatile FTHeap *heap;
 static volatile TrackKatControl *control;
 static const unsigned char *key;
 static bool launch_attempted;
+static np_pose pose; /* the last read whole */
 static np_freshness freshness;
 
 /* Append a line to npclient.log, so we can see what a game asks for. */
@@ -207,7 +208,8 @@ NP_EXPORT(int) NP_GetData(tir_data_t *data)
     if (map_shared()) {
         InterlockedIncrement(&control->game_reads);
         register_game();
-        np_fill_record(data, &heap->data, np_pose_fresh(&freshness, heap->data.DataID, GetTickCount64()));
+        np_read_pose(&heap->data, &pose);
+        np_fill_record(data, &pose, np_pose_fresh(&freshness, pose.data_id, GetTickCount64()));
     }
 
     int status = data->status;

@@ -1,8 +1,8 @@
 /* fakekeys: drive trackkat's watching of keys and buttons (cbits/windows.c)
  * with made-up key and mouse events, and print the edges it tells of, for
  * working on it without pressing keys. Each line printed says what the
- * events before it should give. Build it with cbits/windows.c and
- * cbits/joystick.c, and -lhid.
+ * events before it should give. Build it with cbits/windows.c,
+ * cbits/joystick.c and cbits/npclient_common.c, and -lhid.
  *
  * usage: fakekeys */
 

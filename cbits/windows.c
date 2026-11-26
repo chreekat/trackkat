@@ -8,23 +8,24 @@
 #include <string.h>
 
 #include "joystick.h"
+#include "npclient_common.h"
 #include "trackir.h"
 #include "trackkat_shared.h"
 
 /* ---- FreeTrack shared memory ------------------------------------------- */
 
-static HANDLE ft_mapping;
+static HANDLE ft_mapping, ft_mutex;
 static volatile FTHeap *ft_heap;
+static uint32_t poses_published; /* see np_write_pose */
 static HANDLE control_mapping;
 static volatile TrackKatControl *control;
 
-/* Create (or open) the FreeTrack heap and our control block. Returns 0 on
- * success. */
+/* Create (or open) the FreeTrack heap, its mutex, which FreeTrack clients
+ * may expect to find while trackkat runs, and our control block. Returns 0
+ * on success. */
 int hts_shared_open(void)
 {
-    HANDLE mutex = CreateMutexA(NULL, FALSE, FREETRACK_MUTEX);
-    if (mutex)
-        CloseHandle(mutex);
+    ft_mutex = CreateMutexA(NULL, FALSE, FREETRACK_MUTEX);
 
     ft_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
                                     sizeof(FTHeap), FREETRACK_HEAP);
@@ -33,6 +34,7 @@ int hts_shared_open(void)
     ft_heap = MapViewOfFile(ft_mapping, FILE_MAP_WRITE, 0, 0, sizeof(FTHeap));
     if (!ft_heap)
         return (int)GetLastError();
+    poses_published = np_pose_count(&ft_heap->data);
 
     control_mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
                                          sizeof(TrackKatControl), TRACKKAT_CONTROL);
@@ -44,32 +46,18 @@ int hts_shared_open(void)
     return 0;
 }
 
-static void store_float(volatile float *place, float value)
-{
-    union { float f; LONG l; } u;
-    u.f = value;
-    InterlockedExchange((volatile LONG *)place, u.l);
-}
-
 /* Publish a pose: angles in radians, positions in mm, in FreeTrack's
- * conventions. */
+ * conventions. FreeTrack clients that copy the pose under FT_Mutext copy it
+ * whole when the mutex is free to hold while writing; if a client holds it
+ * then, the pose is written all the same, never waited on. */
 void hts_publish(float yaw, float pitch, float roll, float x, float y, float z)
 {
-    volatile FTData *d = &ft_heap->data;
-    store_float(&d->Yaw, yaw);
-    store_float(&d->Pitch, pitch);
-    store_float(&d->Roll, roll);
-    store_float(&d->X, x);
-    store_float(&d->Y, y);
-    store_float(&d->Z, z);
-    store_float(&d->RawYaw, yaw);
-    store_float(&d->RawPitch, pitch);
-    store_float(&d->RawRoll, roll);
-    store_float(&d->RawX, x);
-    store_float(&d->RawY, y);
-    store_float(&d->RawZ, z);
-    InterlockedIncrement((volatile LONG *)&d->DataID);
-    trackir_publish(d);
+    DWORD w = ft_mutex ? WaitForSingleObject(ft_mutex, 0) : WAIT_FAILED;
+    np_pose pose = {0, yaw, pitch, roll, x, y, z};
+    np_write_pose(&ft_heap->data, &poses_published, &pose);
+    if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED)
+        ReleaseMutex(ft_mutex);
+    trackir_publish(&ft_heap->data);
 }
 
 volatile TrackKatControl *hts_control_block(void)

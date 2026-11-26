@@ -14,6 +14,72 @@
 #define NP_AXIS_MAX 16383
 #define PI 3.14159265358979323846
 
+/* Note [Publishing the pose whole]
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ * DataID is a sequence lock over the pose. The writer makes it odd before
+ * it changes any axis, and even, and new, once it has written them all; a
+ * reader that finds it even, and the same before and after its copy, has
+ * copied one pose whole.
+ *
+ * The writer sets DataID from a count of its own, never adding to what is
+ * there, as a FreeTrack client may set it to 0: OpenTrack's FreeTrackClient
+ * does once it passes NP_POSE_COUNT_MAX. The count stays between 2 and
+ * that, so such a client leaves it alone, and it never reads as 0, which
+ * np_pose_fresh takes for nothing published. */
+
+#define NP_POSE_COUNT_MAX (1u << 29)
+/* How many times a reader tries before giving up on a writer that has
+ * stopped mid-pose, perhaps preempted. */
+#define NP_READ_TRIES 64
+
+uint32_t np_pose_count(const volatile FTData *heap)
+{
+    uint32_t id = heap->DataID;
+    return id >= 2 && id <= NP_POSE_COUNT_MAX ? id & ~1u : 0;
+}
+
+void np_write_pose(volatile FTData *heap, uint32_t *count, np_pose *pose)
+{
+    uint32_t next = *count + 2 > NP_POSE_COUNT_MAX ? 2 : *count + 2;
+    heap->DataID = next - 1;
+    MemoryBarrier();
+    heap->Yaw = pose->yaw;
+    heap->Pitch = pose->pitch;
+    heap->Roll = pose->roll;
+    heap->X = pose->x;
+    heap->Y = pose->y;
+    heap->Z = pose->z;
+    heap->RawYaw = pose->yaw;
+    heap->RawPitch = pose->pitch;
+    heap->RawRoll = pose->roll;
+    heap->RawX = pose->x;
+    heap->RawY = pose->y;
+    heap->RawZ = pose->z;
+    MemoryBarrier();
+    heap->DataID = next;
+    *count = next;
+    pose->data_id = next;
+}
+
+int np_read_pose(const volatile FTData *heap, np_pose *pose)
+{
+    for (int tries = 0; tries < NP_READ_TRIES; tries++) {
+        uint32_t before = heap->DataID;
+        MemoryBarrier();
+        np_pose p = {before, heap->Yaw, heap->Pitch, heap->Roll, heap->X, heap->Y, heap->Z};
+        MemoryBarrier();
+        if (!(before & 1) && heap->DataID == before) {
+            *pose = p;
+            return 1;
+        }
+        if (tries < 8)
+            YieldProcessor();
+        else
+            SwitchToThread();
+    }
+    return 0;
+}
+
 int np_pose_fresh(np_freshness *f, unsigned data_id, unsigned long long now_ms)
 {
     if (data_id != f->data_id) {
@@ -125,7 +191,7 @@ static float clamp_axis(double x)
 
 
 /* Angles of +-180 degrees and positions of +-500 mm span the axis. */
-void np_fill_record(tir_data_t *d, const volatile FTData *pose, int fresh)
+void np_fill_record(tir_data_t *d, const np_pose *pose, int fresh)
 {
     if (!fresh) {
         d->status = NP_STATUS_DISABLED;
@@ -133,12 +199,12 @@ void np_fill_record(tir_data_t *d, const volatile FTData *pose, int fresh)
         return;
     }
     d->status = NP_STATUS_OK;
-    d->yaw = clamp_axis(pose->Yaw * NP_AXIS_MAX / PI);
-    d->pitch = clamp_axis(pose->Pitch * NP_AXIS_MAX / PI);
-    d->roll = clamp_axis(pose->Roll * NP_AXIS_MAX / PI);
-    d->tx = clamp_axis(pose->X * NP_AXIS_MAX / 500.);
-    d->ty = clamp_axis(pose->Y * NP_AXIS_MAX / 500.);
-    d->tz = clamp_axis(pose->Z * NP_AXIS_MAX / 500.);
+    d->yaw = clamp_axis(pose->yaw * NP_AXIS_MAX / PI);
+    d->pitch = clamp_axis(pose->pitch * NP_AXIS_MAX / PI);
+    d->roll = clamp_axis(pose->roll * NP_AXIS_MAX / PI);
+    d->tx = clamp_axis(pose->x * NP_AXIS_MAX / 500.);
+    d->ty = clamp_axis(pose->y * NP_AXIS_MAX / 500.);
+    d->tz = clamp_axis(pose->z * NP_AXIS_MAX / 500.);
 }
 
 void np_seal_record(tir_data_t *d, const unsigned char *key)
