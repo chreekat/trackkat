@@ -75,9 +75,10 @@ resourceIcon number size = do
 data Font = UiFont | BoldFont | SmallFont
     deriving (Eq, Show, Enum)
 
--- | A length at 96 dots per inch, at the screen's.
+-- | A length at 96 dots per inch, at the screen's, to the nearest pixel as
+-- cbits/gui.c's S scales it.
 scaled :: CInt -> IO CInt
-scaled x = (\dpi -> x * dpi `div` 96) <$> c_dpi
+scaled x = (\dpi -> (x * dpi + 48) `div` 96) <$> c_dpi
 
 -- | A colour as Windows takes it: red, green and blue in its low bytes.
 type Colour = DWORD
