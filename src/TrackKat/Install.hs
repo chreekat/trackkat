@@ -38,7 +38,7 @@ import System.Environment (getExecutablePath, lookupEnv)
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, (</>))
 import Text.Printf (printf)
 
-import TrackKat.CommandLine (Uninstall (..))
+import TrackKat.CommandLine (Uninstall (..), commandLine)
 import TrackKat.Config (Startup (..))
 import TrackKat.Gui (quitRunning)
 import TrackKat.Release
@@ -174,7 +174,7 @@ register say p v = do
 setStartup :: (String -> IO ()) -> Paths -> Startup -> IO ()
 setStartup say p = \case
     StartAtLogin -> do
-        let command = quote (exeDir p </> "trackkat.exe") ++ " --tray"
+        let command = commandLine (exeDir p </> "trackkat.exe") ["--tray"]
         rc <- withCWString runName $ \n -> withCWString command $ \c -> c_set_run n c 0
         unless (rc == 0) $ say ("Can't start with Windows (registry error " ++ show rc ++ ").")
     NoStartAtLogin -> do
@@ -201,7 +201,7 @@ handOver exe args = do
 -- | Start a program, such as a trackkat.exe, with these arguments, and no
 -- console window. Left is a Windows error code.
 launch :: FilePath -> [String] -> IO (Either Int ())
-launch exe args = start exe (unwords (quote exe : args))
+launch exe args = start exe (commandLine exe args)
 
 -- | Start a program with a command line, which names it first, as 'launch'
 -- does: for cmd, which splits its command line its own way.

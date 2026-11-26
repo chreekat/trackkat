@@ -3,6 +3,7 @@ module Test.CommandLine (tests) where
 
 import Data.Char (isDigit)
 import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck
 
 import Test.Gen (earlier, shrinkFrom, shrinkParts)
@@ -38,6 +39,26 @@ tests =
                         -- one after --record for its file.
                         (i == 0 || args !! (i - 1) `notElem` ["--after", "--record"]) ==>
                             parseCommand (take i args ++ [word] ++ drop i args) === Nothing
+        , testProperty "a program started with arguments gets them as given, however they are written" $
+            \(Arguments args) ->
+                let exe = "C:\\Program Files\\trackkat\\trackkat.exe"
+                 in splitCommandLine (commandLine exe args) === exe : args
+        , testCase "command lines split as Microsoft's examples do" $
+            map splitCommandLine
+                [ "p \"a b c\" d e"
+                , "p \"ab\\\"c\" \"\\\\\" d"
+                , "p a\\\\\\b d\"e f\"g h"
+                , "p a\\\\\\\"b c d"
+                , "p a\\\\\\\\\"b c\" d e"
+                , "p a\"b\"\" c d"
+                ]
+                @?= [ ["p", "a b c", "d", "e"]
+                    , ["p", "ab\"c", "\\", "d"]
+                    , ["p", "a\\\\\\b", "de fg", "h"]
+                    , ["p", "a\\\"b", "c", "d"]
+                    , ["p", "a\\\\b c", "d", "e"]
+                    , ["p", "ab\" c d"]
+                    ]
         ]
   where
     dropZeros pid = case dropWhile (== '0') pid of
@@ -87,3 +108,43 @@ instance Arbitrary Stray where
 
 strays :: [String]
 strays = ["--help", "-window", "--after", "trackkat.conf", ""]
+
+-- | Arguments of the letters that command lines treat specially, among a
+-- few others. Simpler of fewer, shorter arguments, of plainer letters.
+newtype Arguments = Arguments [String]
+    deriving (Show)
+
+instance Arbitrary Arguments where
+    arbitrary = Arguments <$> listOf (listOf (elements letters))
+    shrink (Arguments args) = Arguments <$> shrinkList (shrinkList (\l -> earlier letters l)) args
+
+letters :: String
+letters = "a \"\\\tZ\233\1078"
+
+-- | A command line split into its program and arguments, by the rules of
+-- Microsoft's C runtime and CommandLineToArgvW: the program up to a space,
+-- or in quotes; then arguments split at spaces and tabs outside quotes,
+-- where backslashes before a quote are halved, an odd one left escaping
+-- the quote, and two quotes inside quotes are one.
+splitCommandLine :: String -> [String]
+splitCommandLine line = case line of
+    '"' : rest -> let (p, after) = break (== '"') rest in p : arguments (drop 1 after)
+    _ -> let (p, after) = break (`elem` " \t") line in p : arguments after
+  where
+    arguments s = case dropWhile (`elem` " \t") s of
+        "" -> []
+        s' -> argument False "" s'
+    argument quoted acc s = case s of
+        '\\' : _
+            | (slashes, '"' : rest) <- span (== '\\') s ->
+                let n = length slashes
+                    kept = replicate (n `div` 2) '\\'
+                 in if odd n then argument quoted ('"' : kept ++ acc) rest else quote quoted (kept ++ acc) rest
+        '"' : rest -> quote quoted acc rest
+        c : rest
+            | not quoted, c `elem` " \t" -> reverse acc : arguments rest
+            | otherwise -> argument quoted (c : acc) rest
+        "" -> [reverse acc]
+    quote quoted acc s = case s of
+        '"' : rest | quoted -> argument True ('"' : acc) rest
+        _ -> argument (not quoted) acc s

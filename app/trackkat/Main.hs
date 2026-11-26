@@ -65,7 +65,14 @@ main = do
         Just ListFiles -> mapM_ putStrLn releaseFiles
         Just (UninstallCommand how) -> uninstall how
         Just InstallCommand -> installFromCommandLine
-        Just (Run start window recorded after) -> run start window recorded after
+        Just (Run start window recorded after) -> absolute recorded >>= \r -> run start window r after
+
+-- | The file to record to, named in full from the folder trackkat was
+-- started in, as the trackkats it hands over to start in their own.
+absolute :: Recorded -> IO Recorded
+absolute = \case
+    RecordedTo file -> RecordedTo <$> makeAbsolute file
+    r -> pure r
 
 -- | Install this copy, and start the installed one, taking over from any
 -- trackkat running.
@@ -166,15 +173,15 @@ run start window recorded after = do
                     quitProcess
 
 -- | Run trackkat recording what happens to its session, if the command
--- line asked, to the file it named or one named for the time, in the
--- settings folder: the session starts from the settings file's text
+-- line asked, to the file it named, in full, or one named for the time,
+-- in the settings folder: the session starts from the settings file's text
 -- given, and the calibration file's, if it starts from what one says.
 -- Tracking goes on unrecorded if the file can't be written to.
 withRecording :: Recorded -> Paths -> String -> Maybe String -> (Maybe (FilePath, SessionRecorder) -> IO a) -> IO a
 withRecording Unrecorded _ _ _ act = act Nothing
 withRecording recorded paths settings learnt act = do
     path <- case recorded of
-        RecordedTo file -> makeAbsolute file
+        RecordedTo file -> pure file
         _ -> (settingsDir paths </>) . named . zonedTimeToLocalTime <$> getZonedTime
     start <- startOfSession notes settings learnt <$> getMonotonicTimeNSec
     withRecorder path start (say . describeStopped) $ \case

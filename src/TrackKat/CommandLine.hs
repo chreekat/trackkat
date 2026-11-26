@@ -13,6 +13,7 @@ module TrackKat.CommandLine (
     usage,
     startArgs,
     afterArgs,
+    commandLine,
 ) where
 
 import Data.List (isPrefixOf)
@@ -133,3 +134,16 @@ startArgs s w r = how ++ window ++ recording
 -- any, once it has quit.
 afterArgs :: Maybe Int -> [String]
 afterArgs = maybe [] (\pid -> ["--after", renderNatural (toInteger pid)])
+
+-- | The command line that starts a program with these arguments, each in
+-- quotes, as Microsoft's C runtime and CommandLineToArgvW split it back.
+commandLine :: FilePath -> [String] -> String
+commandLine exe args = unwords (quoted exe : map (quoted . escaped) args)
+  where
+    quoted s = "\"" ++ s ++ "\""
+    -- Backslashes are doubled before a quote, the argument's own or the
+    -- closing one, and its own quotes escaped by one more.
+    escaped s = case span (== '\\') s of
+        (slashes, "") -> slashes ++ slashes
+        (slashes, '"' : rest) -> slashes ++ slashes ++ "\\\"" ++ escaped rest
+        (slashes, c : rest) -> slashes ++ c : escaped rest
