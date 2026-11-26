@@ -250,10 +250,10 @@ watch now pivot reference clarity pose seen br = case seen of
         -- A window's log-odds, counted only as far as those of the windows
         -- that ended near the same pose come to at most one window's worth.
         counted odds =
-            let (near, further) = break (\(Place there _) -> turnBetweenPoses there pose < placeDegrees) (brPlaces br)
-                (Place at before, rest) = case further of
-                    p : later -> (p, near ++ later)
-                    [] -> (Place pose 0, near)
+            let (further, near) = break (\(Place there _) -> turnBetweenPoses there pose < placeDegrees) (brPlaces br)
+                (Place at before, rest) = case near of
+                    p : later -> (p, further ++ later)
+                    [] -> (Place pose 0, further)
                 after = max (negate windowWeight) (min windowWeight (before + odds))
                 places = Place at after : take (placesRemembered - 1) rest
              in (evidence (LogOdds (after - before)) (brBelief br), foldr seq places places)
