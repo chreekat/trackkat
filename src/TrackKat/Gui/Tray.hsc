@@ -42,6 +42,7 @@ import TrackKat.Tray
 
 foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
 foreign import ccall safe "hts_gui_open_settings_now" c_open_settings_now :: IO ()
+foreign import ccall unsafe "hts_gui_stopping" c_stopping :: IO CInt
 foreign import ccall unsafe "hts_gui_tray_state"
     c_tray_state :: Ptr CInt -> CWString -> Ptr CInt -> Ptr CInt -> Ptr CInt -> CWString -> IO ()
 
@@ -49,7 +50,7 @@ foreign import ccall unsafe "hts_gui_tray_state"
 -- procedure here, while they wait: safe.
 foreign import ccall safe "windows.h CreateWindowExW"
     c_CreateWindowEx :: DWORD -> ClassName -> LPCTSTR -> DWORD -> CInt -> CInt -> CInt -> CInt -> HWND -> HMENU -> HINSTANCE -> LPVOID -> IO HWND
-foreign import ccall safe "hts_gui_notify_tray" c_notify_tray :: DWORD -> Ptr () -> IO BOOL
+foreign import ccall safe "shellapi.h Shell_NotifyIconW" c_Shell_NotifyIcon :: DWORD -> Ptr () -> IO BOOL
 foreign import ccall safe "windows.h TrackPopupMenu"
     c_TrackPopupMenu :: HMENU -> UINT -> CInt -> CInt -> CInt -> HWND -> LPRECT -> IO BOOL
 foreign import ccall unsafe "windows.h LoadImageW"
@@ -128,15 +129,22 @@ respond choose taskbarCreated shown w msg wp lp
   where
     wmContextMenu = 0x007B
     update = do
-        s <- trayState
-        was <- readIORef shown
-        let now = ShownAs (trayLook s) (trayTip s)
-        unless (now == was) $ do
-            icon <- trayIcon (trayLook s)
-            -- Modified if it is there; added if not, or no longer.
-            ok <- if was == NotShown then pure False else notify nimModify icon (trayTip s)
-            added <- if ok then pure True else notify nimAdd icon (trayTip s)
-            writeIORef shown (if added then now else NotShown)
+        stopping <- c_stopping
+        when (stopping == 0) $ do
+            s <- trayState
+            was <- readIORef shown
+            let now = ShownAs (trayLook s) (trayTip s)
+            unless (now == was) $ do
+                icon <- trayIcon (trayLook s)
+                -- Modified if it is there; added if not, or no longer.
+                ok <- if was == NotShown then pure False else notify nimModify icon (trayTip s)
+                added <- if ok then pure True else do
+                    new <- notify nimAdd icon (trayTip s)
+                    -- Taken back as in cbits/gui.c's update_tray.
+                    stopped <- c_stopping
+                    when (new && stopped /= 0) $ void (notify nimDelete icon "")
+                    pure new
+                writeIORef shown (if added then now else NotShown)
     menu = do
         s <- trayState
         bracket createPopupMenu destroyMenu $ \m -> do
@@ -153,6 +161,7 @@ respond choose taskbarCreated shown w msg wp lp
     notify message icon tip = notifyIcon message w icon tip
     nimAdd = #{const NIM_ADD}
     nimModify = #{const NIM_MODIFY}
+    nimDelete = #{const NIM_DELETE}
 
 -- | The menu's items' IDs, from this on in the order of 'TrayChoice'.
 firstItem :: Int
@@ -206,8 +215,7 @@ trayIcon look = do
     -- IDI_APPLICATION, a resource number cast to a pointer.
     idiApplication = 32512
 
--- | Add or modify the window's icon, uID 1, with a tooltip, unless
--- cbits/gui.c's hts_gui_stop has removed it for good.
+-- | Add, modify or delete the window's icon, uID 1, with a tooltip.
 notifyIcon :: DWORD -> HWND -> HICON -> String -> IO BOOL
 notifyIcon message w icon tip =
     allocaBytes size $ \p -> do
@@ -220,6 +228,6 @@ notifyIcon message w icon tip =
         #{poke NOTIFYICONDATAW, hIcon} p icon
         withCWStringLen tip $ \(s, n) ->
             copyArray (castPtr (p `plusPtr` #{offset NOTIFYICONDATAW, szTip})) s (min n (tipMax - 1))
-        c_notify_tray message (castPtr p)
+        c_Shell_NotifyIcon message (castPtr p)
   where
     size = #{size NOTIFYICONDATAW}

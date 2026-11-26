@@ -129,9 +129,7 @@ static volatile LONG chosen_keys[LISTS]; /* modifiers << 16 | virtual key, per b
 static volatile LONG capturing = -1;      /* the binding list waiting for a key or button, or -1 */
 static wchar_t *added[LISTS];             /* bindings to add to the lists, on the heap */
 static unsigned added_lists;          /* bit per list with a binding to add */
-static CRITICAL_SECTION tray_lock;    /* see Note [The tray icon's lock] */
-static INIT_ONCE tray_lock_made = INIT_ONCE_STATIC_INIT;
-static int stopping;                  /* whether the tray icon is removed for good; under tray_lock */
+static volatile LONG stopping;
 
 static void copy_text(wchar_t *dst, size_t size, const wchar_t *src)
 {
@@ -553,43 +551,10 @@ static void describe(const State *st, wchar_t *buf, size_t size)
     buf[size - 1] = 0;
 }
 
-static BOOL CALLBACK make_tray_lock(PINIT_ONCE once, PVOID param, PVOID *context)
-{
-    (void)once;
-    (void)param;
-    (void)context;
-    InitializeCriticalSection(&tray_lock);
-    return TRUE;
-}
-
-static void lock_tray(void)
-{
-    InitOnceExecuteOnce(&tray_lock_made, make_tray_lock, NULL, NULL);
-    EnterCriticalSection(&tray_lock);
-}
-
-/* Note [The tray icon's lock]
- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
- * hts_gui_stop removes the tray icon from whichever thread calls it, while
- * the GUI thread adds and modifies it. Each holds tray_lock from its look at
- * stopping through its Shell_NotifyIconW, so once hts_gui_stop has removed
- * the icon nothing adds it back, and hts_gui_quit, which ends the process
- * next, leaves no add in flight. It is a critical section, which a thread
- * may enter again, because Shell_NotifyIconW can hand the GUI thread a sent
- * message, such as TaskbarCreated, that adds the icon in turn. */
-
-/* Add or modify the tray icon (NIM_ADD or NIM_MODIFY) unless it is removed
- * for good: nonzero if done. See Note [The tray icon's lock]. */
-BOOL hts_gui_notify_tray(DWORD message, NOTIFYICONDATAW *icon)
-{
-    lock_tray();
-    BOOL done = !stopping && Shell_NotifyIconW(message, icon);
-    LeaveCriticalSection(&tray_lock);
-    return done;
-}
-
 static void update_tray(int force)
 {
+    if (InterlockedCompareExchange(&stopping, 0, 0))
+        return;
     int look = current_look(&seen);
     wchar_t tip[128];
     describe(&seen, tip, 128);
@@ -598,9 +563,14 @@ static void update_tray(int force)
     nid.hIcon = resource_icon(FIRST_TRAY_ICON + look, GetSystemMetrics(SM_CXSMICON));
     copy_text(nid.szTip, 128, tip);
     if (tray_added)
-        tray_added = hts_gui_notify_tray(NIM_MODIFY, &nid);
-    if (!tray_added)
-        tray_added = hts_gui_notify_tray(NIM_ADD, &nid);
+        tray_added = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    if (!tray_added) {
+        tray_added = Shell_NotifyIconW(NIM_ADD, &nid);
+        /* hts_gui_stop sets stopping before it deletes, so an add its delete
+         * may have come before is taken back here. */
+        if (tray_added && InterlockedCompareExchange(&stopping, 0, 0))
+            Shell_NotifyIconW(NIM_DELETE, &nid);
+    }
     icon_shown = look;
     copy_text(tip_shown, 128, tip);
 }
@@ -3621,6 +3591,9 @@ void hts_gui_ask(int act) { InterlockedOr(&actions, act); }
 /* On WM_APP_OPEN_SETTINGS. */
 void hts_gui_open_settings_now(void) { open_settings_file(); }
 
+/* Whether the tray icon is removed for good. */
+int hts_gui_stopping(void) { return InterlockedCompareExchange(&stopping, 0, 0); }
+
 /* What the last refresh saw, for the icon: the camera as hts_gui_camera
  * takes it and why it is down, whether the clip is out of sight, games,
  * whether paused, and the tray's item for an offer; texts of TEXT_MAX and
@@ -3635,12 +3608,11 @@ void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *
     copy_text(offer, OFFER_TRAY_MAX, seen.offer_tray);
 }
 
-/* Remove the tray icon for good, which Windows otherwise leaves behind until
- * the mouse passes over it. See Note [The tray icon's lock]. */
+/* Remove the tray icon, which Windows otherwise leaves behind until the
+ * mouse passes over it. */
 void hts_gui_stop(void)
 {
-    lock_tray();
-    stopping = 1;
+    InterlockedExchange(&stopping, 1);
     if (tray_hwnd) {
         NOTIFYICONDATAW gone;
         memset(&gone, 0, sizeof gone);
@@ -3649,7 +3621,6 @@ void hts_gui_stop(void)
         gone.uID = 1;
         Shell_NotifyIconW(NIM_DELETE, &gone);
     }
-    LeaveCriticalSection(&tray_lock);
 }
 
 static BOOL WINAPI console_closing(DWORD event)
