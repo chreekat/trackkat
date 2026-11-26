@@ -31,8 +31,8 @@ module TrackKat.Lights (
     forgetSeconds,
 ) where
 
-import Data.Foldable (toList)
 import Data.Either (partitionEithers)
+import Data.Foldable (toList)
 import Data.List (minimumBy, partition)
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Ord (comparing)
