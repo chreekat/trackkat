@@ -95,8 +95,9 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.haskell.outputs.cabal-store }}
-          key: windows-cabal-${{ hashFiles('trackkat.cabal', 'cabal.project.freeze') }}
-          restore-keys: windows-cabal-
+          # A store is built by one GHC and cabal, for one plan.
+          key: windows-cabal-${{ steps.haskell.outputs.ghc-version }}-${{ steps.haskell.outputs.cabal-version }}-${{ hashFiles('trackkat.cabal', 'cabal.project', 'cabal.project.freeze') }}
+          restore-keys: windows-cabal-${{ steps.haskell.outputs.ghc-version }}-${{ steps.haskell.outputs.cabal-version }}-
 
       - run: cabal update
 
@@ -290,8 +291,9 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.haskell.outputs.cabal-store }}
-          key: linux-cabal-${{ hashFiles('trackkat.cabal', 'cabal.project.freeze') }}
-          restore-keys: linux-cabal-
+          # A store is built by one GHC and cabal, for one plan.
+          key: linux-cabal-${{ steps.haskell.outputs.ghc-version }}-${{ steps.haskell.outputs.cabal-version }}-${{ hashFiles('trackkat.cabal', 'cabal.project', 'cabal.project.freeze') }}
+          restore-keys: linux-cabal-${{ steps.haskell.outputs.ghc-version }}-${{ steps.haskell.outputs.cabal-version }}-
       - run: cabal update
       - run: cabal build all --enable-tests
       - run: cabal test all --test-show-details=direct
