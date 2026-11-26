@@ -57,12 +57,10 @@ _Static_assert(sizeof(TrackIRShared) == 0x1E6, "TrackIR's shared memory");
 
 static HANDLE mapping, mutex;
 static volatile TrackIRShared *shared;
-/* The FreeTrack heap trackkat publishes in, for the stale check on the
- * window's thread; NULL until the first pose. */
+/* The last pose published, for the stale check on the window's thread. */
 static const volatile FTData *latest;
 
 /* Guarded by the mutex. */
-static np_pose pose; /* the last read whole */
 static np_freshness freshness;
 static short frame;
 static int written_status = -1;
@@ -99,19 +97,17 @@ enum when { ALWAYS, NEWLY_STALE };
 /* Write the pose record, unless the mutex stays busy for longer than wait
  * ms. NEWLY_STALE writes it only to say that trackkat has stopped
  * publishing. */
-static void write_record(const volatile FTData *heap, DWORD wait, enum when when)
+static void write_record(const volatile FTData *pose, DWORD wait, enum when when)
 {
     DWORD w = WaitForSingleObject(mutex, wait);
     if (w != WAIT_OBJECT_0 && w != WAIT_ABANDONED)
         return;
-    if (heap)
-        np_read_pose(heap, &pose);
-    int fresh = np_pose_fresh(&freshness, pose.data_id, GetTickCount64());
+    int fresh = pose && np_pose_fresh(&freshness, pose->DataID, GetTickCount64());
     if (when == ALWAYS || (!fresh && written_status != NP_STATUS_DISABLED)) {
         tir_data_t d;
         memset(&d, 0, sizeof d);
         d.frame = ++frame;
-        np_fill_record(&d, &pose, fresh);
+        np_fill_record(&d, pose, fresh);
         written_status = d.status;
         np_seal_record(&d, key);
         memcpy((void *)&shared->data, &d, sizeof d);
@@ -119,12 +115,12 @@ static void write_record(const volatile FTData *heap, DWORD wait, enum when when
     ReleaseMutex(mutex);
 }
 
-void trackir_publish(const volatile FTData *heap)
+void trackir_publish(const volatile FTData *pose)
 {
     if (!shared)
         return;
-    latest = heap;
-    write_record(heap, 0, ALWAYS);
+    latest = pose;
+    write_record(pose, 0, ALWAYS);
 }
 
 static void game_tracking(int tracking)

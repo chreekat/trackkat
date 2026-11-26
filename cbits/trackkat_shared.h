@@ -14,7 +14,7 @@
 #define TRACKKAT_RUNNING_MUTEX "TrackKat_Running"
 
 typedef struct FTData {
-    uint32_t DataID; /* see np_write_pose */
+    uint32_t DataID; /* bumped on every new pose */
     int32_t CamWidth;
     int32_t CamHeight;
     float Yaw;   /* radians, positive to the left */

@@ -1,9 +1,9 @@
 /* What our NPClient DLL and trackkat.exe, publishing (cbits/windows.c) and
  * standing in for NaturalPoint's software (cbits/trackir.c), need alike, so
- * they can't drift apart: how a pose is written to the FreeTrack heap and
- * read from it whole, TrackIR's pose record, how a pose is scaled into
- * it, checked and scrambled, NaturalPoint's signature, the games' keys, and
- * the registry of games tracking in our control block. */
+ * they can't drift apart: TrackIR's pose record, how a pose is scaled into
+ * it, checked and scrambled, NaturalPoint's signature, the games' keys, the
+ * registry of games tracking in our control block, and the security of the
+ * objects games share with trackkat. */
 
 #ifndef NPCLIENT_COMMON_H
 #define NPCLIENT_COMMON_H
@@ -32,28 +32,6 @@ typedef struct tir_signature {
     char AppSignature[200];
 } tir_signature_t;
 
-/* A pose as trackkat published it, read whole from the FreeTrack heap:
- * radians and mm, in FreeTrack's conventions, with the DataID it was
- * published under. */
-typedef struct np_pose {
-    uint32_t data_id;
-    float yaw, pitch, roll, x, y, z;
-} np_pose;
-
-/* Publish a pose into the FreeTrack heap, as its angles and positions and
- * their raw copies; its data_id is the one it is published under, which
- * *count, the writer's own count of poses published, gives. *count starts
- * at np_pose_count. See Note [Publishing the pose whole]. */
-void np_write_pose(volatile FTData *heap, uint32_t *count, np_pose *pose);
-
-/* Where a writer's count of poses starts, given the heap as another writer
- * may have left it. */
-uint32_t np_pose_count(const volatile FTData *heap);
-
-/* Read the pose whole into *pose; 0, leaving *pose alone, if it is being
- * written all the while. See Note [Publishing the pose whole]. */
-int np_read_pose(const volatile FTData *heap, np_pose *pose);
-
 /* Tracks whether trackkat is still publishing, by when the FreeTrack pose's
  * DataID last changed. Starts zeroed. */
 typedef struct np_freshness {
@@ -67,7 +45,7 @@ int np_pose_fresh(np_freshness *f, unsigned data_id, unsigned long long now_ms);
 
 /* Fill in a record's status and axes from a FreeTrack pose: OK and the pose
  * when fresh, otherwise disabled and zeros. Leaves the frame alone. */
-void np_fill_record(tir_data_t *d, const np_pose *pose, int fresh);
+void np_fill_record(tir_data_t *d, const volatile FTData *pose, int fresh);
 
 /* Checksum a filled-in record, then scramble it with a game's key, if it
  * has one. */
