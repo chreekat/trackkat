@@ -351,7 +351,6 @@ uninstall how = do
         names <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
         mapM_ (\n -> deleteAll (installRoot p </> n)) names
         _ <- try (removeDirectory (installRoot p)) :: IO (Either IOException ())
-        left <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
         rest <- doesDirectoryExist (installRoot p)
         comspec <- fromMaybe "C:\\Windows\\System32\\cmd.exe" <$> lookupEnv "ComSpec"
         let root = quote (installRoot p)
@@ -372,11 +371,8 @@ uninstall how = do
             AskFirst -> () <$ ask done 0
             Quietly -> pure ()
         -- What this process holds, its trackkat.exe and the DLLs it loaded,
-        -- goes once it has quit: tried each second for half a minute.
-        when rest $ do
-            -- The folders left now, so that one a reinstall makes meanwhile stays.
-            let removeLeft = concatMap (\n -> "rd /s /q " ++ quote (installRoot p </> n) ++ " 2>nul & ") left
-            () <$ start comspec (cmd ("for /l %i in (1,1,30) do @if exist " ++ root ++ " (" ++ removeLeft ++ "rd " ++ root ++ " 2>nul & if exist " ++ root ++ " ping -n 2 127.0.0.1 >nul)"))
+        -- goes a few seconds on, once it has quit.
+        when rest $ () <$ start comspec (cmd ("ping -n 4 127.0.0.1 >nul & rd /s /q " ++ root))
   where
     ask text kind = withCWString text $ \t -> c_ask t kind
     inside dir path = map toLower (addTrailingPathSeparator (normalise dir)) `isPrefixOf` map toLower (addTrailingPathSeparator (normalise path))
