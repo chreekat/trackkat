@@ -2097,7 +2097,7 @@ static int field_value(int i, wchar_t *out, size_t size)
 static void save_settings(void)
 {
     unsigned fields = changed;
-    wchar_t values[F_COUNT][FIELD_MAX];
+    static wchar_t values[F_COUNT][FIELD_MAX]; /* too big for the stack; only the GUI thread saves */
     changed = 0;
     if (!fields)
         return;
@@ -2566,7 +2566,7 @@ static void refresh(void)
 {
     State st;
     unsigned fields, lists;
-    wchar_t values[F_COUNT][FIELD_MAX], additions[LISTS][FIELD_MAX];
+    static wchar_t values[F_COUNT][FIELD_MAX], additions[LISTS][FIELD_MAX]; /* too big for the stack; only the GUI thread refreshes */
     AcquireSRWLockExclusive(&lock);
     st = shared;
     fields = pushed_fields;
