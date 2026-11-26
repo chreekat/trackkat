@@ -202,8 +202,6 @@ that tests found false. None is fixed.
 46. A "Check for updates" click with no network still puts off the next
     automatic look by four hours.
 47. The trim log line can print "-0".
-48. An unwritable settings folder kills trackkat at start with nothing in
-    the window.
-49. A failed write of the served-game file is never retried.
-50. Camera diagnostics ("# …" lines) are developer lines but go to the
+48. A failed write of the served-game file is never retried.
+49. Camera diagnostics ("# …" lines) are developer lines but go to the
     window log.
