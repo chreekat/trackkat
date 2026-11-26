@@ -3,6 +3,9 @@
  *
  * usage: fakepose [seconds [game]]
  *
+ * It publishes for the seconds given, or until a file fakepose.stop appears
+ * in the folder it runs in. It prints "ready" once it publishes, and
+ * "serving a game" once a game is tracking through NaturalPoint's NPClient.
  * At the end it prints the game NaturalPoint's NPClient was served, as
  * "served game: " and the five numbers trackkat saves; given them as game,
  * a later fakepose serves that game again, as a restarted trackkat does. */
@@ -46,12 +49,20 @@ int main(int argc, char **argv)
         fprintf(stderr, "could not stand in for NaturalPoint's software (%d)\n", rc);
         return 1;
     }
+    printf("ready\n");
+    fflush(stdout);
     const double deg = 3.14159265358979323846 / 180;
-    int most_games = 0;
-    for (int i = 0; i < seconds * 100; i++) {
+    int most_games = 0, serving = 0;
+    for (int i = 0; i < seconds * 100 && GetFileAttributesA("fakepose.stop") == INVALID_FILE_ATTRIBUTES; i++) {
         int games = hts_games_tracking();
         if (games > most_games)
             most_games = games;
+        hts_trackir_served(&pid, &created, &window, &profile, &tracking);
+        if (!serving && pid && tracking) {
+            serving = 1;
+            printf("serving a game\n");
+            fflush(stdout);
+        }
         double t = i / 100.0;
         /* Yaw sweeps +-30 degrees; the rest are fixed, recognisable values. */
         hts_publish((float)(30 * sin(t) * deg), (float)(10 * deg), (float)(-5 * deg), 12, -34, 56);

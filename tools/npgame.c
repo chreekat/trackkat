@@ -5,7 +5,8 @@
  * usage: npgame [game-id] [path\to\NPClient64.dll [seconds]]
  * The game ID defaults to 1003, which DCS uses.
  * Without a path, it finds the DLL through the registry, like games do.
- * It reads for two seconds, unless told otherwise. */
+ * It reads for two seconds, unless told otherwise, or until a file
+ * npgame.stop appears in the folder it runs in. */
 
 #include <windows.h>
 #include <stdio.h>
@@ -144,7 +145,7 @@ int main(int argc, char **argv)
     int reads = argc > 3 ? atoi(argv[3]) * 20 : 40;
     int bad = 0, back = 0, seen = 0;
     short frame = 0;
-    for (int i = 0; i < reads; i++) {
+    for (int i = 0; i < reads && GetFileAttributesA("npgame.stop") == INVALID_FILE_ATTRIBUTES; i++) {
         tir_data_t d;
         int rc = get_data(&d);
         if (key)
@@ -164,6 +165,7 @@ int main(int argc, char **argv)
                    rc, d.status, d.frame, ok ? "ok " : "BAD", d.yaw * 180.0 / NP_AXIS_MAX, d.pitch * 180.0 / NP_AXIS_MAX,
                    d.roll * 180.0 / NP_AXIS_MAX, d.tx * 500.0 / NP_AXIS_MAX, d.ty * 500.0 / NP_AXIS_MAX,
                    d.tz * 500.0 / NP_AXIS_MAX);
+        fflush(stdout);
         Sleep(50);
     }
     stop();

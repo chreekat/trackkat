@@ -51,10 +51,30 @@ fi
 # fakepose publishes pitch 10, roll -5 and x/y/z 12/-34/56 throughout.
 pose='checksum ok .*pitch  +10.00 roll   -5.00 deg  x  +12.0 y  -34.0 z  +56.0 mm'
 
-run ./fakepose.exe 6 >fakepose.out 2>&1 &
-sleep 2
+# Wait, for at most a minute, until a file has a line matching a pattern,
+# or as many such lines as given.
+await() { # file pattern [count]
+    deadline=$(($(date +%s) + 60))
+    while :; do
+        seen=$(grep -c "$2" "$1" 2>/dev/null || true)
+        [ "${seen:-0}" -lt "${3:-1}" ] || return 0
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "Timed out waiting for \"$2\" in $1:" >&2
+            cat "$1" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+}
+
+# fakepose and npgame run until told to stop by these files, or a minute.
+rm -f fakepose.stop npgame.stop
+run ./fakepose.exe 60 >fakepose.out 2>&1 &
+await fakepose.out '^ready'
 run ./npgame.exe 1003 "$(winpath "$work/NPClient64.dll")" | tee npgame.out
+touch fakepose.stop
 wait
+rm fakepose.stop
 cat fakepose.out
 grep -q "status 0 frame 1 $pose" npgame.out
 grep -q '^0 bad checksums' npgame.out
@@ -62,18 +82,32 @@ grep -q 'asked to recenter 1 times' fakepose.out
 grep -q 'at most 1 games tracking, 0 at the end' fakepose.out
 echo "NPClient OK"
 
-# The first fakepose quits 2 s into the game, which reads for 6 s; the
-# second starts as the first quits, given the game the first served.
-run ./fakepose.exe 4 >first.out 2>&1 &
+# The first fakepose quits once it serves the game, which reads on; the
+# second starts as the first quits, given the game the first served, and
+# the game reads until it has read from the second.
+run ./fakepose.exe 60 >first.out 2>&1 &
 first=$!
-sleep 2
-run ./npgame.exe 1006 "$(winpath "$work/fakenp64.dll")" 6 >npgame.out 2>&1 &
+await first.out '^ready'
+run ./npgame.exe 1006 "$(winpath "$work/fakenp64.dll")" 60 >npgame.out 2>&1 &
+reading=$!
+await first.out '^serving a game'
+touch fakepose.stop
 wait $first
+rm fakepose.stop
 cat first.out
 game=$(sed -n 's/^served game: //p' first.out | tr -d '\r')
 echo "$game" | grep -q '^[1-9][0-9]* [0-9]* [1-9][0-9]* 1006 1$'
-run ./fakepose.exe 7 "$game" >second.out 2>&1
-wait
+run ./fakepose.exe 60 "$game" >second.out 2>&1 &
+second=$!
+await second.out '^ready'
+# Of two reads told after the second is ready, the later was read from it.
+told=$(grep -c '^rc ' npgame.out || true)
+await npgame.out '^rc ' $((told + 2))
+touch npgame.stop
+wait $reading
+touch fakepose.stop
+wait $second
+rm fakepose.stop npgame.stop
 cat npgame.out second.out
 grep -q '^version: 0x0500' npgame.out
 grep -q "status 0 frame [0-9]* $pose" npgame.out
@@ -90,14 +124,15 @@ if [ -z "$genuine" ] || [ ! -f "$genuine" ]; then
     exit 0
 fi
 cp "$genuine" genuine64.dll
-run ./fakepose.exe 12 >fakepose.out 2>&1 &
-sleep 2
+run ./fakepose.exe 60 >fakepose.out 2>&1 &
+await fakepose.out '^ready'
 for id in 1001 7503; do
     run ./npgame.exe $id "$(winpath "$work/genuine64.dll")" | tee npgame-$id.out
     grep -q '^version: 0x0500' npgame-$id.out
     grep -q "status 0 frame [0-9]* $pose" npgame-$id.out
     grep -q '^0 bad checksums' npgame-$id.out
 done
+touch fakepose.stop
 wait
 cat fakepose.out
 grep -q 'asked to recenter 2 times' fakepose.out
