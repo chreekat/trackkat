@@ -65,6 +65,7 @@ import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOr
 import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
+import TrackKat.Gui.Curve (registerCurve)
 import TrackKat.Gui.Masthead (registerMasthead)
 import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
@@ -127,11 +128,12 @@ withGui HaskellWindow w work = do
     runGui made = do
         thread <- getCurrentThreadId
         rc <-
-            registerMasthead guiLog >>= \case
+            firstFailure [registerMasthead guiLog, registerCurve guiLog] >>= \case
                 Left e -> pure (fromIntegral e)
                 Right () -> makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
         putMVar made (rc, thread)
         when (rc == 0) (allocaMessage messageLoop)
+    firstFailure = foldr (\step rest -> step >>= either (pure . Left) (const rest)) (pure (Right ()))
     messageLoop msg =
         getMessage msg Nothing >>= \more -> when more $ do
             handled <- c_dialog_message msg

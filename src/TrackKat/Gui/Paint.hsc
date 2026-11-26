@@ -17,12 +17,14 @@ module TrackKat.Gui.Paint (
     textIn,
     Stroke (..),
     polyline,
+    disc,
     drawIcon,
+    buffered,
 ) where
 
 #include <windows.h>
 
-import Control.Exception (SomeAsyncException, catch, displayException, fromException, throwIO)
+import Control.Exception (SomeAsyncException, bracket, catch, displayException, fromException, throwIO)
 import Data.Bits ((.|.))
 import Foreign.C.String (newCWString, withCWStringLen)
 import Foreign.C.Types (CInt (..), CIntPtr (..))
@@ -54,6 +56,12 @@ foreign import ccall unsafe "windows.h DrawTextW" c_DrawText :: HDC -> Ptr () ->
 foreign import ccall unsafe "windows.h Polyline" c_Polyline :: HDC -> Ptr CInt -> CInt -> IO BOOL
 foreign import ccall unsafe "windows.h DrawIconEx"
     c_DrawIconEx :: HDC -> CInt -> CInt -> HICON -> CInt -> CInt -> UINT -> HANDLE -> UINT -> IO BOOL
+foreign import ccall unsafe "windows.h Ellipse" c_Ellipse :: HDC -> CInt -> CInt -> CInt -> CInt -> IO BOOL
+foreign import ccall unsafe "windows.h CreateCompatibleDC" c_CreateCompatibleDC :: HDC -> IO HDC
+foreign import ccall unsafe "windows.h DeleteDC" c_DeleteDC :: HDC -> IO BOOL
+foreign import ccall unsafe "windows.h CreateCompatibleBitmap" c_CreateCompatibleBitmap :: HDC -> CInt -> CInt -> IO HANDLE
+foreign import ccall unsafe "windows.h BitBlt"
+    c_BitBlt :: HDC -> CInt -> CInt -> CInt -> CInt -> HDC -> CInt -> CInt -> DWORD -> IO BOOL
 foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr () -> IO ATOM
 foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
 
@@ -169,9 +177,31 @@ polyline dc stroke width c points = do
     _ <- c_SelectObject dc old
     () <$ c_DeleteObject pen
 
+-- | Draw a disc of a fill colour, outlined in a pen's width and colour,
+-- of a radius about x, y.
+disc :: HDC -> Colour -> CInt -> Colour -> (CInt, CInt) -> CInt -> IO ()
+disc dc fill width line (x, y) r = do
+    brush <- c_CreateSolidBrush fill
+    pen <- c_CreatePen #{const PS_SOLID} width line
+    oldBrush <- c_SelectObject dc brush
+    oldPen <- c_SelectObject dc pen
+    _ <- c_Ellipse dc (x - r) (y - r) (x + r + 1) (y + r + 1)
+    mapM_ (c_SelectObject dc) [oldBrush, oldPen]
+    mapM_ c_DeleteObject [brush, pen]
+
 -- | Draw an icon at x, y, size pixels square.
 drawIcon :: HDC -> HICON -> CInt -> CInt -> CInt -> IO ()
 drawIcon dc icon x y size = () <$ c_DrawIconEx dc x y icon size size 0 nullPtr #{const DI_NORMAL}
+
+-- | Draw a width and height off screen, then onto a device context at
+-- once, so it never shows half drawn.
+buffered :: HDC -> CInt -> CInt -> (HDC -> IO ()) -> IO ()
+buffered dc w h draw =
+    bracket (c_CreateCompatibleDC dc) c_DeleteDC $ \mem ->
+        bracket (c_CreateCompatibleBitmap dc w h) c_DeleteObject $ \bitmap ->
+            bracket (c_SelectObject mem bitmap) (c_SelectObject mem) $ \_ -> do
+                draw mem
+                () <$ c_BitBlt dc 0 0 w h mem 0 0 #{const SRCCOPY}
 
 selectFont :: HDC -> Font -> IO ()
 selectFont dc font = do

@@ -3566,6 +3566,16 @@ void hts_gui_masthead_state(wchar_t *version, wchar_t *offer, int *checking, wch
     *up_to_date = seen.up_to_date;
 }
 
+/* What an axis's response plot shows, for TrackKat.Gui.Curve: its curve as
+ * typed, in FIELD_MAX characters, where the head is along the axis, and
+ * whether that is the head as tracked now. */
+void hts_gui_curve_state(int axis, wchar_t *text, double *head, int *live)
+{
+    GetWindowTextW(field_ctl[F_YAW + axis], text, FIELD_MAX);
+    *head = seen.head[axis];
+    *live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
+}
+
 /* The screen's dots per inch, which the window is drawn to. */
 int hts_gui_dpi(void) { return dpi; }
 
