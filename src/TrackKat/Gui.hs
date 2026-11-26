@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
 
 -- | trackkat's window and system tray icon: see cbits/gui.c. They run on a
 -- thread of their own; state is pushed in with the @show@ functions, which
@@ -404,15 +403,9 @@ showSettingsMessage s = withCWString s c_settings_message
 -- save, with their values, leaving out the rest. See Note [The window's
 -- changes] in cbits/gui.c.
 takeSavedSettings :: [String] -> IO [(String, String)]
-takeSavedSettings names = concat <$> mapM (\name -> withCWString name (taken name 256)) names
+takeSavedSettings names = concat <$> mapM saved names
   where
-    -- Asked again with room for the length given until the value fits,
-    -- since the user may save a longer one in between.
-    taken name size n = do
-        got <- allocaArray size $ \buf -> do
-            len <- fromIntegral <$> c_take_saved_setting n buf (fromIntegral size)
-            if
-                | len < 0 -> pure (Right [])
-                | len < size -> (\v -> Right [(name, v)]) <$> peekCWString buf
-                | otherwise -> pure (Left (len + 1))
-        either (\room -> taken name room n) pure got
+    saved name = withCWString name $ \n -> allocaArray size $ \buf -> do
+        shown <- c_take_saved_setting n buf (fromIntegral size)
+        if shown /= 0 then (\v -> [(name, v)]) <$> peekCWString buf else pure []
+    size = 256
