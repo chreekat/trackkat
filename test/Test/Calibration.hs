@@ -94,6 +94,16 @@ tests = group "Calibration" $ do
     checkShowing "a steep camera's level loaded again" (show (cameraTilt . estimatedLevel <$> parseCalibration standardMounting (renderCalibration (learnerCalibration steepened)))) $
         either (const False) steepUp (parseCalibration standardMounting (renderCalibration (learnerCalibration steepened)))
 
+    -- An up saved from less turning than learning uses an up after isn't
+    -- applied on loading, as one learnt live wouldn't be; one from enough
+    -- is, at once.
+    let tippedUp = V3 0 (-0.9396926) (-0.3420201)
+        appliedFrom turning = levelUp . appliedLevel . newLearner headset <$> parseCalibration standardMounting ("up = 0 -0.9396926 -0.3420201\nturning = " ++ turning ++ "\n")
+    checkShowing "an up saved from little turning isn't applied" (show (appliedFrom "50")) $
+        either (const False) (\up -> angleBetween up (V3 0 (-1) 0) < 1e-9) (appliedFrom "50")
+    checkShowing "an up saved from enough turning is applied" (show (appliedFrom "900")) $
+        either (const False) (\up -> angleBetween up tippedUp < 1e-6) (appliedFrom "900")
+
     -- A calibration saved by earlier builds, whose information was the
     -- windows' normal matrices, loads with its pivot as it was, but is taken
     -- for no surer than a tenth of what is now remembered.

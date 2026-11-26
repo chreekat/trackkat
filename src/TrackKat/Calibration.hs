@@ -712,7 +712,7 @@ newLearner :: Model -> Calibration -> Learner
 newLearner m c = Learner m mc Nothing Nothing Nothing up pivot up pivot noTally
   where
     mc = mountedCalibration (mMount m) c
-    up = estimatedUp mc
+    up = fromMaybe cameraUp (usableUp mc)
     pivot = estimatedPivot mc
 
 -- | What has been learnt, as it would be saved.
@@ -766,7 +766,7 @@ learn now pose l =
         , lTurn = turn'
         , lWindow = window'
         , lLast = Just now
-        , lUp = if upWeight c2 >= upConfident then rotateToward (upRate * pi / 180 * dt) (lUp l) upEst else lUp l
+        , lUp = maybe (lUp l) (rotateToward (upRate * pi / 180 * dt) (lUp l)) (usableUp c2)
         , lPivot = towards (pivotRate * dt) (lPivot l) pivotEst
         , lToldUp = if levelNews then upEst else lToldUp l
         , lToldPivot = if pivotNewsNow then pivotEst else lToldPivot l
@@ -795,8 +795,14 @@ learn now pose l =
             | otherwise -> (c1, Just w, lWindows l)
     upEst = estimatedUp c2
     pivotEst = estimatedPivot c2
-    levelNews = upWeight c2 >= upConfident && angleBetween upEst (lToldUp l) >= upNews * pi / 180
+    levelNews = any (\up -> angleBetween up (lToldUp l) >= upNews * pi / 180) (usableUp c2)
     pivotNewsNow = pivotWindows c2 >= pivotConfident && norm (pivotEst ^-^ lToldPivot l) >= pivotNews
+
+-- | The estimated up, once it is from enough turning to apply.
+usableUp :: Calibration -> Maybe V3
+usableUp c
+    | upWeight c >= upConfident = Just (estimatedUp c)
+    | otherwise = Nothing
 
 -- | Move a point toward another, by at most the given distance.
 towards :: Double -> V3 -> V3 -> V3
