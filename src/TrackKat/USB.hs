@@ -64,37 +64,38 @@ errBusy = -6
 errTimeout = -7
 errNotSupported = -12
 
-foreign import ccall unsafe "libusb_init"
+-- Calls that can block (enumerating or opening devices, USB requests,
+-- handling events) are safe, so they don't hold up every other Haskell
+-- thread; only those that just look at or set memory are unsafe.
+foreign import ccall safe "libusb_init"
     c_init :: Ptr (Ptr CContext) -> IO CInt
-foreign import ccall unsafe "libusb_exit"
+foreign import ccall safe "libusb_exit"
     c_exit :: Ptr CContext -> IO ()
 foreign import ccall unsafe "libusb_error_name"
     c_error_name :: CInt -> IO CString
-foreign import ccall unsafe "hts_open_first"
+foreign import ccall safe "hts_open_first"
     c_open_first :: Ptr CContext -> Word16 -> Ptr Word16 -> CInt -> Ptr Word16 -> Ptr (Ptr CHandle) -> IO CInt
-foreign import ccall unsafe "hts_list"
+foreign import ccall safe "hts_list"
     c_list :: Ptr CContext -> Ptr Word16 -> Ptr Word16 -> Ptr CInt -> CInt -> IO CInt
-foreign import ccall unsafe "libusb_close"
+foreign import ccall safe "libusb_close"
     c_close :: Ptr CHandle -> IO ()
-foreign import ccall unsafe "libusb_get_configuration"
+foreign import ccall safe "libusb_get_configuration"
     c_get_configuration :: Ptr CHandle -> Ptr CInt -> IO CInt
-foreign import ccall unsafe "libusb_set_configuration"
+foreign import ccall safe "libusb_set_configuration"
     c_set_configuration :: Ptr CHandle -> CInt -> IO CInt
 foreign import ccall unsafe "libusb_set_auto_detach_kernel_driver"
     c_set_auto_detach :: Ptr CHandle -> CInt -> IO CInt
-foreign import ccall unsafe "libusb_claim_interface"
+foreign import ccall safe "libusb_claim_interface"
     c_claim_interface :: Ptr CHandle -> CInt -> IO CInt
-foreign import ccall unsafe "libusb_release_interface"
+foreign import ccall safe "libusb_release_interface"
     c_release_interface :: Ptr CHandle -> CInt -> IO CInt
 
-foreign import ccall unsafe "hts_stream_open"
+foreign import ccall safe "hts_stream_open"
     c_stream_open :: Ptr CContext -> Ptr CHandle -> CUChar -> CInt -> CInt -> Ptr CInt -> IO (Ptr CStream)
 foreign import ccall safe "hts_stream_close"
     c_stream_close :: Ptr CStream -> IO ()
 foreign import ccall safe "hts_stream_pump"
     c_stream_pump :: Ptr CStream -> CInt -> Ptr Word8 -> CInt -> IO CInt
-
--- Blocks for up to the timeout, so it must be a safe call.
 foreign import ccall safe "libusb_bulk_transfer"
     c_bulk_transfer :: Ptr CHandle -> CUChar -> Ptr Word8 -> CInt -> Ptr CInt -> CUInt -> IO CInt
 

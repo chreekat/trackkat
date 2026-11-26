@@ -51,10 +51,10 @@ foreign import ccall unsafe "hts_shared_open" c_shared_open :: IO CInt
 foreign import ccall unsafe "hts_publish" c_publish :: CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> IO ()
 foreign import ccall unsafe "hts_recenter_count" c_recenter_count :: IO CLong
 foreign import ccall unsafe "hts_games_tracking" c_games_tracking :: IO CInt
-foreign import ccall unsafe "hts_tracking_game_name" c_tracking_game_name :: CWString -> CInt -> IO CInt
+foreign import ccall safe "hts_tracking_game_name" c_tracking_game_name :: CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_single_instance" c_single_instance :: IO CInt
-foreign import ccall unsafe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
-foreign import ccall unsafe "hts_find_trackir_dir" c_find_trackir_dir :: CWString -> CInt -> IO CInt
+foreign import ccall safe "hts_set_npclient_path" c_set_npclient_path :: CWString -> IO CInt
+foreign import ccall safe "hts_find_trackir_dir" c_find_trackir_dir :: CWString -> CInt -> IO CInt
 foreign import ccall safe "hts_trackir_start" c_trackir_start :: CULong -> CULLong -> CULLong -> CInt -> CInt -> IO CInt
 foreign import ccall unsafe "hts_trackir_served"
     c_trackir_served :: Ptr CULong -> Ptr CULLong -> Ptr CULLong -> Ptr CInt -> Ptr CInt -> IO CLong
@@ -66,7 +66,7 @@ foreign import ccall unsafe "hts_bindings_clear" c_bindings_clear :: IO ()
 foreign import ccall unsafe "hts_bind_key" c_bind_key :: CUInt -> CUInt -> IO ()
 foreign import ccall unsafe "hts_bind_button" c_bind_button :: CWString -> CInt -> CInt -> IO ()
 foreign import ccall unsafe "hts_bindings_apply" c_bindings_apply :: IO ()
-foreign import ccall unsafe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
+foreign import ccall safe "hts_hotkeys_start" c_hotkeys_start :: Ptr CInt -> Ptr CInt -> IO CInt
 foreign import ccall unsafe "hts_key_edge"
     c_key_edge :: Ptr CInt -> CWString -> CInt -> Ptr CInt -> Ptr CInt -> Ptr CDouble -> IO CInt
 foreign import ccall unsafe "hts_joystick_event" c_joystick_event :: CWString -> CInt -> Ptr CInt -> Ptr CInt -> IO CInt
