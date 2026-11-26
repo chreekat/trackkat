@@ -1,6 +1,7 @@
 active-repositories: hackage.haskell.org:merge
 constraints: any.QuickCheck ==2.19.0.0,
              QuickCheck -old-random +templatehaskell,
+             any.Win32 ==2.14.2.1,
              any.ansi-terminal ==1.1.5,
              ansi-terminal -example,
              any.ansi-terminal-types ==1.1.3,
