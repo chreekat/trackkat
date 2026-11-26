@@ -199,7 +199,7 @@ recordedSession =
     | i <- [0 .. 1199 :: Int]
     , let at = sessionClock + fromIntegral i * 8333333
           t = fromIntegral i / 120 :: Double
-          pose = headSeen (-23) (25 * sin (2 * pi * t / 2.5)) (5 * sin (2 * pi * t / 3.7)) 0
+          pose = headSeen (-23) (40 * sin (2 * pi * t / 2.5)) (5 * sin (2 * pi * t / 3.7)) 0
           heads = if t > 6 && t < 6.5 then [] else pointDiscs defaultIntrinsics clipBent (1, 1, 1) pose
     ]
   where
