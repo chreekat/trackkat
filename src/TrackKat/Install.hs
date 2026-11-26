@@ -50,7 +50,7 @@ foreign import ccall safe "hts_make_shortcut" c_make_shortcut :: CWString -> CWS
 foreign import ccall unsafe "hts_set_uninstall_entry" c_set_uninstall_entry :: CWString -> CWString -> CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_remove_uninstall_entry" c_remove_uninstall_entry :: IO CInt
 foreign import ccall unsafe "hts_set_run" c_set_run :: CWString -> CWString -> CInt -> IO CInt
-foreign import ccall unsafe "hts_remove_run" c_remove_run :: CWString -> IO CInt
+foreign import ccall unsafe "hts_remove_run" c_remove_run :: CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_get_npclient_path" c_get_npclient_path :: CWString -> CInt -> IO CInt
 foreign import ccall unsafe "hts_remove_npclient_path" c_remove_npclient_path :: IO CInt
 foreign import ccall unsafe "hts_start" c_start :: CWString -> CWString -> CWString -> IO CInt
@@ -125,9 +125,11 @@ moveSettings say p = do
                     Left e -> say ("Can't move " ++ beside ++ " to " ++ there ++ ": " ++ show (e :: IOException))
 
 -- | Copy this copy of trackkat, of the given version, into the install
--- root, unless that version is installed already. Returns its folder.
+-- root, unless that version is installed already, calling off the removal
+-- of the install root an uninstall left for next login. Returns its folder.
 installCopy :: Paths -> Version -> IO (Either String FilePath)
 installCopy p v = do
+    _ <- withCWString pendingUninstall (`c_remove_run` 1)
     let dest = installRoot p </> versionFolder v
         partial = dest ++ partialSuffix
     done <- doesFileExist (dest </> "trackkat.exe")
@@ -176,11 +178,15 @@ setStartup say p = \case
         rc <- withCWString runName $ \n -> withCWString command $ \c -> c_set_run n c 0
         unless (rc == 0) $ say ("Can't start with Windows (registry error " ++ show rc ++ ").")
     NoStartAtLogin -> do
-        rc <- withCWString runName c_remove_run
+        rc <- withCWString runName (`c_remove_run` 0)
         unless (rc == 0) $ say ("Can't stop starting with Windows (registry error " ++ show rc ++ ").")
 
 runName :: String
 runName = "trackkat"
+
+-- | The name of what 'uninstall' leaves Windows to do at next login.
+pendingUninstall :: String
+pendingUninstall = "trackkat uninstall"
 
 quote :: String -> String
 quote s = "\"" ++ s ++ "\""
@@ -331,7 +337,7 @@ uninstall how = do
         quitRunning >>= mapM_ (\pid -> waitForExit pid 10)
         _ <- try (removeFile (shortcut p)) :: IO (Either IOException ())
         _ <- c_remove_uninstall_entry
-        _ <- withCWString runName c_remove_run
+        _ <- withCWString runName (`c_remove_run` 0)
         games <- allocaArray 1024 $ \buf -> c_get_npclient_path buf 1024 >>= \found -> if found /= 0 then Just <$> peekCWString buf else pure Nothing
         when (maybe False (\g -> inside (installRoot p) g || inside (exeDir p) g) games) $ () <$ c_remove_npclient_path
         names <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
@@ -347,7 +353,7 @@ uninstall how = do
                     -- This trackkat.exe, and the DLLs it loaded, go once it has quit.
                     _ <- launch comspec ["/d", "/c", "ping -n 4 127.0.0.1 >nul & rd /s /q", quote (installRoot p)]
                     others <- filter (not . inside (exeDir p)) <$> filesUnder (installRoot p)
-                    unless (null others) $ () <$ withCWString "trackkat uninstall" (\n -> withCWString removeRoot (\c -> c_set_run n c 1))
+                    unless (null others) $ () <$ withCWString pendingUninstall (\n -> withCWString removeRoot (\c -> c_set_run n c 1))
                     pure (not (null others))
         unless keepSettings $ () <$ (try (removePathForcibly (settingsDir p)) :: IO (Either IOException ()))
         let done =

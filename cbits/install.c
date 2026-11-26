@@ -152,12 +152,12 @@ int hts_set_run(const wchar_t *name, const wchar_t *command, int once)
     return (int)rc;
 }
 
-/* Stop running the value named name at login. Returns 0, or a Windows error
- * code; a missing value is no error. */
-int hts_remove_run(const wchar_t *name)
+/* Stop running the value named name at login (the one run once, if once is
+ * nonzero). Returns 0, or a Windows error code; a missing value is no error. */
+int hts_remove_run(const wchar_t *name, int once)
 {
     HKEY key;
-    LONG rc = RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &key);
+    LONG rc = RegOpenKeyExW(HKEY_CURRENT_USER, once ? RUN_ONCE_KEY : RUN_KEY, 0, KEY_SET_VALUE, &key);
     if (rc == ERROR_FILE_NOT_FOUND)
         return 0;
     if (rc != ERROR_SUCCESS)
