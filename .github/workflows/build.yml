@@ -275,18 +275,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Installed copies check the release for updates: it is created
-          # once, then updated in place, never deleted.
-          gh release view dev *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create dev --prerelease --target $env:GITHUB_SHA --title dev --notes dev
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          gh api -X PATCH "repos/${{ github.repository }}/git/refs/tags/dev" -f sha=$env:GITHUB_SHA -F force=true
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          gh release upload dev trackkat-windows.zip trackkat-windows.json --clobber
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          gh release edit dev --title "Development build $env:TRACKKAT_VERSION" `
+          gh release delete dev --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create dev trackkat-windows.zip trackkat-windows.json --prerelease --target $env:GITHUB_SHA `
+            --title "Development build $env:TRACKKAT_VERSION" `
             --notes "Latest build of main ($env:GITHUB_SHA). Download trackkat-windows.zip below."
 
   linux:
