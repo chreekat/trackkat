@@ -12,6 +12,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -40,7 +41,6 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 #define TEXT_MAX 512
-#define FIELD_MAX 256
 #define OFFER_TRAY_MAX 128 /* the tray menu's item for an offer, in characters with the NUL */
 
 /* The settings the window edits, by their names in trackkat.conf. The
@@ -111,10 +111,10 @@ static SRWLOCK lock = SRWLOCK_INIT;
 static State shared = {.camera = CAMERA_SEARCHING, .settings_message = L"Changes save as you make them."};
 static wchar_t version_text[64] = L"development build"; /* set before the window is made */
 static int updatable; /* whether Check for updates works; set before the window is made */
-static wchar_t pushed[F_COUNT][FIELD_MAX]; /* settings to show */
+static wchar_t *pushed[F_COUNT];          /* settings to show, on the heap */
 static unsigned pushed_fields;             /* bit per field pushed since the GUI last looked */
-static wchar_t saved[F_COUNT][FIELD_MAX];  /* settings the user changed and asked to save */
-static unsigned saved_fields;              /* bit per field in saved not yet taken */
+static wchar_t *saved[F_COUNT];           /* settings the user changed and asked to save, on the heap */
+static unsigned saved_fields;             /* bit per field in saved not yet taken */
 
 /* The log, as a window of the last LOG_MAX characters of everything logged.
  * log_total counts every character ever logged, so the GUI can tell what it
@@ -127,7 +127,7 @@ static unsigned long long log_total;
 static volatile LONG actions;
 static volatile LONG chosen_keys[LISTS]; /* modifiers << 16 | virtual key, per binding list */
 static volatile LONG capturing = -1;      /* the binding list waiting for a key or button, or -1 */
-static wchar_t added[LISTS][FIELD_MAX];   /* bindings to add to the lists */
+static wchar_t *added[LISTS];             /* bindings to add to the lists, on the heap */
 static unsigned added_lists;          /* bit per list with a binding to add */
 static CRITICAL_SECTION tray_lock;    /* see Note [The tray icon's lock] */
 static INIT_ONCE tray_lock_made = INIT_ONCE_STATIC_INIT;
@@ -140,6 +140,30 @@ static void copy_text(wchar_t *dst, size_t size, const wchar_t *src)
         n = size - 1;
     memcpy(dst, src, n * sizeof *dst);
     dst[n] = 0;
+}
+
+/* A copy of a text on the heap, whatever its length; NULL if there is no
+ * room for it. */
+static wchar_t *heap_text(const wchar_t *src)
+{
+    size_t size = (wcslen(src) + 1) * sizeof *src;
+    wchar_t *dst = malloc(size);
+    if (dst)
+        memcpy(dst, src, size);
+    return dst;
+}
+
+/* A control's text on the heap, whatever its length; NULL if there is no
+ * room for it. */
+static wchar_t *control_text(HWND w)
+{
+    int n = GetWindowTextLengthW(w);
+    wchar_t *text = malloc(((size_t)n + 1) * sizeof *text);
+    if (text) {
+        text[0] = 0;
+        GetWindowTextW(w, text, n + 1);
+    }
+    return text;
 }
 
 void hts_gui_log(const wchar_t *line)
@@ -332,30 +356,42 @@ static int field_index(const wchar_t *name)
 void hts_gui_set_setting(const wchar_t *name, const wchar_t *value)
 {
     int i = field_index(name);
-    if (i < 0)
+    wchar_t *v = i < 0 ? NULL : heap_text(value);
+    if (!v)
         return;
     AcquireSRWLockExclusive(&lock);
-    copy_text(pushed[i], FIELD_MAX, value);
+    wchar_t *old = pushed[i];
+    pushed[i] = v;
     pushed_fields |= 1u << i;
     ReleaseSRWLockExclusive(&lock);
+    free(old);
 }
 
 /* Take a setting's value as the user changed it in the window and asked to
- * save it. Returns 0, leaving buf alone, if none waits: for a setting the
- * window doesn't show, or one not changed since it was last taken. See
- * Note [The window's changes]. */
+ * save it: returns its length, and if buf has room for it and its NUL,
+ * takes it into buf; else leaves it for a call with room. Returns -1, leaving
+ * buf alone, if none waits: for a setting the window doesn't show, or one
+ * not changed since it was last taken. See Note [The window's changes]. */
 int hts_gui_take_saved_setting(const wchar_t *name, wchar_t *buf, int size)
 {
     int i = field_index(name);
     if (i < 0)
-        return 0;
+        return -1;
+    int length = -1;
+    wchar_t *taken = NULL;
     AcquireSRWLockExclusive(&lock);
-    int waiting = (saved_fields >> i) & 1;
-    if (waiting)
-        copy_text(buf, (size_t)size, saved[i]);
-    saved_fields &= ~(1u << i);
+    if ((saved_fields >> i) & 1) {
+        length = (int)wcslen(saved[i]);
+        if (length < size) {
+            memcpy(buf, saved[i], ((size_t)length + 1) * sizeof *buf);
+            taken = saved[i];
+            saved[i] = NULL;
+            saved_fields &= ~(1u << i);
+        }
+    }
     ReleaseSRWLockExclusive(&lock);
-    return waiting;
+    free(taken);
+    return length;
 }
 
 /* What the user asked for since the last call, as ACT_* bits. */
@@ -385,10 +421,15 @@ int hts_gui_capturing(void)
 void hts_gui_add_binding(int which, const wchar_t *binding)
 {
     which = list_index(which);
+    wchar_t *b = heap_text(binding);
+    if (!b)
+        return;
     AcquireSRWLockExclusive(&lock);
-    copy_text(added[which], FIELD_MAX, binding);
+    wchar_t *old = added[which];
+    added[which] = b;
     added_lists |= 1u << which;
     ReleaseSRWLockExclusive(&lock);
+    free(old);
 }
 
 /* ---- The GUI thread's own state ------------------------------------------ */
@@ -1756,10 +1797,10 @@ static void edited(int field);
  * precision, ready to replace it. */
 static void sync_curve(int axis, int from)
 {
-    wchar_t text[FIELD_MAX], buf[64];
-    GetWindowTextW(field_ctl[F_YAW + axis], text, FIELD_MAX);
+    wchar_t *text = control_text(field_ctl[F_YAW + axis]), buf[64];
     Curve *c = &curve[axis];
-    read_curve(text, c);
+    read_curve(text ? text : L"", c);
+    free(text);
     syncing++;
     if (from != FROM_MULTIPLIER && c->shape != SHAPE_UNREADABLE) {
         format_number(buf, 64, c->factor);
@@ -1782,13 +1823,13 @@ static void sync_curve(int axis, int from)
 /* Replace a curve with a multiplier and precision, as the user set them. */
 static void set_multiplier(int axis, double factor, int precision, int from)
 {
-    wchar_t number[32], text[FIELD_MAX];
+    wchar_t number[32], text[64];
     format_number(number, 32, factor);
     if (precision > 0)
-        _snwprintf(text, FIELD_MAX, L"1:%ls, curve %d", number, precision);
+        _snwprintf(text, 64, L"1:%ls, curve %d", number, precision);
     else
-        _snwprintf(text, FIELD_MAX, L"1:%ls", number);
-    text[FIELD_MAX - 1] = 0;
+        _snwprintf(text, 64, L"1:%ls", number);
+    text[63] = 0;
     syncing++;
     SetWindowTextW(field_ctl[F_YAW + axis], text);
     syncing--;
@@ -1948,13 +1989,19 @@ static void edited(int field) { changed |= 1u << field; }
 static void save_soon(UINT ms) { SetTimer(main_hwnd, ID_AUTOSAVE, ms, NULL); }
 
 /* A binding list as trackkat.conf writes it, separated by commas, from its
- * box, which has one to a line; commas typed there separate them too. */
-static void list_from_box(int field, wchar_t *out, size_t size)
+ * box, which has one to a line; commas typed there separate them too. On the
+ * heap; NULL if there is no room for it. */
+static wchar_t *list_from_box(int field)
 {
-    wchar_t text[FIELD_MAX * 2];
-    GetWindowTextW(field_ctl[field], text, FIELD_MAX * 2);
+    wchar_t *text = control_text(field_ctl[field]);
+    /* Room for twice the text: each binding after the first is at least a
+     * character, with at least one separating it, which become ", ". */
+    wchar_t *out = text ? malloc((2 * wcslen(text) + 1) * sizeof *out) : NULL;
+    if (!out) {
+        free(text);
+        return NULL;
+    }
     size_t n = 0;
-    out[0] = 0;
     for (const wchar_t *p = text; *p;) {
         while (*p == L' ' || *p == L'\t' || *p == L',' || *p == L'\r' || *p == L'\n')
             p++;
@@ -1965,23 +2012,29 @@ static void list_from_box(int field, wchar_t *out, size_t size)
         while (last > p && (last[-1] == L' ' || last[-1] == L'\t'))
             last--;
         if (last > p) {
-            int k = _snwprintf(out + n, size - n, n ? L", %.*ls" : L"%.*ls", (int)(last - p), p);
-            if (k < 0 || (size_t)k >= size - n) {
-                out[size - 1] = 0;
-                return;
+            if (n) {
+                out[n++] = L',';
+                out[n++] = L' ';
             }
-            n += (size_t)k;
+            memcpy(out + n, p, (size_t)(last - p) * sizeof *out);
+            n += (size_t)(last - p);
         }
         p = end;
     }
+    out[n] = 0;
+    free(text);
+    return out;
 }
 
 /* Show a binding list, as trackkat.conf writes it, one to a line. */
 static void list_to_box(int field, const wchar_t *list)
 {
-    wchar_t text[FIELD_MAX * 2];
+    /* A comma becomes two characters, a line break. */
+    wchar_t *text = malloc((2 * wcslen(list) + 1) * sizeof *text);
+    if (!text)
+        return;
     size_t n = 0;
-    for (const wchar_t *p = list; *p && n + 3 < FIELD_MAX * 2;)
+    for (const wchar_t *p = list; *p;)
         if (*p == L',') {
             text[n++] = L'\r';
             text[n++] = L'\n';
@@ -1993,34 +2046,43 @@ static void list_to_box(int field, const wchar_t *list)
     syncing++;
     SetWindowTextW(field_ctl[field], text);
     syncing--;
+    free(text);
 }
 
 /* Add a binding to a list, unless it is there already. */
 static void add_binding(int field, const wchar_t *binding)
 {
-    wchar_t text[FIELD_MAX];
-    list_from_box(field, text, FIELD_MAX);
-    size_t blen = wcslen(binding);
+    wchar_t *text = list_from_box(field);
+    if (!text)
+        return;
+    size_t blen = wcslen(binding), tlen = wcslen(text);
     for (const wchar_t *p = text; *p;) {
         while (*p == L' ' || *p == L',')
             p++;
         const wchar_t *end = p;
         while (*end && *end != L',')
             end++;
-        if ((size_t)(end - p) == blen && _wcsnicmp(p, binding, blen) == 0)
+        if ((size_t)(end - p) == blen && _wcsnicmp(p, binding, blen) == 0) {
+            free(text);
             return;
+        }
         p = end;
     }
-    wchar_t joined[FIELD_MAX];
-    if (!text[0])
-        copy_text(joined, FIELD_MAX, binding);
-    else {
-        _snwprintf(joined, FIELD_MAX, L"%ls, %ls", text, binding);
-        joined[FIELD_MAX - 1] = 0;
+    wchar_t *joined = malloc((tlen + 2 + blen + 1) * sizeof *joined);
+    if (joined) {
+        size_t n = tlen;
+        memcpy(joined, text, tlen * sizeof *joined);
+        if (n) {
+            joined[n++] = L',';
+            joined[n++] = L' ';
+        }
+        memcpy(joined + n, binding, (blen + 1) * sizeof *joined);
+        list_to_box(field, joined);
+        free(joined);
+        edited(field);
+        save_soon(1);
     }
-    list_to_box(field, joined);
-    edited(field);
-    save_soon(1);
+    free(text);
 }
 
 /* A binding list's box takes Enter for a new line, but leaves Tab and Esc to
@@ -2073,38 +2135,32 @@ static void show_field(int i, const wchar_t *value)
 
 static int checked(int i) { return SendMessageW(field_ctl[i], BM_GETCHECK, 0, 0) == BST_CHECKED; }
 
-/* A field's value as trackkat.conf writes it, as its controls show it. */
-static void field_value(int i, wchar_t *out, size_t size)
+/* A field's value as trackkat.conf writes it, as its controls show it, on
+ * the heap; NULL if there is no room for it. */
+static wchar_t *field_value(int i)
 {
+    wchar_t number[16];
     switch (i) {
     case F_SMOOTHING:
     case F_UPDATES:
     case F_STARTUP:
     case F_LIGHTS:
-        copy_text(out, size, checked(i) ? L"on" : L"off");
-        break;
+        return heap_text(checked(i) ? L"on" : L"off");
     case F_LEAN:
-        copy_text(out, size, checked(i) ? L"view" : L"screen");
-        break;
+        return heap_text(checked(i) ? L"view" : L"screen");
     case F_NPCLIENT:
-        copy_text(out, size, checked(i) ? L"trackir" : L"trackkat");
-        break;
+        return heap_text(checked(i) ? L"trackir" : L"trackkat");
     case F_TRACKER:
-        copy_text(out, size, checked(i) ? L"new" : L"old");
-        break;
+        return heap_text(checked(i) ? L"new" : L"old");
     case F_HEAD_VIEW:
-        copy_text(out, size, view_settings[head_view]);
-        break;
+        return heap_text(view_settings[head_view]);
     case F_STEADINESS:
     case F_RESPONSIVENESS:
-        _snwprintf(out, size, L"%d", (int)SendMessageW(field_ctl[i], TBM_GETPOS, 0, 0));
-        out[size - 1] = 0;
-        break;
+        _snwprintf(number, 16, L"%d", (int)SendMessageW(field_ctl[i], TBM_GETPOS, 0, 0));
+        number[15] = 0;
+        return heap_text(number);
     default:
-        if (i < F_RECENTER + LISTS)
-            list_from_box(i, out, size);
-        else
-            GetWindowTextW(field_ctl[i], out, (int)size);
+        return i < F_RECENTER + LISTS ? list_from_box(i) : control_text(field_ctl[i]);
     }
 }
 
@@ -2120,20 +2176,25 @@ static void field_value(int i, wchar_t *out, size_t size)
  * to agree once neither is changing. */
 static void save_settings(void)
 {
-    unsigned fields = changed;
-    wchar_t values[F_COUNT][FIELD_MAX];
-    changed = 0;
+    unsigned fields = 0;
+    wchar_t *values[F_COUNT] = {0};
+    for (int i = 0; i < F_COUNT; i++)
+        if (changed & 1u << i && (values[i] = field_value(i)))
+            fields |= 1u << i;
+    changed &= ~fields;
     if (!fields)
         return;
-    for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
-            field_value(i, values[i], FIELD_MAX);
     AcquireSRWLockExclusive(&lock);
     for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
-            memcpy(saved[i], values[i], sizeof saved[i]);
+        if (fields & 1u << i) {
+            wchar_t *old = saved[i];
+            saved[i] = values[i];
+            values[i] = old;
+        }
     saved_fields |= fields;
     ReleaseSRWLockExclusive(&lock);
+    for (int i = 0; i < F_COUNT; i++)
+        free(values[i]);
     InterlockedOr(&actions, ACT_SAVE);
 }
 
@@ -2589,17 +2650,23 @@ static void refresh(void)
 {
     State st;
     unsigned fields, lists;
-    wchar_t values[F_COUNT][FIELD_MAX], additions[LISTS][FIELD_MAX];
+    wchar_t *values[F_COUNT] = {0}, *additions[LISTS] = {0};
     AcquireSRWLockExclusive(&lock);
     st = shared;
     fields = pushed_fields;
     pushed_fields = 0;
     for (int i = 0; i < F_COUNT; i++)
-        if (fields & 1u << i)
-            copy_text(values[i], FIELD_MAX, pushed[i]);
+        if (fields & 1u << i) {
+            values[i] = pushed[i];
+            pushed[i] = NULL;
+        }
     lists = added_lists;
     added_lists = 0;
-    memcpy(additions, added, sizeof added);
+    for (int i = 0; i < LISTS; i++)
+        if (lists & 1u << i) {
+            additions[i] = added[i];
+            added[i] = NULL;
+        }
     ReleaseSRWLockExclusive(&lock);
 
     /* See Note [The window's changes]. */
@@ -2612,6 +2679,10 @@ static void refresh(void)
             if (InterlockedCompareExchange(&capturing, 0, 0) == i)
                 end_capture();
         }
+    for (int i = 0; i < F_COUNT; i++)
+        free(values[i]);
+    for (int i = 0; i < LISTS; i++)
+        free(additions[i]);
     if (wcscmp(st.calibration, seen.calibration) != 0)
         SetWindowTextW(calibration_text, st.calibration);
     if (wcscmp(st.settings_message, seen.settings_message) != 0)
