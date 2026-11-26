@@ -201,13 +201,13 @@ instance Arbitrary HeadView where
     arbitrary = elements [VirtualView, PhysicalView, CameraView]
     shrink = earlier [VirtualView, PhysicalView, CameraView]
 
--- | A game with any process and window Windows could give it; simplest
--- the first process and window with no more known and tracking stopped,
--- and simpler with less known of it, and smaller numbers.
 instance Arbitrary WhichTracker where
     arbitrary = elements [OldTracker, NewTracker]
     shrink = earlier [OldTracker, NewTracker]
 
+-- | A game with any process and window Windows could give it; simplest
+-- the first process and window with no more known and tracking stopped,
+-- and simpler with less known of it, and smaller numbers.
 instance Arbitrary ServedGame where
     arbitrary =
         ServedGame
