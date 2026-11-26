@@ -47,6 +47,7 @@ import qualified Test.Stats
 import qualified Test.Term
 import qualified Test.Tracker
 import qualified Test.Trackers
+import qualified Test.UI.Masthead
 import qualified Test.UI.Tray
 import qualified Test.Updater
 import qualified Test.Visibility
@@ -78,6 +79,7 @@ main = do
                 , Test.Lights.tests
                 , Test.Tracker.tests
                 , Test.Trackers.tests
+                , Test.UI.Masthead.tests
                 , Test.UI.Tray.tests
                 , Test.Calibration.tests
                 , Test.Visibility.tests
