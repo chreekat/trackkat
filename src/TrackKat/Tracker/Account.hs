@@ -49,6 +49,7 @@ module TrackKat.Tracker.Account (
 import Data.Foldable (toList)
 import Data.Maybe (catMaybes)
 
+import TrackKat.Frame (frameHeight, frameWidth)
 import TrackKat.Linear (V3, dot, logDeterminant, norm, normalize, (*^), (^-^))
 import TrackKat.Pose
 import TrackKat.Sight
@@ -343,7 +344,8 @@ movedAtLeast k m pivot dt offs = maximum (0 : map least offs)
     -- How much further a point moves in the image, for its distance and
     -- how far it moves, off to the side than straight ahead: at most
     -- this, out to twice the picture's corners.
-    steepest = sqrt (1 + (2 * 400 / focal k) ^ (2 :: Int))
+    steepest = sqrt (1 + (2 * halfDiagonal / focal k) ^ (2 :: Int))
+    halfDiagonal = sqrt (fromIntegral (frameWidth * frameWidth + frameHeight * frameHeight)) / 2
 
 -- | How a pose came to be, as 'howItCame' judges it.
 data Came = Came
