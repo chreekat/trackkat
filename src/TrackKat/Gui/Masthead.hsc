@@ -1,0 +1,156 @@
+-- | The masthead across the top of trackkat's window, with window = haskell:
+-- trackkat, its version, and what the last look for a newer one found, or an
+-- offer on amber ("TrackKat.UI.Masthead"). Its buttons are cbits/gui.c's,
+-- children of it.
+module TrackKat.Gui.Masthead (registerMasthead) where
+
+#include <windows.h>
+
+import Control.Monad (when)
+import Foreign.C.String (CWString, newCWString, peekCWString)
+import Foreign.C.Types (CInt (..), CIntPtr (..))
+import Foreign.Marshal.Alloc (alloca, allocaBytes)
+import Foreign.Marshal.Array (allocaArray)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (FunPtr, Ptr, castPtr, ptrToIntPtr, wordPtrToPtr)
+import Foreign.Storable (peek, pokeByteOff)
+import Graphics.Win32.GDI.Types (HDC, HWND)
+import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
+import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect, getParent, sendMessage)
+import System.Win32.DLL (getModuleHandle)
+import System.Win32.Types (ATOM, HANDLE, getLastError)
+
+import TrackKat.Display (UpdateCheck (..), UpdateStatus (..))
+import TrackKat.Gui.Paint
+import TrackKat.UI.Masthead
+
+foreign import ccall unsafe "hts_gui_masthead_state"
+    c_masthead_state :: CWString -> CWString -> Ptr CInt -> CWString -> Ptr CInt -> IO ()
+foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr () -> IO ATOM
+foreign import ccall unsafe "windows.h CreateSolidBrush" c_CreateSolidBrush :: Colour -> IO HANDLE
+foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
+
+-- | Register the masthead's window class, which cbits/gui.c's
+-- hts_gui_create then makes it of rather than registering its own; reports
+-- what fails in it. Left is a Windows error code.
+registerMasthead :: (String -> IO ()) -> IO (Either Int ())
+registerMasthead report = do
+    inst <- getModuleHandle Nothing
+    cursor <- loadCursor Nothing iDC_ARROW
+    -- The brushes behind its buttons' rounded corners, for the life of the
+    -- process.
+    quiet <- c_CreateSolidBrush stripColour
+    offering <- c_CreateSolidBrush offerColour
+    proc <- mkProc (guarded report "The masthead" (mastheadProc quiet offering))
+    -- As cbits/gui.c's build_window makes it; never freed.
+    name <- newCWString "trackkat_strip"
+    atom <- allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke WNDCLASSW, lpfnWndProc} p proc
+        #{poke WNDCLASSW, hInstance} p inst
+        #{poke WNDCLASSW, hCursor} p cursor
+        #{poke WNDCLASSW, lpszClassName} p name
+        c_RegisterClass (castPtr p)
+    if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
+  where
+    size = #{size WNDCLASSW}
+
+mastheadProc :: HANDLE -> HANDLE -> WindowClosure
+mastheadProc quiet offering w msg wp lp
+    | msg == #{const WM_ERASEBKGND} = pure 1
+    | msg == #{const WM_PAINT} = do
+        allocaPAINTSTRUCT $ \ps -> do
+            dc <- beginPaint w ps
+            paintIn w dc
+            endPaint w ps
+        pure 0
+    -- Behind the buttons' rounded corners.
+    | msg == #{const WM_PRINTCLIENT} = paintIn w (wordPtrToPtr (fromIntegral wp)) >> pure 0
+    | msg == #{const WM_CTLCOLORBTN} = do
+        s <- mastheadState
+        let brush = case mastheadSays s of SaysOffer _ -> offering; _ -> quiet
+        pure (fromIntegral (ptrToIntPtr brush))
+    | msg == #{const WM_COMMAND} = getParent w >>= \parent -> sendMessage parent msg wp lp
+    | otherwise = defWindowProc (Just w) msg wp lp
+
+paintIn :: HWND -> HDC -> IO ()
+paintIn w dc = do
+    (_, _, right, bottom) <- getClientRect w
+    paint dc (fromIntegral right) (fromIntegral bottom) =<< mastheadState
+
+-- | trackkat, its version and what the last look found; or, with an offer,
+-- the offer, on amber. The button at the right is a child of its own.
+paint :: HDC -> CInt -> CInt -> MastheadState -> IO ()
+paint dc w h s = do
+    let says = mastheadSays s
+        offer = case says of SaysOffer _ -> True; _ -> False
+    fillRect dc (0, 0, fromIntegral w, fromIntegral h) (if offer then offerColour else stripColour)
+    -- A line of one pixel along the bottom.
+    fillRect dc (0, fromIntegral (h - 1), fromIntegral w, fromIntegral h) (if offer then offerEdge else stripEdge)
+    [size, s8, s10, s12] <- mapM scaled [16, 8, 10, 12]
+    icon <- resourceIcon programIcon size
+    drawIcon dc icon s10 ((h - size) `div` 2) size
+    let x0 = s10 + size + s8
+    name <- textWidth dc BoldFont "trackkat"
+    textAt dc BoldFont (rgb 27 27 27) (x0, 0, name, h) #{const DT_LEFT} "trackkat"
+    let version = mastheadVersion s
+        x1 = x0 + name + s8
+    versionWidth <- textWidth dc UiFont version
+    textAt dc UiFont (rgb 85 85 85) (x1, 0, versionWidth, h) #{const DT_LEFT} version
+    let x = x1 + versionWidth + s12
+    right <- (w -) <$> scaled (buttonWidth + 20)
+    when (right > x) $ case says of
+        SaysOffer text -> do
+            -- On one line or two, in the smaller font if it needs more.
+            s4 <- scaled 4
+            tall <- textHeight dc UiFont Wrapped (right - x) text
+            let font = if tall > h - s8 then SmallFont else UiFont
+            th <- min (h - s4) <$> textHeight dc font Wrapped (right - x) text
+            textIn dc font offerText Wrapped (x, (h - th) `div` 2, right - x, th) text
+        SaysStatus verdict text -> do
+            x' <- case verdict of
+                Good -> do
+                    [s1, s2, s3, s4, s10', s15] <- mapM scaled [1, 2, 3, 4, 10, 15]
+                    let cy = h `div` 2
+                    polyline dc s2 goodColour [(x + s1, cy), (x + s4, cy + s3), (x + s10', cy - s4)]
+                    pure (x + s15)
+                Plain -> pure x
+            textAt dc UiFont (case verdict of Good -> goodColour; Plain -> rgb 85 85 85) (x', 0, right - x', h) #{const DT_LEFT} text
+        SaysNothing -> pure ()
+
+-- | What cbits/gui.c last saw for the masthead.
+mastheadState :: IO MastheadState
+mastheadState =
+    allocaArray 64 $ \version -> allocaArray textMax $ \offer -> alloca $ \checking ->
+        allocaArray textMax $ \status -> alloca $ \upToDate -> do
+            c_masthead_state version offer checking status upToDate
+            v <- peekCWString version
+            o <- peekCWString offer
+            c <- peek checking
+            t <- peekCWString status
+            u <- peek upToDate
+            pure
+                MastheadState
+                    { mastheadBuild = v
+                    , mastheadOffer = if null o then Nothing else Just o
+                    , mastheadCheck = if c /= 0 then CheckRunning else CheckIdle
+                    , mastheadStatus = if null t then Nothing else Just (if u /= 0 then UpToDate t else UpdateNote t)
+                    }
+  where
+    -- As TEXT_MAX in cbits/gui.c.
+    textMax = 512
+
+-- As cbits/gui.c's PROGRAM_ICON, STRIP_BUTTON_W and C_ colours.
+programIcon :: Int
+programIcon = 1
+
+buttonWidth :: CInt
+buttonWidth = 150
+
+stripColour, stripEdge, offerColour, offerEdge, offerText, goodColour :: Colour
+stripColour = rgb 228 228 228
+stripEdge = rgb 207 207 207
+offerColour = rgb 255 244 214
+offerEdge = rgb 230 207 138
+offerText = rgb 106 75 0
+goodColour = rgb 46 107 52

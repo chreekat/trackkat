@@ -65,6 +65,7 @@ import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOr
 import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
+import TrackKat.Gui.Masthead (registerMasthead)
 import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
@@ -125,7 +126,10 @@ withGui HaskellWindow w work = do
     -- messages: a bound thread, so it is always the same one.
     runGui made = do
         thread <- getCurrentThreadId
-        rc <- makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
+        rc <-
+            registerMasthead guiLog >>= \case
+                Left e -> pure (fromIntegral e)
+                Right () -> makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
         putMVar made (rc, thread)
         when (rc == 0) (allocaMessage messageLoop)
     messageLoop msg =

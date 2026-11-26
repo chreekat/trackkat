@@ -3382,6 +3382,14 @@ static void make_fonts(void)
     white_brush = CreateSolidBrush(RGB(255, 255, 255));
 }
 
+/* Register one of this file's window classes, unless the thread registered
+ * its own by that name: TrackKat.Gui draws that part of the window. */
+static int register_class(const WNDCLASSW *wc)
+{
+    WNDCLASSW theirs;
+    return GetClassInfoW(inst, wc->lpszClassName, &theirs) || RegisterClassW(wc);
+}
+
 /* Make the windows, with the hidden one the tray icon talks to: the one
  * given, or this file's. */
 static int create_windows(HWND tray)
@@ -3422,25 +3430,25 @@ static int create_windows(HWND tray)
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.hIcon = resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXICON));
     wc.lpszClassName = L"trackkat_window";
-    if (!RegisterClassW(&wc))
+    if (!register_class(&wc))
         return 0;
     wc.lpfnWndProc = live_proc;
     wc.hbrBackground = NULL;
     wc.lpszClassName = L"trackkat_live";
-    if (!RegisterClassW(&wc))
+    if (!register_class(&wc))
         return 0;
     wc.lpfnWndProc = curve_proc;
     wc.lpszClassName = L"trackkat_curve";
-    if (!RegisterClassW(&wc))
+    if (!register_class(&wc))
         return 0;
     wc.lpfnWndProc = strip_proc;
     wc.lpszClassName = L"trackkat_strip";
-    if (!RegisterClassW(&wc))
+    if (!register_class(&wc))
         return 0;
     wc.lpfnWndProc = log_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"trackkat_log";
-    if (!RegisterClassW(&wc))
+    if (!register_class(&wc))
         return 0;
 
     RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
@@ -3542,6 +3550,30 @@ void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *
     *games = seen.games;
     *paused = seen.paused;
     copy_text(offer, OFFER_TRAY_MAX, seen.offer_tray);
+}
+
+/* What the masthead across the top shows, from the last refresh, for
+ * TrackKat.Gui.Masthead: the version as the title has it, the offer, whether
+ * a look for a newer version is running, what the last look found and
+ * whether that is that none is newer; texts of 64, TEXT_MAX and TEXT_MAX
+ * characters. */
+void hts_gui_masthead_state(wchar_t *version, wchar_t *offer, int *checking, wchar_t *status, int *up_to_date)
+{
+    copy_text(version, 64, version_text);
+    copy_text(offer, TEXT_MAX, seen.offer);
+    *checking = seen.checking;
+    copy_text(status, TEXT_MAX, seen.update_status);
+    *up_to_date = seen.up_to_date;
+}
+
+/* The screen's dots per inch, which the window is drawn to. */
+int hts_gui_dpi(void) { return dpi; }
+
+/* The window's fonts, numbered as TrackKat.Gui.Paint's Font. */
+HFONT hts_gui_font(int which)
+{
+    HFONT fonts[] = {ui_font, bold_font, small_font};
+    return which >= 0 && which < (int)(sizeof fonts / sizeof fonts[0]) ? fonts[which] : ui_font;
 }
 
 /* Remove the tray icon, which Windows otherwise leaves behind until the
