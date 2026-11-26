@@ -84,6 +84,16 @@ tests = group "Calibration" $ do
     checkShowing "a pivot of a clip mounted otherwise, loaded again and again" (show (estimatedPivot <$> (restarted =<< restarted =<< savedSideways))) $
         either (const False) (closeV (V3 (-50) 120 70) . estimatedPivot . learnerCalibration . newLearner sidewaysClip) (restarted =<< restarted =<< savedSideways)
 
+    -- A camera calibrated as tipped 50 degrees down is taken to be so, and
+    -- is when the calibration is loaded again.
+    let steep = levelFromUp (V3 0 (negate (cos (deg 50))) (negate (sin (deg 50))))
+        steepened = calibrateLevel steep (newLearner headset defaultCalibration)
+        steepUp c = angleBetween (levelUp (estimatedLevel c)) (levelUp steep) < 1e-3
+    check "a steep camera's level as calibrated" $
+        steepUp (learnerCalibration steepened) && angleBetween (levelUp (appliedLevel steepened)) (levelUp steep) < 1e-6
+    checkShowing "a steep camera's level loaded again" (show (cameraTilt . estimatedLevel <$> parseCalibration standardMounting (renderCalibration (learnerCalibration steepened)))) $
+        either (const False) steepUp (parseCalibration standardMounting (renderCalibration (learnerCalibration steepened)))
+
     -- A calibration saved by earlier builds, whose information was the
     -- windows' normal matrices, loads with its pivot as it was, but is taken
     -- for no surer than a tenth of what is now remembered.

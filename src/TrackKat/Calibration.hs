@@ -123,10 +123,23 @@ cameraUp = V3 0 (-1) 0
 -- camera's own up, pointing up (see Note [Learning up]).
 estimatedUp :: Calibration -> V3
 estimatedUp c
-    | upWeight c > 0 = if dot nearest cameraUp < 0 then (-1) *^ nearest else nearest
+    | upWeight c > 0 = pointingUp (snd (maximumBy (comparing (abs . dot cameraUp . snd)) (turningAxes (upScatter c))))
     | otherwise = cameraUp
+
+-- | An axis, the way along it nearer the camera's own up.
+pointingUp :: V3 -> V3
+pointingUp v = if dot v cameraUp < 0 then (-1) *^ v else v
+
+-- | The main axes of turning in a scatter of turns' axes, with the degrees
+-- turned about each: those the head turned about by at least a turn's
+-- worth, or, if none was, the one it turned about most (see Note
+-- [Learning up]).
+turningAxes :: M33 -> [(Double, V3)]
+turningAxes scatter = case filter ((>= turnDegrees) . fst) axes of
+    [] -> [maximumBy (comparing fst) axes]
+    enough -> enough
   where
-    nearest = snd (maximumBy (comparing (abs . dot cameraUp . snd)) (eigenSymmetric (upScatter c)))
+    axes = eigenSymmetric scatter
 
 -- | The camera's level as estimated: its axes turned so that the learnt up
 -- is up.
@@ -294,7 +307,10 @@ upConfident = 180
 -- often one way as the other don't pull that axis aside: they make the
 -- other two. Up is the one of the three nearest the camera's own up, which
 -- is the left and right turning's for any camera tipped or rolled less than
--- 45 degrees, however much more the head nods or tilts than it turns.
+-- 45 degrees, however much more the head nods or tilts than it turns. Only
+-- an axis turned about by a turn's worth counts as one: turns all about one
+-- axis, as an explicit calibration leaves, have every direction square to
+-- it as a main axis too, about which the head turned not at all.
 --
 -- Every turn counts, wherever its axis is, so no estimate, a wrong one
 -- from a few odd turns or one from before the camera moved, can keep out
