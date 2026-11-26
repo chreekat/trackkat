@@ -22,7 +22,7 @@ jobs:
       # see docs/signing.md.
       SIGN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The run number orders builds; trackkat compares versions to update.
       - name: Version
@@ -34,7 +34,7 @@ jobs:
 
       - name: Install libusb and C compilers
         id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         with:
           msystem: UCRT64
           update: false
@@ -77,13 +77,13 @@ jobs:
         run: sh tools/test-npclient.sh
 
       # These match what the runner image has installed, so this is quick.
-      - uses: haskell-actions/setup@v2
+      - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
           ghc-version: '9.14.1'
           cabal-version: '3.18.2.0'
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.haskell.outputs.cabal-store }}
           key: windows-cabal-${{ hashFiles('trackkat.cabal', 'cabal.project.freeze') }}
@@ -202,7 +202,7 @@ jobs:
           }
 
       # Unsigned; SignPath signs from this artifact.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         id: unsigned
         with:
           name: trackkat-windows
@@ -214,7 +214,7 @@ jobs:
       # signed. Skipped until the repository is set up: see docs/signing.md.
       - name: Sign
         if: env.SIGN == 'true'
-        uses: signpath/github-action-submit-signing-request@v3
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3.2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -236,7 +236,7 @@ jobs:
           Remove-Item -Recurse dist
           Rename-Item signed dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: env.SIGN == 'true'
         with:
           name: trackkat-windows-signed
@@ -271,14 +271,14 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
-      - uses: haskell-actions/setup@v2
+      - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
           ghc-version: '9.14.1'
           cabal-version: '3.18.1.0'
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.haskell.outputs.cabal-store }}
           key: linux-cabal-${{ hashFiles('trackkat.cabal', 'cabal.project.freeze') }}
