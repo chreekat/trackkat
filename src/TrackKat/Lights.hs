@@ -11,7 +11,9 @@ module TrackKat.Lights (
     Moving (..),
     View (..),
     unseen,
+    CarriedOffBy (..),
     learnLights,
+    learnLightsBy,
     lightAreas,
     unlearn,
     holding,
@@ -30,6 +32,7 @@ module TrackKat.Lights (
 ) where
 
 import Data.Foldable (toList)
+import Data.Either (partitionEithers)
 import Data.List (minimumBy, partition)
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Ord (comparing)
@@ -101,10 +104,11 @@ data Masking = MaskLights | NoMasking
 -- clip. A reflector tracked in a light's area, of about the light's size,
 -- that didn't come into the area from outside it in the frame before, is
 -- taken to be the light; once that reflector is tracked outside the area,
--- the light is forgotten at once, as having moved. A reflector passing in
--- front of a light comes into its area from outside, and a fire's core is
--- bigger than a reflector, so a head passing in front of the fire doesn't
--- make it forgotten.
+-- leaving nothing lit in it, the light is forgotten at once, as having
+-- moved. A reflector passing in front of a light comes into its area from
+-- outside, and leaves the light lit behind it, after which it is no longer
+-- taken for it; and a fire's core is bigger than a reflector; so a head
+-- passing in front of the fire doesn't make it forgotten.
 --
 -- Or by going from its place as the clip comes into view elsewhere, as a
 -- clip lying on the desk does when it is picked up and worn. Once the clip
@@ -281,10 +285,23 @@ data View = View
 unseen :: View
 unseen = View [] [] Nothing
 
+-- | What shows a light was carried off by a reflector taken for it.
+data CarriedOffBy
+    = -- | the reflector tracked outside the light's area
+      ReflectorLeaving
+    | -- | that, with nothing left lit in the area
+      ReflectorLeavingDark
+    deriving (Eq, Show)
+
 -- | Learn from a frame's blobs, seen at the given time, given what it
--- showed of the clip.
+-- showed of the clip, as the old tracker does.
 learnLights :: Instant -> View -> [Blob] -> Lights -> (Lights, [News])
-learnLights now (View sights reflectors usual) blobs ls =
+learnLights = learnLightsBy ReflectorLeaving
+
+-- | Learn from a frame's blobs, seen at the given time, given what it
+-- showed of the clip, taking a light to be carried off as given.
+learnLightsBy :: CarriedOffBy -> Instant -> View -> [Blob] -> Lights -> (Lights, [News])
+learnLightsBy carrying now (View sights reflectors usual) blobs ls =
     ( Lights (whole (filter (\c -> not (any (covers (cAt c)) (learnt ++ stayed))) waiting)) (whole (learnt ++ stayed)) clip biggest remembered (now, whole (map (fmap sightAt) sights)) found
     , [Learnt (cAt c) (learning c) | c <- ready] ++ map (Forgotten . rAt) gone ++ map (\r -> Moved (rAt r) CarriedOff) moved ++ map (\r -> Moved (rAt r) LeftWhenFound) went
     )
@@ -297,7 +314,7 @@ learnLights now (View sights reflectors usual) blobs ls =
     eligible = [b | b <- blobs, not (any (\(p, r) -> distance (at b) p <= r) area)]
     (regions, rest) = foldl' refresh (lRegions ls, []) eligible
     (kept, gone) = partition (\r -> now .-. rLast r <= forgetSeconds) regions
-    (held, moved) = partition (not . carriedOff) (map holder kept)
+    (moved, held) = partitionEithers (map (carried . holder) kept)
     (stayed, went) = partition (not . leftWhenFound) held
     watched =
         [ c
@@ -346,11 +363,11 @@ learnLights now (View sights reflectors usual) blobs ls =
         | null sights = Nothing
         | otherwise = let since = fromMaybe now (lFound ls) in since `seq` Just since
     leftWhenFound r = case found of
-        Just since -> not (null reflectors) && rLast r < since && not (any (\b -> covers (at b) r) blobs)
+        Just since -> not (null reflectors) && rLast r < since && not (lit r)
         Nothing -> False
     -- A light is taken for a reflector tracked in its area, of about its
     -- size, that didn't come in from outside it; and is carried off by
-    -- that reflector tracked outside it.
+    -- that reflector tracked outside it, as 'carrying' says.
     previously = case lSights ls of
         (t, ps) | now .-. t <= gapSeconds -> ps
         _ -> []
@@ -364,9 +381,12 @@ learnLights now (View sights reflectors usual) blobs ls =
             && sightPixels s <= sameSizeFactor * rPixels r
             && sightPixels s * sameSizeFactor >= rPixels r
             && all (`covers` r) (seenAs i previously)
-    carriedOff r = case rHeld r of
-        Just i | Just s <- seenAs i sights -> not (covers (sightAt s) r)
-        _ -> False
+    carried r = case rHeld r >>= (`seenAs` sights) of
+        Just s | not (covers (sightAt s) r) -> case carrying of
+            ReflectorLeavingDark | lit r -> Right r{rHeld = Nothing}
+            _ -> Left r
+        _ -> Right r
+    lit r = any (\b -> covers (at b) r) blobs
     -- A blob in a light's area, or a fragment near it, shows it is still
     -- there; a fragment widens the area. Other blobs are left over.
     refresh (rs, left) b = case break (\r -> covers (at b) r || fragment r) rs of

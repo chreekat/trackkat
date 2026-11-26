@@ -77,7 +77,7 @@ clipView k m confirmed pose sights usual = case confirmed of
 learnSeen :: Instant -> View -> [Blob] -> Still -> (Lights, [Event])
 learnSeen now view blobs (Still masking lights) = case masking of
     NoMasking -> (lights, [])
-    MaskLights -> map toEvent <$> learnLights now view blobs lights
+    MaskLights -> map toEvent <$> learnLightsBy ReflectorLeavingDark now view blobs lights
   where
     toEvent (Lights.Learnt p why) = LightIgnored p why
     toEvent (Lights.Forgotten p) = LightForgotten p

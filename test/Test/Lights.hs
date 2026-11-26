@@ -298,6 +298,32 @@ tests =
                         , holding centres places ls === not (null gone)
                         , sort (map fst (lightAreas left) ++ gone) === sort centres
                         ]
+        , testProperty "a reflector that passes in front of a light, tracked or not as it does, leaves it learnt" $
+            \(Spot (place, size)) (Passing tracked) ->
+                let aside = nudged place 60 0
+                    lamp = blobAt place size
+                    reflector p = Just (Sight p (fromIntegral size) Whole)
+                    frames =
+                        [(Just aside, [lamp, blobAt aside size]), (Just aside, [lamp, blobAt aside size])]
+                            ++ [(if seen then Just place else Nothing, [lamp]) | seen <- tracked]
+                            ++ [(Just aside, [lamp, blobAt aside size])]
+                    (_, told) = viewed (lampAt place size) [(lampLearnt + 0.2 * i, [reflector p | Just p <- [at']], blobs) | (i, (at', blobs)) <- zip [1 ..] frames]
+                 in [news | (_, news@(Moved _ _)) <- told] === []
+        , testProperty "a light a reflector was taken for, tracked in its place, is carried off with it" $
+            \(Spot (place, size)) (Positive (Small held)) ->
+                let aside = nudged place 60 0
+                    reflector p = [Just (Sight p (fromIntegral size) Whole)]
+                    frames = replicate held (reflector place, [blobAt place size]) ++ [(reflector aside, [blobAt aside size])]
+                    lamp = lampAt place size
+                    (_, told) = viewed lamp [(lampLearnt + 0.2 * i, sights, blobs) | (i, (sights, blobs)) <- zip [1 ..] frames]
+                 in [news | (_, news@(Moved _ _)) <- told] === [Moved centre CarriedOff | (centre, _) <- lightAreas lamp] .&&. length (lightAreas lamp) === 1
+        , testProperty "a light gone from its place as the clip comes into view elsewhere has left, and one still lit stays" $
+            \(Spot (place, size)) ->
+                let clip = nudged place 100 0
+                    tracking = View [Just (Sight clip (fromIntegral size) Whole)] [(clip, 15)] Nothing
+                    lamp = lampAt place size
+                    found lit = snd (learnLightsBy ReflectorLeavingDark (clockAt (lampLearnt + 0.2)) tracking ([blobAt place size | lit] ++ [blobAt clip size]) lamp)
+                 in found False === [Moved centre LeftWhenFound | (centre, _) <- lightAreas lamp] .&&. found True === [] .&&. length (lightAreas lamp) === 1
         ]
 
 -- | Somewhere in the picture, and a blob's pixels there, from a
@@ -361,6 +387,33 @@ watched :: Lights -> [(Double, [Blob])] -> (Lights, [(Double, News)])
 watched ls frames = (ls', concat told)
   where
     (ls', told) = mapAccumL (\l (t, blobs) -> let (l', news) = learnLights (clockAt t) unseen blobs l in (l', map ((,) t) news)) ls frames
+
+-- | A lamp of so many pixels learnt, as the only light, from frames of it
+-- alone up to 'lampLearnt'.
+lampAt :: (Double, Double) -> Int -> Lights
+lampAt place size = fst (watched noLights [(fromIntegral i / 5, [blobAt place size]) | i <- [0 .. round (5 * lampLearnt) :: Int]])
+
+-- | When 'lampAt' has learnt its lamp.
+lampLearnt :: Double
+lampLearnt = inSeconds learnSeconds + 0.4
+
+-- | Learn from frames of blobs at their times, each with where each
+-- reflector was tracked, if anywhere: the lights after them, and the news
+-- with its times.
+viewed :: Lights -> [(Double, [Maybe Sight], [Blob])] -> (Lights, [(Double, News)])
+viewed ls frames = (ls', concat told)
+  where
+    (ls', told) = mapAccumL (\l (t, sights, blobs) -> let (l', news) = learnLightsBy ReflectorLeavingDark (clockAt t) (View sights [] Nothing) blobs l in (l', map ((,) t) news)) ls frames
+
+-- | Whether a reflector in front of a light is tracked in each frame it is
+-- there. Simplest one frame, tracked; simpler with fewer frames, and with
+-- more of them tracked.
+newtype Passing = Passing [Bool]
+    deriving (Show)
+
+instance Arbitrary Passing where
+    arbitrary = Passing <$> listOf1 (frequency [(3, pure True), (1, pure False)])
+    shrink (Passing tracked) = Passing <$> shrinkTo [True] (\ts -> [fewer | fewer <- shrinkList (const []) ts, not (null fewer)] ++ [before ++ [True] ++ rest | (before, False : rest) <- zip (inits ts) (tails ts)]) tracked
 
 -- | Frames of blobs at their times, and the clip, if it is tracked in all
 -- of them, its reflectors' blobs among the frames'.
