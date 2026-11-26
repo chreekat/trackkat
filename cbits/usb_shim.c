@@ -105,6 +105,8 @@ typedef struct hts_stream {
     size_t len, cap;
 } hts_stream;
 
+void hts_stream_close(hts_stream *s);
+
 /* Runs holding the lock, so that hts_stream_close, once it has set
  * stopping, knows no read will be resubmitted after it cancels them. */
 static void LIBUSB_CALL stream_callback(struct libusb_transfer *t)
@@ -146,10 +148,8 @@ static void LIBUSB_CALL stream_callback(struct libusb_transfer *t)
     unlock(&s->lock);
 }
 
-/* Start n reads of size bytes each on endpoint ep, setting *rc to 0 or to
- * the libusb error that stopped them starting. Returns NULL if there was no
- * memory for the stream at all; any other stream returned, started or not,
- * must be closed with hts_stream_close. */
+/* Start n reads of size bytes each on endpoint ep. Returns NULL and sets
+ * *rc on failure. */
 hts_stream *hts_stream_open(libusb_context *ctx, libusb_device_handle *h, unsigned char ep,
                             int n, int size, int *rc)
 {
@@ -186,6 +186,10 @@ hts_stream *hts_stream_open(libusb_context *ctx, libusb_device_handle *h, unsign
             s->active--;
             unlock(&s->lock);
         }
+    }
+    if (*rc != 0) {
+        hts_stream_close(s);
+        return NULL;
     }
     return s;
 }
@@ -228,11 +232,8 @@ static int stream_active(hts_stream *s)
     return active;
 }
 
-/* Cancel the reads, wait up to five seconds for them to finish, and free
- * everything. Returns the number of reads that didn't finish: libusb still
- * owns those, so the stream is left allocated for their callbacks, and the
- * device and context must stay open under them. */
-int hts_stream_close(hts_stream *s)
+/* Cancel the reads, wait for them to finish, and free everything. */
+void hts_stream_close(hts_stream *s)
 {
     lock(&s->lock);
     s->stopping = 1;
@@ -244,8 +245,9 @@ int hts_stream_close(hts_stream *s)
         struct timeval tv = {0, 100000};
         libusb_handle_events_timeout_completed(s->ctx, &tv, NULL);
     }
-    int active = stream_active(s);
-    if (active == 0) {
+    /* Transfers still queued after this long belong to a dead device; leak
+     * them rather than free memory libusb may still write to. */
+    if (stream_active(s) == 0) {
         for (int i = 0; i < s->n; i++)
             libusb_free_transfer(s->xfers[i]);
         lock_destroy(&s->lock);
@@ -253,5 +255,4 @@ int hts_stream_close(hts_stream *s)
         free(s->pending);
         free(s);
     }
-    return active;
 }
