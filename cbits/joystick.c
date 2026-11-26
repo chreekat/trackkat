@@ -7,8 +7,8 @@
  * delivers each report as it arrives, from every controller however many
  * buttons it has, including those plugged in later or re-enumerated after
  * sleep, and leaves the buttons to games too. Everything here but
- * hts_joystick_event runs on the hotkey thread, which owns the joystick
- * table. */
+ * hts_joystick_event and query_name runs on the hotkey thread, which owns
+ * the joystick table. */
 
 #include <windows.h>
 #include <hidsdi.h>
@@ -26,10 +26,18 @@
 #define JOY_DISCONNECTED 2
 #define JOY_PRESSED 3
 
+/* Posted to the joystick window by query_name, with a NameQuery. */
+#define WM_JOYSTICK_NAMED (WM_APP + 1)
+
+/* Whether a joystick's name is known yet. */
+enum naming { NAME_ASKED, NAME_KNOWN };
+
 typedef struct {
     HANDLE device; /* Raw Input's handle for it; NULL for a free slot */
+    unsigned ticket; /* tells its NameQuery from one for an earlier joystick in the slot */
+    enum naming naming;
     wchar_t path[512];
-    wchar_t name[JOYSTICK_NAME_LEN];
+    wchar_t name[JOYSTICK_NAME_LEN]; /* empty while NAME_ASKED */
     PHIDP_PREPARSED_DATA preparsed;
     PHIDP_BUTTON_CAPS ranges; /* the buttons each report carries */
     USHORT range_count;
@@ -37,6 +45,16 @@ typedef struct {
 } Joystick;
 
 static Joystick joysticks[MAX_JOYSTICKS];
+static unsigned tickets;
+static HWND joysticks_hwnd;
+
+/* A joystick's product name, asked of the device by query_name. */
+typedef struct {
+    HWND window;
+    unsigned ticket;
+    wchar_t path[512];
+    wchar_t name[JOYSTICK_NAME_LEN]; /* empty if the device won't say */
+} NameQuery;
 
 typedef struct {
     int kind; /* JOY_CONNECTED, JOY_DISCONNECTED or JOY_PRESSED */
@@ -154,11 +172,77 @@ static void tell_buttons(const Joystick *j, const uint8_t *was, const uint8_t *i
 static void forget_joystick(Joystick *j)
 {
     static const uint8_t none[MAX_BUTTONS / 8];
-    if (j->device)
+    if (j->device && j->naming == NAME_KNOWN)
         tell_buttons(j, j->held, none);
     free(j->preparsed);
     free(j->ranges);
     memset(j, 0, sizeof *j);
+}
+
+/* Give a joystick the product name its device told, or, if it told none, a
+ * name made from its vendor and product IDs; it is then connected. */
+static void name_joystick(Joystick *j, const wchar_t *product)
+{
+    lstrcpynW(j->name, product, JOYSTICK_NAME_LEN);
+    tidy_name(j->name);
+    if (!j->name[0]) {
+        RID_DEVICE_INFO info;
+        info.cbSize = sizeof info;
+        UINT size = sizeof info;
+        if ((int)GetRawInputDeviceInfoW(j->device, RIDI_DEVICEINFO, &info, &size) > 0 && info.dwType == RIM_TYPEHID)
+            wsprintfW(j->name, L"Joystick %04X:%04X", (unsigned)info.hid.dwVendorId, (unsigned)info.hid.dwProductId);
+        else
+            lstrcpyW(j->name, L"Joystick");
+    }
+    j->naming = NAME_KNOWN;
+    report_event(JOY_CONNECTED, j, 0);
+}
+
+/* On a pool thread: ask a device its product name, and post the answer to
+ * the joystick window. */
+static DWORD WINAPI query_name(LPVOID context)
+{
+    NameQuery *q = context;
+    /* Opened for neither reading nor writing, it answers questions about
+     * itself even while a game has it open. */
+    HANDLE h = CreateFileW(q->path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        if (!HidD_GetProductString(h, q->name, sizeof q->name - sizeof *q->name))
+            q->name[0] = 0;
+        CloseHandle(h);
+    }
+    if (!PostMessageW(q->window, WM_JOYSTICK_NAMED, 0, (LPARAM)q))
+        free(q);
+    return 0;
+}
+
+/* Find out a joystick's name off this thread, which runs the low-level
+ * hooks, as a device can be slow to answer; or, if that can't be, name it
+ * without asking the device. */
+static void ask_name(Joystick *j)
+{
+    NameQuery *q = calloc(1, sizeof *q);
+    if (q) {
+        q->window = joysticks_hwnd;
+        q->ticket = j->ticket;
+        lstrcpynW(q->path, j->path, ARRAYSIZE(q->path));
+        if (QueueUserWorkItem(query_name, q, WT_EXECUTELONGFUNCTION))
+            return;
+        free(q);
+    }
+    name_joystick(j, L"");
+}
+
+/* A joystick's name, as query_name found it, unless the joystick it was
+ * asked for has gone. */
+static void named(NameQuery *q)
+{
+    for (int i = 0; i < MAX_JOYSTICKS; i++) {
+        Joystick *j = &joysticks[i];
+        if (j->device && j->ticket == q->ticket && j->naming == NAME_ASKED)
+            name_joystick(j, q->name);
+    }
+    free(q);
 }
 
 /* Start following a joystick Raw Input has just told of. NULL if there is
@@ -193,27 +277,10 @@ static Joystick *add_joystick(HANDLE device)
         }
     }
 
-    /* Opened for neither reading nor writing, it answers questions about
-     * itself even while a game has it open. */
-    HANDLE h = CreateFileW(j->path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (h != INVALID_HANDLE_VALUE) {
-        if (!HidD_GetProductString(h, j->name, sizeof j->name - sizeof *j->name))
-            j->name[0] = 0;
-        CloseHandle(h);
-    }
-    tidy_name(j->name);
-    if (!j->name[0]) {
-        RID_DEVICE_INFO info;
-        info.cbSize = sizeof info;
-        size = sizeof info;
-        if ((int)GetRawInputDeviceInfoW(device, RIDI_DEVICEINFO, &info, &size) > 0 && info.dwType == RIM_TYPEHID)
-            wsprintfW(j->name, L"Joystick %04X:%04X", (unsigned)info.hid.dwVendorId, (unsigned)info.hid.dwProductId);
-        else
-            lstrcpyW(j->name, L"Joystick");
-    }
-
     j->device = device;
-    report_event(JOY_CONNECTED, j, 0);
+    j->ticket = ++tickets;
+    j->naming = NAME_ASKED;
+    ask_name(j);
     return j;
 }
 
@@ -245,7 +312,8 @@ static void read_report(Joystick *j, BYTE *report, ULONG length)
         if (b >= 1 && b <= MAX_BUTTONS)
             held[(b - 1) / 8] |= (uint8_t)(1u << ((b - 1) % 8));
     }
-    tell_buttons(j, j->held, held);
+    if (j->naming == NAME_KNOWN)
+        tell_buttons(j, j->held, held);
     memcpy(j->held, held, sizeof held);
 }
 
@@ -281,9 +349,13 @@ static LRESULT CALLBACK joystick_window(HWND w, UINT msg, WPARAM wparam, LPARAM 
         if (wparam == GIDC_ARRIVAL && !j) {
             add_joystick(device);
         } else if (wparam == GIDC_REMOVAL && j) {
-            report_event(JOY_DISCONNECTED, j, 0);
+            if (j->naming == NAME_KNOWN)
+                report_event(JOY_DISCONNECTED, j, 0);
             forget_joystick(j);
         }
+        return 0;
+    } else if (msg == WM_JOYSTICK_NAMED) {
+        named((NameQuery *)lparam);
         return 0;
     }
     return DefWindowProcW(w, msg, wparam, lparam);
@@ -300,6 +372,7 @@ DWORD joysticks_watch(void)
     HWND w = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
     if (!w)
         return GetLastError();
+    joysticks_hwnd = w;
 
     /* Joysticks, gamepads and multi-axis controllers. INPUTSINK delivers
      * their input while other programs are in front; DEVNOTIFY tells of

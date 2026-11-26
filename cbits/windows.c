@@ -481,11 +481,13 @@ void watched_button(const wchar_t *joystick, int index, int button, int down)
 static DWORD WINAPI hotkey_thread(LPVOID unused)
 {
     (void)unused;
+    joystick_error = joysticks_watch();
+    /* Hooked last, with nothing between them and the message loop: Windows
+     * drops a low-level hook whose thread is slow to answer it. */
     HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboard_hook, GetModuleHandleW(NULL), 0);
     keyboard_error = hook ? 0 : GetLastError();
     HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, GetModuleHandleW(NULL), 0);
     mouse_error = mouse ? 0 : GetLastError();
-    joystick_error = joysticks_watch();
     InterlockedExchange(&hotkey_status, 1);
     if (keyboard_error && mouse_error && joystick_error)
         return 0;
