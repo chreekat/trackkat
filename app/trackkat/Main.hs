@@ -45,6 +45,7 @@ import TrackKat.Release
 import TrackKat.ServedGame
 import TrackKat.Session
 import TrackKat.Stats
+import TrackKat.TextFile
 import TrackKat.Trackers (Outcome (..))
 import qualified TrackKat.USB as USB
 import TrackKat.Updater (Looking (..), answered, begun, dueLook, newUpdater, offerNotice)
@@ -319,7 +320,7 @@ reportTrackIRGames = takeTrackIRGame >>= mapM_ (say . describe)
 -- otherwise.
 servedBefore :: FilePath -> IO (Maybe ServedGame)
 servedBefore path = do
-    found <- (Just <$> readFile' path) `catch` \e -> const (pure Nothing) (e :: IOException)
+    found <- (Just <$> readText path) `catch` \e -> const (pure Nothing) (e :: IOException)
     case parseServedGame <$> found of
         Nothing -> pure Nothing
         Just (Left err) -> say (path ++ ": " ++ err) >> forget
@@ -346,7 +347,7 @@ rememberServedGame path = go 0
             keep todo `catch` \e -> say ("Can't note the game served: " ++ displayException (e :: IOException))
         go changes
     keep Delete = removePathForcibly path
-    keep (Write text) = writeFile new text >> renameFile new path
+    keep (Write text) = writeText new text >> renameFile new path
     new = path ++ ".new"
 
 -- | Print a line, and add it to the log in trackkat's window.
@@ -431,7 +432,7 @@ loadConfig path = do
     exists <- doesFileExist path
     if not exists
         then do
-            writeFile path (renderConfig defaultConfig)
+            writeText path (renderConfig defaultConfig)
             say ("Wrote default settings to " ++ path)
             showSettings (renderConfig defaultConfig)
             (defaultConfig,renderConfig defaultConfig,) <$> modificationTime path
@@ -454,7 +455,7 @@ loadCalibration m path = do
     exists <- doesFileExist path
     found <-
         if exists
-            then Just <$> ((read' <$> readFile' path) `catch` \e -> pure (Left (displayException (e :: IOException))))
+            then Just <$> ((read' <$> readText path) `catch` \e -> pure (Left (displayException (e :: IOException))))
             else pure Nothing
     let (calibration, told) = startingCalibration path (fmap snd <$> found)
     pure (calibration, told, either (const Nothing) (Just . fst) =<< found)
@@ -467,7 +468,7 @@ saveCalibrations :: FilePath -> MVar Calibration -> IO ()
 saveCalibrations path pending = forever $ do
     c <- takeMVar pending
     let new = path ++ ".new"
-    (writeFile new (renderCalibration c) >> renameFile new path)
+    (writeText new (renderCalibration c) >> renameFile new path)
         `catch` \e -> say ("Can't save the calibration: " ++ displayException (e :: IOException))
 
 -- | Show the settings file's values in trackkat's window, as written.
@@ -479,7 +480,7 @@ showSettings text = mapM_ (uncurry showSetting) (settingValues text)
 saveSettings :: FilePath -> IO ()
 saveSettings path = do
     edited <- takeSavedSettings settingNames
-    result <- try (readFile' path)
+    result <- try (readText path)
     case result of
         Left e -> showSettingsMessage ("Not saved: " ++ displayException (e :: IOException))
         Right text -> case editSettings edited text of
@@ -489,7 +490,7 @@ saveSettings path = do
                 | otherwise -> do
                     -- Put in place whole, so it is never read half written.
                     let temp = path ++ ".new"
-                    written <- try (writeFile temp new >> renameFile temp path)
+                    written <- try (writeText temp new >> renameFile temp path)
                     showSettingsMessage $ case written of
                         Left e -> "Not saved: " ++ displayException (e :: IOException)
                         Right () -> "Saved."

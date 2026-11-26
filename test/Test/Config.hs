@@ -5,12 +5,14 @@ module Test.Config (tests) where
 
 import Control.Exception (IOException, try)
 import Control.Monad (forM_)
+import qualified Data.ByteString as B
 import Data.Either (isLeft)
 import Data.List (intercalate, isPrefixOf)
 import System.Environment (lookupEnv)
-import System.IO (readFile')
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, testCase)
+import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 import Test.Tasty.QuickCheck
 
 import Test.Check
@@ -18,6 +20,7 @@ import Test.Gen
 import Test.Instances ()
 import TrackKat.Config
 import TrackKat.Response
+import TrackKat.TextFile
 
 tests :: TestTree
 tests = group "Config" $ do
@@ -260,6 +263,7 @@ tests = group "Config" $ do
     check "binding from codes" $ keyFromCodes 0x6 0x78 == Just (Key [Ctrl, Shift] "F9")
     check "binding from an unnamed key" $ keyFromCodes 0 0xBA == Nothing
     tree exampleFile
+    tree textFiles
     tree properties
 
 -- | The example settings file in the repository is the one trackkat writes
@@ -268,12 +272,33 @@ exampleFile :: TestTree
 exampleFile =
     testCase (example ++ " is the default settings file; TRACKKAT_ACCEPT=1 cabal test rewrites it") $
         lookupEnv "TRACKKAT_ACCEPT" >>= \case
-            Just _ -> writeFile example (renderConfig defaultConfig)
+            Just _ -> writeText example (renderConfig defaultConfig)
             Nothing -> do
-                inRepository <- try (readFile' example)
+                inRepository <- try (readText example)
                 assertBool "" (either (\e -> const False (e :: IOException)) (== renderConfig defaultConfig) inRepository)
   where
     example = "trackkat.conf.example"
+
+-- | Settings files are UTF-8, whatever Windows' code page.
+textFiles :: TestTree
+textFiles =
+    testGroup
+        "text files"
+        [ testCase "a settings file saved with a byte-order mark reads as without" $ withSystemTempDirectory "trackkat-test-bom" $ \dir -> do
+            let path = dir </> "trackkat.conf"
+            B.writeFile path (B.pack ([0xEF, 0xBB, 0xBF] ++ map (fromIntegral . fromEnum) "pause = F9\n"))
+            found <- readSettings path
+            snd <$> found @?= Right defaultConfig{pauseBindings = [tap (Key [] "F9")]}
+        , testCase "a settings file naming a joystick in Cyrillic is written in UTF-8 and reads back as written" $ withSystemTempDirectory "trackkat-test-utf8" $ \dir -> do
+            let path = dir </> "trackkat.conf"
+                stick = "\1044\1078\1086\1081\1089\1090\1080\1082"
+                text = "recenter = " ++ stick ++ " button 3\n"
+            writeText path text
+            bytes <- B.readFile path
+            assertBool (show bytes) (B.pack [0xD0, 0x94, 0xD0, 0xB6] `B.isInfixOf` bytes)
+            found <- readSettings path
+            found @?= Right (text, defaultConfig{recenterBindings = [tap (JoystickButton (Joystick stick 1) 3)]})
+        ]
 
 -- | Settings here are those a settings file can say (see 'genConfig').
 properties :: TestTree

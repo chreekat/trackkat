@@ -35,13 +35,13 @@ import Foreign.Marshal.Array (allocaArray)
 import System.Directory
 import System.Environment (getExecutablePath, lookupEnv)
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, (</>))
-import System.IO (readFile')
 import Text.Printf (printf)
 
 import TrackKat.CommandLine (Uninstall (..))
 import TrackKat.Config (Startup (..))
 import TrackKat.Gui (quitRunning)
 import TrackKat.Release
+import TrackKat.TextFile (readText)
 
 foreign import ccall unsafe "hts_known_folder" c_known_folder :: CInt -> CWString -> CInt -> IO CInt
 foreign import ccall safe "hts_make_shortcut" c_make_shortcut :: CWString -> CWString -> CWString -> IO CInt
@@ -245,7 +245,7 @@ checkForUpdate p self = do
     let metaFile = temp </> "trackkat-windows.json"
     either' (failed (parseLocation metaUrl)) $ \loc ->
         fetch loc metaFile `andThen` \() ->
-            failing (readText metaFile) `andThen` \text ->
+            failing (readTextFile metaFile) `andThen` \text ->
                 either' (failed (parseRelease text)) $ \r -> do
                     installed <- installedVersions p
                     let v = releaseVersion r
@@ -269,7 +269,7 @@ checkForUpdate p self = do
                             pure result
   where
     either' e k = either (pure . Left) k e
-    readText f = io (readFile' f)
+    readTextFile f = io (readText f)
     failed = either (Left . LookFailed) Right
     failing = fmap failed
 

@@ -62,6 +62,7 @@ library
     TrackKat.Sight
     TrackKat.Stats
     TrackKat.Term
+    TrackKat.TextFile
     TrackKat.Tracker
     TrackKat.Tracker.Absence
     TrackKat.Tracker.Account

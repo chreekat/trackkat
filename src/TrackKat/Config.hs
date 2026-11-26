@@ -46,7 +46,6 @@ import Data.Char (digitToInt, isDigit, isSpace, toLower)
 import Data.Foldable (traverse_)
 import Data.List (dropWhileEnd, findIndices, intercalate, unsnoc)
 import Data.Maybe (fromMaybe)
-import System.IO (readFile')
 
 import TrackKat.Gesture (Gesture (..))
 import TrackKat.Lights (Masking (..))
@@ -54,6 +53,7 @@ import TrackKat.Linear (norm, (^-^))
 import TrackKat.Number
 import TrackKat.Pose (Model (..), Tabs (..), triangle)
 import TrackKat.Response
+import TrackKat.TextFile (readText)
 
 -- | trackkat's settings, as trackkat.conf holds them.
 data Config = Config
@@ -325,7 +325,7 @@ setting (c, d@(Dials k a)) name value =
 -- its text too.
 readSettings :: FilePath -> IO (Either String (String, Config))
 readSettings path =
-    try (readFile' path) >>= \r -> pure $ case r of
+    try (readText path) >>= \r -> pure $ case r of
         Left e -> Left (displayException (e :: IOException))
         Right text -> (\c -> (text, c)) <$> parseConfig text
 
