@@ -178,9 +178,12 @@ setMasking masking t
     | masking == stillMasking (trStill t) = t
     | otherwise = t{trStill = Still masking noLights}
 
--- | Ask for something, after anything already asked for.
+-- | Ask for something, after anything already asked for, unless it
+-- already is.
 request :: Request -> Tracker -> Tracker
-request r t = t{trPending = trPending t ++ [r]}
+request r t
+    | r `elem` trPending t = t
+    | otherwise = t{trPending = trPending t ++ [r]}
 
 -- | What has been asked for and not yet carried out, oldest first.
 trackerPending :: Tracker -> [Request]

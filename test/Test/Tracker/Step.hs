@@ -1,7 +1,7 @@
 -- | The stages put together: what a frame comes to (see 'step').
 module Test.Tracker.Step (tests) where
 
-import Data.List (mapAccumL)
+import Data.List (mapAccumL, nub)
 import Data.Maybe (isJust, isNothing)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -53,6 +53,9 @@ tests =
                 case step (clockAt 0) (renderDiscs (discs (Scene (Just placing) []))) fresh of
                     (_, Tracked{outSeen = seen, outChosen = chosen}, _) -> seen === Seen [] 0 0 0 .&&. (\(Chosen way picking _ _) -> (way, picking)) chosen === (Appeared, ByLayout)
                     (_, Lost{outWhy = why}, _) -> counterexample (explainWhy why) False
+        , testProperty "what is asked for while it is still asked for is asked for once" $
+            \(Asked asked) ->
+                trackerPending (foldl (flip request) fresh asked) === nub (Recenter : asked)
         , testProperty "a pose resumed is told of the clip showing two reflectors for no longer than since all three showed of it" $
             once $
                 let here = Pose identity (V3 0 0 700)
@@ -72,6 +75,15 @@ tests =
         ]
   where
     fresh = newTracker defaultIntrinsics headset MaskLights defaultCalibration
+
+-- | Things asked for one after another. Simplest none; simpler with
+-- fewer.
+newtype Asked = Asked [Request]
+    deriving (Show)
+
+instance Arbitrary Asked where
+    arbitrary = Asked <$> listOf (elements [Recenter, Calibrate])
+    shrink (Asked asked) = Asked <$> shrinkList (const []) asked
 
 -- | What the camera sees: the clip, if it is there, and other lights.
 data Scene = Scene (Maybe Placing) [Disc]
