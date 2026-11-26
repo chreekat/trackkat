@@ -70,7 +70,7 @@ import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..), Trim (..))
 import TrackKat.Trackers (BlobRole (..))
-import TrackKat.Tray (TrayChoice (..))
+import TrackKat.UI.Tray (TrayChoice (..))
 
 foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> IO CInt

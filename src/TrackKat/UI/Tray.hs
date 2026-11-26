@@ -1,6 +1,6 @@
 -- | What the system tray icon shows: its look, tooltip and menu. The icon
 -- itself is "TrackKat.Gui.Tray"'s.
-module TrackKat.Tray (
+module TrackKat.UI.Tray (
     TrayState (..),
     ClipSight (..),
     Holding (..),

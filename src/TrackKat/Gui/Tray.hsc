@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- | trackkat's system tray icon, with window = haskell: the hidden window it
--- talks to, its look and tooltip ("TrackKat.Tray"), and its menu. The window
+-- talks to, its look and tooltip ("TrackKat.UI.Tray"), and its menu. The window
 -- it opens is cbits/gui.c's.
 module TrackKat.Gui.Tray (makeTray) where
 
@@ -38,7 +38,7 @@ import System.Win32.DLL (getModuleHandle)
 import System.Win32.Types (BOOL, DWORD, HINSTANCE, LPCTSTR, LPVOID, UINT, getLastError)
 
 import TrackKat.Display (CameraState (..))
-import TrackKat.Tray
+import TrackKat.UI.Tray
 
 foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
 foreign import ccall safe "hts_gui_open_settings_now" c_open_settings_now :: IO ()

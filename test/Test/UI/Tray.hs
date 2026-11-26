@@ -1,11 +1,11 @@
 -- | The tray icon's look, tooltip and menu.
-module Test.Tray (tests) where
+module Test.UI.Tray (tests) where
 
 import Test.Tasty (TestTree)
 
 import Test.Check (check, group)
 import TrackKat.Display (CameraState (..))
-import TrackKat.Tray
+import TrackKat.UI.Tray
 
 tests :: TestTree
 tests = group "Tray" $ do
