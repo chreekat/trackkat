@@ -178,19 +178,26 @@ jobs:
           Finish (Start-Process $exe -ArgumentList "--list-files" -PassThru) "trackkat --list-files started by Start-Process"
           $script = Join-Path $env:RUNNER_TEMP "attached.ps1"
           $out = Join-Path $env:RUNNER_TEMP "attached.txt"
+          $wanted = "trackkat.exe", "NPClient.dll", "README.md"
           @'
-          param($exe, $out)
+          param($exe, $out, $wanted)
           & $exe --list-files
-          Start-Sleep -Seconds 5
+          # trackkat.exe, a GUI program, runs on after & returns: read the
+          # console until it shows every file wanted, or for at most 30 s.
           $raw = $Host.UI.RawUI
-          $cells = $raw.GetBufferContents((New-Object System.Management.Automation.Host.Rectangle 0, 0, ($raw.BufferSize.Width - 1), $raw.CursorPosition.Y))
-          $lines = for ($y = 0; $y -le $cells.GetUpperBound(0); $y++) { -join (0..$cells.GetUpperBound(1) | ForEach-Object { $cells[$y, $_].Character }) }
-          $lines | ForEach-Object { $_.TrimEnd() } | Set-Content $out
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+            Start-Sleep -Milliseconds 100
+            $cells = $raw.GetBufferContents((New-Object System.Management.Automation.Host.Rectangle 0, 0, ($raw.BufferSize.Width - 1), $raw.CursorPosition.Y))
+            $lines = for ($y = 0; $y -le $cells.GetUpperBound(0); $y++) { (-join (0..$cells.GetUpperBound(1) | ForEach-Object { $cells[$y, $_].Character })).TrimEnd() }
+            $missing = @($wanted -split "," | Where-Object { $lines -notcontains $_ })
+          } until ($missing.Count -eq 0 -or (Get-Date) -gt $deadline)
+          $lines | Set-Content $out
           '@ | Set-Content $script
-          Finish (Start-Process pwsh -ArgumentList "-NoProfile", "-File", $script, $exe, $out -WindowStyle Hidden -PassThru) "pwsh running trackkat --list-files"
+          Finish (Start-Process pwsh -ArgumentList "-NoProfile", "-File", $script, $exe, $out, ($wanted -join ",") -WindowStyle Hidden -PassThru) "pwsh running trackkat --list-files"
           $printed = Get-Content $out
           $printed
-          foreach ($f in "trackkat.exe", "NPClient.dll", "README.md") {
+          foreach ($f in $wanted) {
             if ($printed -notcontains $f) { "::error::trackkat --list-files, run from a terminal, didn't print $f to it"; exit 1 }
           }
 
