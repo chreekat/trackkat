@@ -165,7 +165,7 @@ itemId c = fromIntegral (firstItem + fromEnum c)
 trayState :: IO TrayState
 trayState =
     alloca $ \camera -> allocaArray textMax $ \cameraText -> alloca $ \clipLost -> alloca $ \games ->
-        alloca $ \paused -> allocaArray tipMax $ \offer -> do
+        alloca $ \paused -> allocaArray offerMax $ \offer -> do
             c_tray_state camera cameraText clipLost games paused offer
             cam <- peek camera
             why <- peekCWString cameraText
@@ -183,8 +183,9 @@ trayState =
                     , trayOffer = if null item then Nothing else Just item
                     }
   where
-    -- As TEXT_MAX in cbits/gui.c.
+    -- As TEXT_MAX and OFFER_TRAY_MAX in cbits/gui.c.
     textMax = 512
+    offerMax = 128
 
 -- | NOTIFYICONDATAW's szTip, in characters with the NUL.
 tipMax :: Int

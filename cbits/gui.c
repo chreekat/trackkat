@@ -41,6 +41,7 @@ enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };
 
 #define TEXT_MAX 512
 #define FIELD_MAX 256
+#define OFFER_TRAY_MAX 128 /* the tray menu's item for an offer, in characters with the NUL */
 
 /* The settings the window edits, by their names in trackkat.conf. The
  * binding lists come first, in the order hts_gui_capturing numbers them. */
@@ -91,7 +92,7 @@ typedef struct State {
     wchar_t settings_message[TEXT_MAX];
     wchar_t offer[TEXT_MAX];       /* what the strip offers, or nothing */
     wchar_t offer_button[64];      /* its button */
-    wchar_t offer_tray[128];       /* the tray menu's item for it, or nothing for none */
+    wchar_t offer_tray[OFFER_TRAY_MAX]; /* the tray menu's item for it, or nothing for none */
     int checking;                  /* whether trackkat is looking for a newer version */
     ULONGLONG looked_at;           /* GetTickCount64 when the last look ended, or 0 */
     wchar_t update_status[TEXT_MAX]; /* what the last look found, in a few words */
@@ -275,7 +276,7 @@ void hts_gui_offer(const wchar_t *text, const wchar_t *button, const wchar_t *tr
     AcquireSRWLockExclusive(&lock);
     copy_text(shared.offer, TEXT_MAX, text);
     copy_text(shared.offer_button, 64, button);
-    copy_text(shared.offer_tray, 128, tray);
+    copy_text(shared.offer_tray, OFFER_TRAY_MAX, tray);
     ReleaseSRWLockExclusive(&lock);
 }
 
@@ -3514,8 +3515,8 @@ void hts_gui_open_settings_now(void) { open_settings_file(); }
 
 /* What the last refresh saw, for the icon: the camera as hts_gui_camera
  * takes it and why it is down, whether the clip is out of sight, games,
- * whether paused, and the tray's item for an offer; texts of TEXT_MAX and 128
- * characters. */
+ * whether paused, and the tray's item for an offer; texts of TEXT_MAX and
+ * OFFER_TRAY_MAX characters. */
 void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *games, int *paused, wchar_t *offer)
 {
     *camera = seen.camera;
@@ -3523,7 +3524,7 @@ void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *
     *clip_lost = seen.blobs >= 0;
     *games = seen.games;
     *paused = seen.paused;
-    copy_text(offer, 128, seen.offer_tray);
+    copy_text(offer, OFFER_TRAY_MAX, seen.offer_tray);
 }
 
 /* Remove the tray icon for good, which Windows otherwise leaves behind until
