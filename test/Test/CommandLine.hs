@@ -44,7 +44,8 @@ tests =
                 let exe = "C:\\Program Files\\trackkat\\trackkat.exe"
                  in splitCommandLine (commandLine exe args) === exe : args
         , testCase "command lines split as Microsoft's examples do" $
-            map splitCommandLine
+            map
+                splitCommandLine
                 [ "p \"a b c\" d e"
                 , "p \"ab\\\"c\" \"\\\\\" d"
                 , "p a\\\\\\b d\"e f\"g h"
