@@ -34,7 +34,7 @@ unsigned hts_modifiers_held(void); /* cbits/windows.c */
 #define ACT_CHECK_UPDATES 0x800
 #define ACT_AIM 0x1000
 #define ACT_KEY_AIM 0x2000
-#define ACT_OPEN_SETTINGS 0x4000 /* after saving what the window holds */
+#define ACT_OPEN_SETTINGS 0x4000 /* after saving a change waiting to be */
 
 /* The camera's state, as hts_gui_camera takes it. */
 enum { CAMERA_SEARCHING, CAMERA_TRACKING, CAMERA_DOWN };

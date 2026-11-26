@@ -171,7 +171,7 @@ quitRunning :: IO (Maybe Int)
 quitRunning = (\pid -> if pid == 0 then Nothing else Just (fromIntegral pid)) <$> c_quit_running
 
 -- | The version the window's title, its strip across the top and the log
--- window show. Call before 'startGui'.
+-- window show. Call before 'withGui'.
 showVersion :: String -> IO ()
 showVersion v = withCWString v c_version
 
@@ -184,7 +184,7 @@ openSettingsFile path = withCWString path c_open_settings
 -- that updates itself.
 data UpdateButton = UpdateButtonEnabled | UpdateButtonDisabled
 
--- | Enable the Check for updates button, or not. Call before 'startGui'.
+-- | Enable the Check for updates button, or not. Call before 'withGui'.
 showUpdateButton :: UpdateButton -> IO ()
 showUpdateButton UpdateButtonEnabled = c_updatable 1
 showUpdateButton UpdateButtonDisabled = c_updatable 0
@@ -230,10 +230,11 @@ data Action
       OfferAction
     | -- | look for a newer version now
       CheckForUpdatesAction
-    | -- | the Save button: read the settings with 'savedSettings'
+    | -- | a change in the window to save: read the settings with
+      -- 'savedSettings'
       SaveAction
-    | -- | the Edit settings file button, pressed after the window's
-      -- settings were handed over to save ('SaveAction')
+    | -- | the Edit settings file button, which first asks to save a change
+      -- waiting to be ('SaveAction'), but nothing else
       OpenSettingsAction
     | -- | a key pressed to add to a binding list, if it has a name
       KeyChosen Hotkey (Maybe KeyOrButton)
