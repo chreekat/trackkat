@@ -12,7 +12,7 @@ import Test.Tasty.QuickCheck
 import Test.Check
 import Test.Gen (shrinkParts, shrinkTo)
 import Test.Instances ()
-import Test.Memory (retainedWhileStepping)
+import Test.Memory (liveWhileStepping)
 import Test.Simulation
 import TrackKat.Calibration
 import TrackKat.Config
@@ -106,6 +106,9 @@ simulations = group "Trackers" $ do
         | (name, from) <- [("new", OldTracker), ("old", NewTracker)]
         ]
     tree . testCase "tracking through this holds on to no more memory than the tracker alone does, the old one or the new" $ do
+        -- What tracking evaluates once and keeps, whichever tracks.
+        _ <- holding (stepping step) (tracking OldTracker) 200
+        _ <- holding (stepping step) (tracking NewTracker) 200
         old <- holding (stepping Old.step) (Old.newTracker defaultIntrinsics clipBent MaskLights defaultCalibration) 6000
         throughOld <- holding (stepping step) (tracking OldTracker) 6000
         new <- holding (stepping New.step) (New.newTracker defaultIntrinsics clipBent MaskLights defaultCalibration) 6000
@@ -126,8 +129,8 @@ simulations = group "Trackers" $ do
         let (t', o, evs) = track (clockAt (fromIntegral i / 120)) (fireLit i) t
         _ <- evaluate (length (show o) + length evs)
         pure t'
-    -- The bytes held on to once so many frames have been tracked.
-    holding next t0 frames = sum <$> retainedWhileStepping next t0 [frames]
+    -- The bytes of memory in use once so many frames have been tracked.
+    holding next t0 frames = sum <$> liveWhileStepping next t0 [frames]
 
 -- | The default settings, asking for a tracker.
 asking :: WhichTracker -> Config
