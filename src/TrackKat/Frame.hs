@@ -238,16 +238,41 @@ stripesToBlobs minPts maxPts =
     sortOn (Down . blobWeight)
         . filter (\b -> blobPoints b >= minPts && blobPoints b <= maxPts)
         . map toBlob
-        . foldl' add []
+        . joined
         . sortOn stLine
+
+-- | Stripes, in order of their lines, joined where they touch: the groups
+-- latest joined first, each the stripe that joined it last and then the
+-- groups that stripe joined, in their order.
+joined :: [Stripe] -> [[Stripe]]
+joined = finish . foldl' add ([], [])
   where
-    add groups s =
-        let (touching, rest) = partition (any (touches s)) groups
-         in (s : concat touching) : rest
+    -- The groups a stripe to come may touch, latest joined first, and
+    -- after them, in the same order, those none can. A stripe touches only
+    -- groups that reach the line before its own, which are the first.
+    add (reaching, past) s =
+        let (near, far) = span (\g -> groupLine g >= stLine s - 1) reaching
+            (touching, rest) = partition (any (touches s) . groupEdge) near
+            edge = s : [t | g <- touching, t <- groupEdge g, stLine t >= stLine s - 1]
+         in (Group (stLine s) edge (Joined s (map groupStripes touching)) : rest, far ++ past)
     touches s t =
         abs (stLine s - stLine t) <= 1
             && stStart s <= stStop t
             && stStart t <= stStop s
+    finish (reaching, past) = map (\g -> flatten (groupStripes g) []) (reaching ++ past)
+    flatten (Joined s gs) rest = s : foldr flatten rest gs
+
+-- | Stripes joined so far, as 'joined' keeps them.
+data Group = Group
+    { groupLine :: !Int
+    -- ^ the line of its last stripe
+    , groupEdge :: [Stripe]
+    -- ^ its stripes on that line and the one before
+    , groupStripes :: Joined
+    }
+
+-- | A stripe, and the stripes it joined, in order.
+data Joined = Joined Stripe [Joined]
 
 toBlob :: [Stripe] -> Blob
 toBlob ss
