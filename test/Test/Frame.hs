@@ -4,7 +4,7 @@ module Test.Frame (tests) where
 import Control.Monad (forM_)
 import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.ByteString as B
-import Data.List (inits, sort, sortOn, tails)
+import Data.List (inits, partition, sort, sortOn, tails)
 import Data.Word (Word8)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck hiding ((.&.))
@@ -95,7 +95,57 @@ properties =
         , testProperty "blobs keep every lit pixel of the stripes they are made of" $
             \(Sent stripes) ->
                 sum (map blobPoints (stripesToBlobs 1 maxBound stripes)) === sum (map stPoints stripes)
+        , testProperty "stripes crowded together are joined as checking every group's every stripe joins them" $
+            \(Crowded stripes) -> joinedLikeEveryGroup stripes
+        , testProperty "stripes of blobs the camera sees are joined as checking every group's every stripe joins them" $
+            \(Seen stripes) -> joinedLikeEveryGroup stripes
         ]
+  where
+    joinedLikeEveryGroup stripes = let sorted = sortOn stLine stripes in joined sorted === joinedByEveryGroup sorted
+
+-- | Stripes, in order of their lines, joined by checking each against every
+-- stripe of every group so far.
+joinedByEveryGroup :: [Stripe] -> [[Stripe]]
+joinedByEveryGroup = foldl' add []
+  where
+    add groups s =
+        let (touching, rest) = partition (any (touches s)) groups
+         in (s : concat touching) : rest
+    touches s t =
+        abs (stLine s - stLine t) <= 1
+            && stStart s <= stStart t + stPoints t - 1
+            && stStart t <= stStart s + stPoints s - 1
+
+-- | Stripes on a few lines and across a narrow band, so most touch several
+-- others, overlapping or not.
+newtype Crowded = Crowded [Stripe]
+    deriving (Show)
+
+instance Arbitrary Crowded where
+    arbitrary = Crowded <$> listOf (Stripe <$> chooseInt (0, 7) <*> chooseInt (0, 40) <*> chooseInt (1, 10) <*> pure 0 <*> pure 1)
+    shrink (Crowded stripes) = Crowded <$> shrinkList shrink stripes
+
+-- | The stripes of a few lit discs, ragged at their edges, as the camera
+-- sends them.
+newtype Seen = Seen [Stripe]
+    deriving (Show)
+
+instance Arbitrary Seen where
+    arbitrary = Seen . asSent . concat <$> listOf disc
+      where
+        disc = do
+            top <- chooseInt (0, frameHeight - 1)
+            centre <- chooseInt (0, frameWidth - 1)
+            radius <- chooseInt (1, 12)
+            sequence
+                [ (\ragged -> stripeAcross line (centre - half - ragged) (centre + half + ragged)) <$> chooseInt (0, 2)
+                | line <- [top .. min (frameHeight - 1) (top + 2 * radius)]
+                , let half = round (sqrt (fromIntegral (radius * radius - (line - top - radius) ^ (2 :: Int))) :: Double)
+                ]
+        stripeAcross line from to =
+            let start = max 0 from
+             in Stripe line start (max 1 (min (frameWidth - 1) to - start + 1)) 0 1
+    shrink (Seen stripes) = Seen . asSent <$> shrinkList shrink stripes
 
 -- | Any eight bytes; simplest all nothing, and simpler with a smaller one.
 newtype EightBytes = EightBytes B.ByteString

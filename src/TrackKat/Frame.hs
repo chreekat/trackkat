@@ -15,6 +15,7 @@ module TrackKat.Frame (
     decodeStripe,
     encodeStripe,
     stripesToBlobs,
+    joined,
     frameWidth,
     frameHeight,
 ) where
