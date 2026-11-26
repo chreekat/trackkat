@@ -1,6 +1,7 @@
 -- | The stages put together: what a frame comes to (see 'step').
 module Test.Tracker.Step (tests) where
 
+import Data.List (mapAccumL)
 import Data.Maybe (isJust, isNothing)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -9,6 +10,7 @@ import Test.Gen
 import Test.Simulation (headset)
 import TrackKat.Calibration (defaultCalibration)
 import TrackKat.Frame (frameHeight, frameWidth)
+import TrackKat.Linear (V3 (..), identity)
 import TrackKat.Pose
 import TrackKat.Synth (Disc, allLit, pointDiscs, renderDiscs)
 import TrackKat.Tracker
@@ -51,6 +53,22 @@ tests =
                 case step (clockAt 0) (renderDiscs (discs (Scene (Just placing) []))) fresh of
                     (_, Tracked{outSeen = seen, outChosen = chosen}, _) -> seen === Seen [] 0 0 0 .&&. (\(Chosen way picking _ _) -> (way, picking)) chosen === (Appeared, ByLayout)
                     (_, Lost{outWhy = why}, _) -> counterexample (explainWhy why) False
+        , testProperty "a pose resumed is told of the clip showing two reflectors for no longer than since all three showed of it" $
+            once $
+                let here = Pose identity (V3 0 0 700)
+                    there = Pose identity (V3 250 0 700)
+                    seen t
+                        | t < 0.1 = pointDiscs defaultIntrinsics headset allLit here
+                        | t < 1 = pointDiscs defaultIntrinsics headset (1, 1, 0) here
+                        | t < 1.005 = pointDiscs defaultIntrinsics headset allLit there
+                        | otherwise = pointDiscs defaultIntrinsics headset (1, 1, 0) here
+                    times = [fromIntegral i / 120 | i <- [0 .. 300 :: Int]]
+                    outcomes = snd (mapAccumL (\t now -> let (t', outcome, _) = step (clockAt now) (renderDiscs (seen now)) t in (t', outcome)) fresh times)
+                    ways = [(now, way) | (now, Tracked{outChosen = Chosen way _ _ _}) <- zip times outcomes]
+                 in counterexample (show ways) $
+                        lookup 1 ways === Just Appeared
+                            .&&. property (Resumed `elem` [way | (now, way) <- ways, now > 1])
+                            .&&. [now | (now, _) <- ways, now > 1.3] === []
         ]
   where
     fresh = newTracker defaultIntrinsics headset MaskLights defaultCalibration

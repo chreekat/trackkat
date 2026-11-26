@@ -8,6 +8,7 @@ module TrackKat.Tracker.Trail (
     noTrail,
     predictionSeconds,
     stillPredicting,
+    poseContinued,
     Carried (..),
     carryOn,
 ) where
@@ -60,6 +61,15 @@ stillPredicting now (Trail recent left) = Trail (recent >>= kept id) (left >>= k
         | now .-. recentTime (pose a) <= predictionSeconds = Just a
         | otherwise = Nothing
 
+-- | Of the poses still predicting, the one a pose come by in the given
+-- way continues: the last for one that continues it, the one left behind
+-- for one resumed, and none for one come afresh.
+poseContinued :: Way -> Trail -> Maybe Recent
+poseContinued way (Trail following left) = case way of
+    Continued -> following
+    Resumed -> (\(LeftBehind was _) -> was) <$> left
+    Appeared -> Nothing
+
 -- | What a tracked frame carries on of what goes by continuity.
 data Carried = Carried
     { carriedBelief :: Branch
@@ -81,11 +91,12 @@ data Carried = Carried
 -- A pose still predicting that is left for one found afresh is kept while
 -- it predicts, unless one left before it still does.
 carryOn :: Way -> Instant -> Branch -> Trail -> Carried
-carryOn way now belief (Trail following left) = case (way, left) of
+carryOn way now belief trail@(Trail following left) = case (way, left) of
     (Appeared, _) -> Carried (foundAfresh belief) now leaving
-    (Resumed, Just (LeftBehind was believed)) -> Carried believed (recentSince was) Nothing
-    _ -> Carried belief (maybe now recentSince following) leaving
+    (Resumed, Just (LeftBehind _ believed)) -> Carried believed since Nothing
+    _ -> Carried belief since leaving
   where
+    since = maybe now recentSince (poseContinued way trail)
     leaving = case (way, left, following) of
         (Resumed, _, _) -> Nothing
         (Appeared, Nothing, Just r) -> Just (LeftBehind r belief)

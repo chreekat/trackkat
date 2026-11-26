@@ -209,18 +209,14 @@ hypotheses known now (Trail following left) shown = away : go (judgedScore away)
 -- to be told, why, with every hypothesis' score (see Note [Choosing]);
 -- and the doubt of the pose followed after the frame (see Note [Doubt]).
 makeOut :: Known -> Instant -> Trail -> Shown -> (Double, Either (Why, [Rival]) (Chosen, Sighting))
-makeOut known now trail@(Trail following left) shown = (,) (maybe 0 (uncurry (doubted (knownDoubt known))) chosen) $ case chosen of
+makeOut known now trail@(Trail following _) shown = (,) (maybe 0 (uncurry (doubted (knownDoubt known))) chosen) $ case chosen of
     Just (won, others)
         | Just candidate <- judgedSeen won
         , InView way source <- judgedGuess won ->
             let pose = candidatePose candidate
                 sights = candidateSights candidate
                 expect = expecting known now pose
-                allSeen = case way of
-                    Continued -> recentAllSeen <$> following
-                    Resumed -> (\(LeftBehind was _) -> recentAllSeen was) <$> left
-                    Appeared -> Nothing
-                told = about fst (partlySeen expect now allSeen) <> about snd (if way == Appeared then surely else mempty)
+                told = about fst (partlySeen expect now (recentAllSeen <$> poseContinued way trail)) <> about snd (if way == Appeared then surely else mempty)
                 lead = oddsNats (judgedScore won `over` maximum (impossible : [judgedScore j | j <- others, judgedGuess j == OutOfView]))
              in if accepts told (sights, lead)
                     then

@@ -291,7 +291,6 @@ seenFrame (Look now blobs shown from known) chosen@(Chosen way _ _ _) (Sighting 
     k = knownCamera known
     m = knownClip known
     pivot = reachPivot (knownReach known)
-    lastTracked = trailRecent (trTrail t)
     Carried believed since leaving = carryOn way now (centreBelief (trCentre t)) from
     -- If what was tracked for a moment was a light, and is learnt as
     -- one, it is no longer followed.
@@ -305,7 +304,7 @@ seenFrame (Look now blobs shown from known) chosen@(Chosen way _ _ _) (Sighting 
     clear = clarity before blobs seenPose sights
     Told pose centre fix evidence = tellApart k m pivot now clear seenPose sights (Centre (centrePose (trCentre t)) believed)
     correcting = fix /= MirrorNeither
-    recent = Recent pose now (if showing expected sights == AllShowing then now else maybe now recentAllSeen lastTracked) since
+    recent = Recent pose now (if showing expected sights == AllShowing then now else maybe now recentAllSeen (poseContinued way from)) since
     -- A reflector seen as a blob of its own teaches its size. One sharing
     -- a blob has its share guessed, not seen, so teaches nothing, as one
     -- unseen does.
