@@ -72,13 +72,13 @@ import TrackKat.Response (Aiming (..), Trim (..))
 import TrackKat.Trackers (BlobRole (..))
 import TrackKat.Tray (TrayChoice (..))
 
-foreign import ccall unsafe "hts_gui_start" c_start :: CInt -> IO CInt
+foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> IO CInt
 foreign import ccall safe "hts_gui_show" c_show :: IO ()
 foreign import ccall unsafe "hts_gui_ask" c_ask :: CInt -> IO ()
 foreign import ccall safe "hts_gui_dialog_message" c_dialog_message :: LPMSG -> IO CInt
-foreign import ccall unsafe "hts_gui_stop" c_stop :: IO ()
-foreign import ccall unsafe "hts_gui_quit" c_quit :: IO ()
+foreign import ccall safe "hts_gui_stop" c_stop :: IO ()
+foreign import ccall safe "hts_gui_quit" c_quit :: IO ()
 foreign import ccall unsafe "hts_gui_show_running" c_show_running :: IO CInt
 foreign import ccall unsafe "hts_gui_quit_running" c_quit_running :: IO CInt
 foreign import ccall unsafe "hts_gui_version" c_version :: CWString -> IO ()
