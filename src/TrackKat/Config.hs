@@ -18,6 +18,7 @@ module TrackKat.Config (
     settingNames,
     settingValues,
     editSettings,
+    parseCurve,
     ClipShape,
     clipShape,
     clipDistances,

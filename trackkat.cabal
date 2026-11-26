@@ -80,6 +80,7 @@ library
     TrackKat.Tracker.Still
     TrackKat.Tracker.Trail
     TrackKat.Trackers
+    TrackKat.UI.Curve
     TrackKat.UI.Masthead
     TrackKat.UI.Tray
     TrackKat.Updater
@@ -257,6 +258,7 @@ test-suite tests
     Test.Tracker.Step
     Test.Tracker.Trail
     Test.Trackers
+    Test.UI.Curve
     Test.UI.Masthead
     Test.UI.Tray
     Test.Updater
