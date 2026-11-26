@@ -107,12 +107,15 @@ installedVersions p = do
     names <- either (\e -> const [] (e :: IOException)) id <$> try (listDirectory (installRoot p))
     filterM (doesFileExist . versionExe p) (mapMaybe folderVersion names)
 
--- | Move settings files that older versions kept beside trackkat.exe to
--- 'settingsDir', once.
+-- | Make 'settingsDir', and move settings files that older versions kept
+-- beside trackkat.exe to it, once.
 moveSettings :: (String -> IO ()) -> Paths -> IO ()
-moveSettings say p = do
-    createDirectoryIfMissing True (settingsDir p)
-    forM_ settingsFiles $ \f -> do
+moveSettings say p =
+    try (createDirectoryIfMissing True (settingsDir p)) >>= \case
+        Left e -> say ("Can't make the settings folder: " ++ show (e :: IOException))
+        Right () -> move
+  where
+    move = forM_ settingsFiles $ \f -> do
         let beside = exeDir p </> f
             there = settingsDir p </> f
         found <- leftover <$> doesFileExist beside <*> doesFileExist there

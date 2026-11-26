@@ -119,8 +119,13 @@ run start window recorded after = do
         (Just v, Portable) -> "trackkat " ++ describeVersion v ++ ", running from " ++ exeDir paths
     moveSettings say paths
     let settingsFile = configFile paths
-    (config, settings, stamp) <- loadConfig settingsFile
-    withGui (chosenWindow config) window $ \started -> do
+    (config, settings, stamp, starting) <- loadConfig settingsFile
+    -- Settings trackkat can't use are told of at once, except over a game.
+    let window' = case (starting, start) of
+            (WithDefaults, ByHand) -> WindowShown
+            (WithDefaults, AtLogin) -> WindowShown
+            _ -> window
+    withGui (chosenWindow config) window' $ \started -> do
         either (\e -> say ("Can't show a window or tray icon (error " ++ show e ++ ").")) pure started
         openShared >>= either (\e -> say ("Can't create shared memory for games (error " ++ show e ++ ").") >> exitFailure) pure
         let gameFile = settingsDir paths </> "trackkat.game"
@@ -431,28 +436,38 @@ controls start recorded path sh = go 0 Busy
     act (KeyChosen k (Just b)) = addBinding k b
     act (KeyChosen _ Nothing) = showSettingsMessage "trackkat can't use that key; choose another."
 
+-- | Whether trackkat starts with the settings file's settings, or with
+-- the defaults, the file being one it can't read.
+data Starting = WithFileSettings | WithDefaults
+
 -- | Read the settings file, creating it with the defaults if there is none:
--- its settings and its text, along with the modification time of what was
--- read; and show it in trackkat's window.
-loadConfig :: FilePath -> IO (Config, String, Maybe UTCTime)
+-- its settings and their text, along with the modification time of the
+-- file read and whether its settings are used; and show them in trackkat's
+-- window. A file that can't be read leaves the defaults, until it is saved
+-- again, as 'watchSettings' reads it then.
+loadConfig :: FilePath -> IO (Config, String, Maybe UTCTime, Starting)
 loadConfig path = do
     exists <- doesFileExist path
     if not exists
         then do
-            writeText path (renderConfig defaultConfig)
-            say ("Wrote default settings to " ++ path)
-            showSettings (renderConfig defaultConfig)
-            (defaultConfig,renderConfig defaultConfig,) <$> modificationTime path
+            try (writeText path defaults) >>= \case
+                Right () -> say ("Wrote default settings to " ++ path)
+                Left e -> say ("Can't write the default settings: " ++ displayException (e :: IOException))
+            showSettings defaults
+            (defaultConfig,defaults,,WithFileSettings) <$> modificationTime path
         else do
             stamp <- modificationTime path
             readSettings path >>= \case
                 Right (text, c) -> do
                     mapM_ (say . ((path ++ " ") ++)) (retiredSettings text)
                     showSettings text
-                    pure (c, text, stamp)
+                    pure (c, text, stamp, WithFileSettings)
                 Left err -> do
-                    say (path ++ ": " ++ err)
-                    exitFailure
+                    say (path ++ ": " ++ err ++ "; trackkat uses the default settings until the file is put right and saved.")
+                    showSettings defaults
+                    pure (defaultConfig, defaults, stamp, WithDefaults)
+  where
+    defaults = renderConfig defaultConfig
 
 -- | Read what was learnt in earlier sessions about a head wearing the given
 -- clip, or start afresh: the calibration, what to say of it, and the text

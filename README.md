@@ -95,7 +95,10 @@ Change settings in the window, which saves them as you go, or edit
 `trackkat.conf`, in `%APPDATA%\trackkat`, in any text editor (**Edit
 settings file**, beside **Quit trackkat**, opens it in yours); it explains
 every setting, as [`trackkat.conf.example`](trackkat.conf.example) shows.
-Either way they apply at once, while you play.
+Either way they apply at once, while you play. If the file has a
+mistake when trackkat starts, trackkat says where in its log, opening its
+window unless a game started it, and uses the default settings until you
+put it right and save it.
 
 ## When something doesn't work
 
