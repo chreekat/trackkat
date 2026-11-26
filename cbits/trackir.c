@@ -75,6 +75,7 @@ static volatile LONG registered_profile = -1;
 /* Only the window's thread touches these, once it has started. */
 static DWORD game_pid;
 static ULONGLONG game_created; /* when the game's process started; 0 if unknown */
+static ULONGLONG game_seen;    /* when it was first known: see hts_still_the_game */
 static HWND game_window;
 static int game_profile = -1;
 static int game_registered;
@@ -140,26 +141,6 @@ static void game_tracking(int tracking)
     }
 }
 
-/* Whether a process is running: 0 if it has exited, or never was; 1 if it
- * is, and *created says when it started; 2 if it is, but Windows won't say
- * when it started, as anti-cheat may have it. */
-int hts_process_started(unsigned long pid, unsigned long long *created)
-{
-    *created = 0;
-    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
-    if (!p)
-        return GetLastError() == ERROR_ACCESS_DENIED ? 2 : 0;
-    DWORD code = 0;
-    FILETIME start, ended, kernel, user;
-    int state = !GetExitCodeProcess(p, &code) || code != STILL_ACTIVE ? 0
-                : GetProcessTimes(p, &start, &ended, &kernel, &user) ? 1
-                : 2;
-    if (state == 1)
-        *created = (ULONGLONG)start.dwHighDateTime << 32 | start.dwLowDateTime;
-    CloseHandle(p);
-    return state;
-}
-
 /* The process a window belongs to, or 0 if there is no such window. */
 unsigned long hts_window_process(unsigned long long window)
 {
@@ -189,15 +170,15 @@ static void note_served(void)
     LeaveCriticalSection(&served_lock);
 }
 
-/* Forget a game once its process has exited. */
+/* Forget a game once its process has exited, or its ID is another's. */
 static void forget_exited_game(void)
 {
-    ULONGLONG created;
     if (!game_pid)
         return;
-    int state = hts_process_started(game_pid, &created);
-    if (state == 2 || (state == 1 && (!game_created || created == game_created)))
+    if (hts_still_the_game(game_pid, &game_created, game_seen)) {
+        note_served();
         return;
+    }
     game_tracking(0);
     game_pid = 0;
     game_created = 0;
@@ -222,6 +203,7 @@ static void command(WPARAM code, LPARAM arg)
         if (pid != game_pid) {
             game_tracking(0);
             game_pid = pid;
+            game_seen = hts_now();
             hts_process_started(pid, &game_created);
         }
         game_window = (HWND)arg;
@@ -374,6 +356,7 @@ int hts_trackir_start(unsigned long pid, unsigned long long created, unsigned lo
     if (pid) {
         game_pid = (DWORD)pid;
         game_created = created;
+        game_seen = hts_now();
         game_window = (HWND)(uintptr_t)window;
         /* The control block outlives trackkat while a game using our DLL
          * holds it, perhaps with this game in it still. */
