@@ -81,90 +81,26 @@ long hts_game_reads(void)
     return InterlockedCompareExchange(&control->game_reads, 0, 0);
 }
 
-/* ---- Games' processes ---------------------------------------------------- */
-
-/* Whether a process is running: 0 if it has exited, or never was; 1 if it
- * is, and *created says when it started; 2 if it is, but Windows won't say
- * when it started, as anti-cheat may have it. */
-int hts_process_started(unsigned long pid, unsigned long long *created)
-{
-    *created = 0;
-    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
-    if (!p)
-        return GetLastError() == ERROR_ACCESS_DENIED ? 2 : 0;
-    DWORD code = 0;
-    FILETIME start, ended, kernel, user;
-    int state = !GetExitCodeProcess(p, &code) || code != STILL_ACTIVE ? 0
-                : GetProcessTimes(p, &start, &ended, &kernel, &user) ? 1
-                : 2;
-    if (state == 1)
-        *created = (ULONGLONG)start.dwHighDateTime << 32 | start.dwLowDateTime;
-    CloseHandle(p);
-    return state;
-}
-
-/* Whether the process now under a game's process ID is still the game, not
- * another given the ID since. *created is when the game's process started,
- * 0 while unknown, which this fills in once Windows says; seen is when the
- * game was first known, so had started by. Where Windows won't say when the
- * process now under the ID started, it is taken for the game. */
-int hts_still_the_game(DWORD pid, unsigned long long *created, unsigned long long seen)
-{
-    ULONGLONG now;
-    switch (hts_process_started(pid, &now)) {
-    case 1:
-        if (*created)
-            return now == *created;
-        if (now > seen)
-            return 0;
-        *created = now;
-        return 1;
-    case 2:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-/* The time now, as a FILETIME, for hts_still_the_game's seen. */
-unsigned long long hts_now(void)
-{
-    FILETIME t;
-    GetSystemTimeAsFileTime(&t);
-    return (ULONGLONG)t.dwHighDateTime << 32 | t.dwLowDateTime;
-}
-
-/* The game in each of the control block's slots, as hts_games_tracking
- * knows it, for hts_still_the_game. */
-static SRWLOCK slots_lock = SRWLOCK_INIT;
-static struct {
-    long pid; /* 0 until a game is seen in the slot */
-    ULONGLONG created;
-    ULONGLONG seen;
-} slots[TRACKKAT_MAX_GAMES];
-
 /* How many games have started head tracking and are still running. Slots
- * of games that have exited, perhaps by crashing, are freed, as are those
- * whose process ID another process now has. */
+ * of games that have exited, perhaps by crashing, are freed. */
 int hts_games_tracking(void)
 {
     int n = 0;
-    AcquireSRWLockExclusive(&slots_lock);
     for (int i = 0; i < TRACKKAT_MAX_GAMES; i++) {
         long pid = InterlockedCompareExchange(&control->games[i], 0, 0);
-        if (pid != slots[i].pid) {
-            slots[i].pid = pid;
-            slots[i].created = 0;
-            slots[i].seen = hts_now();
-        }
         if (pid == 0)
             continue;
-        if (hts_still_the_game((DWORD)pid, &slots[i].created, slots[i].seen))
+        DWORD code = 0;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+        /* Anti-cheat may refuse even this to a running game. */
+        int alive = p ? GetExitCodeProcess(p, &code) && code == STILL_ACTIVE : GetLastError() == ERROR_ACCESS_DENIED;
+        if (p)
+            CloseHandle(p);
+        if (alive)
             n++;
         else
             InterlockedCompareExchange(&control->games[i], 0, pid);
     }
-    ReleaseSRWLockExclusive(&slots_lock);
     return n;
 }
 
