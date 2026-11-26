@@ -133,7 +133,9 @@ unpacking = testCase "unpacking a release's zip" $ do
             , ("no-exe", [("README.md", "x")])
             ]
     forM_ refused $ \(n, r) -> assertBool ("zip refused: " ++ n) (isLeft r)
-    escaped <- doesFileExist (tmp </> "evil.exe")
+    -- Where "../evil.exe" (or "..\\evil.exe") from a zip unpacked into
+    -- work's "escape" (or "backslash") folder would land.
+    escaped <- doesFileExist (work </> "evil.exe")
     assertBool "nothing written outside" (not escaped)
     B.writeFile (work </> "junk.zip") (C.pack "not a zip")
     junk <- extractRelease (work </> "junk.zip") (work </> "junk")
