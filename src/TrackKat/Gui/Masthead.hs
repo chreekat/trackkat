@@ -4,8 +4,6 @@
 -- children of it.
 module TrackKat.Gui.Masthead (registerMasthead) where
 
-#include <windows.h>
-
 import Control.Monad (when)
 import Foreign.C.String (CWString, peekCWString)
 import Foreign.C.Types (CInt (..))
@@ -14,15 +12,18 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr, ptrToIntPtr, wordPtrToPtr)
 import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HDC, HWND)
+import Graphics.Win32.Message (wM_COMMAND, wM_ERASEBKGND, wM_PAINT)
 import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect, getParent, sendMessage)
 import System.Win32.Types (HANDLE)
 
 import TrackKat.Display (UpdateCheck (..), UpdateStatus (..))
 import TrackKat.Gui.Paint
+import TrackKat.Gui.Win32 (dtLeft, wmCtlColorBtn, wmPrintClient)
 import TrackKat.UI.Masthead
 
 foreign import ccall unsafe "hts_gui_masthead_state"
     c_masthead_state :: CWString -> CWString -> Ptr CInt -> CWString -> Ptr CInt -> IO ()
+
 -- | Register the masthead's window class, reporting what fails in it.
 registerMasthead :: (String -> IO ()) -> IO (Either Int ())
 registerMasthead report = do
@@ -35,20 +36,20 @@ registerMasthead report = do
 
 mastheadProc :: HANDLE -> HANDLE -> WindowClosure
 mastheadProc quiet offering w msg wp lp
-    | msg == #{const WM_ERASEBKGND} = pure 1
-    | msg == #{const WM_PAINT} = do
+    | msg == wM_ERASEBKGND = pure 1
+    | msg == wM_PAINT = do
         allocaPAINTSTRUCT $ \ps -> do
             dc <- beginPaint w ps
             paintIn w dc
             endPaint w ps
         pure 0
     -- Behind the buttons' rounded corners.
-    | msg == #{const WM_PRINTCLIENT} = paintIn w (wordPtrToPtr (fromIntegral wp)) >> pure 0
-    | msg == #{const WM_CTLCOLORBTN} = do
+    | msg == wmPrintClient = paintIn w (wordPtrToPtr (fromIntegral wp)) >> pure 0
+    | msg == wmCtlColorBtn = do
         s <- mastheadState
         let brush = case mastheadSays s of SaysOffer _ -> offering; _ -> quiet
         pure (fromIntegral (ptrToIntPtr brush))
-    | msg == #{const WM_COMMAND} = getParent w >>= \parent -> sendMessage parent msg wp lp
+    | msg == wM_COMMAND = getParent w >>= \parent -> sendMessage parent msg wp lp
     | otherwise = defWindowProc (Just w) msg wp lp
 
 paintIn :: HWND -> HDC -> IO ()
@@ -70,11 +71,11 @@ paint dc w h s = do
     drawIcon dc icon s10 ((h - size) `div` 2) size
     let x0 = s10 + size + s8
     name <- textWidth dc BoldFont "trackkat"
-    textAt dc BoldFont (RGB 27 27 27) (x0, 0, name, h) #{const DT_LEFT} "trackkat"
+    textAt dc BoldFont (RGB 27 27 27) (x0, 0, name, h) dtLeft "trackkat"
     let version = mastheadVersion s
         x1 = x0 + name + s8
     versionWidth <- textWidth dc UiFont version
-    textAt dc UiFont (RGB 85 85 85) (x1, 0, versionWidth, h) #{const DT_LEFT} version
+    textAt dc UiFont (RGB 85 85 85) (x1, 0, versionWidth, h) dtLeft version
     let x = x1 + versionWidth + s12
     right <- (w -) <$> scaled (buttonWidth + 20)
     when (right > x) $ case says of
@@ -93,7 +94,7 @@ paint dc w h s = do
                     polyline dc Solid s2 goodColour [(x + s1, cy), (x + s4, cy + s3), (x + s10', cy - s4)]
                     pure (x + s15)
                 Plain -> pure x
-            textAt dc UiFont (case verdict of Good -> goodColour; Plain -> RGB 85 85 85) (x', 0, right - x', h) #{const DT_LEFT} text
+            textAt dc UiFont (case verdict of Good -> goodColour; Plain -> RGB 85 85 85) (x', 0, right - x', h) dtLeft text
         SaysNothing -> pure ()
 
 -- | What cbits/gui.c last saw for the masthead.

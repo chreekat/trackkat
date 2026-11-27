@@ -5,6 +5,10 @@ module TrackKat.Gui.Win32 (
     withWndClass,
     gwlpUserData,
 
+    -- * Messages
+    wmPrintClient,
+    wmCtlColorBtn,
+
     -- * Text and icons
     dtLeft,
     dtCenter,
@@ -26,6 +30,7 @@ import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (FunPtr, Ptr)
 import Foreign.Storable (pokeByteOff)
 import Graphics.Win32.GDI.Types (HCURSOR)
+import Graphics.Win32.Message (WindowMessage)
 import Graphics.Win32.Window (WindowClosure)
 import System.Win32.Types (HINSTANCE, INT, LPCTSTR, UINT)
 
@@ -44,6 +49,10 @@ withWndClass proc inst cursor name act =
 
 gwlpUserData :: INT
 gwlpUserData = #{const GWLP_USERDATA}
+
+wmPrintClient, wmCtlColorBtn :: WindowMessage
+wmPrintClient = #{const WM_PRINTCLIENT}
+wmCtlColorBtn = #{const WM_CTLCOLORBTN}
 
 dtLeft, dtCenter, dtRight, dtSingleLine, dtVCenter, dtNoPrefix, dtCalcRect, dtEndEllipsis, dtWordBreak, dtEditControl :: UINT
 dtLeft = #{const DT_LEFT}
