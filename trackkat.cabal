@@ -159,7 +159,9 @@ executable trackkat
   import:           shared
   hs-source-dirs:   app/trackkat
   main-is:          Main.hs
-  ghc-options:      -threaded -rtsopts "-with-rtsopts=-T" -optl-mwindows
+  -- -N: a capability per core, so the window, the camera and the games
+  -- don't take turns.
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-T -N" -optl-mwindows
   build-depends:
     , async
     , base
