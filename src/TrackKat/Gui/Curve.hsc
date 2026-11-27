@@ -17,6 +17,7 @@ import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defW
 import TrackKat.Gui.Paint
 import TrackKat.Response (leanRange, pitchRange, rollRange, yawRange)
 import TrackKat.UI.Curve
+import TrackKat.UI.Palette
 
 foreign import ccall unsafe "hts_gui_curve_state"
     c_curve_state :: CInt -> CWString -> Ptr CDouble -> Ptr CInt -> IO ()
@@ -81,12 +82,3 @@ curveState axis =
   where
     -- As FIELD_MAX in cbits/gui.c.
     fieldMax = 4096
-
--- As cbits/gui.c's C_ colours.
-boxColour, gridColour, dim, accent, headTick, amber :: Colour
-boxColour = RGB 38 43 51
-gridColour = RGB 56 62 72
-dim = RGB 135 142 154
-accent = RGB 90 170 255
-headTick = RGB 255 200 80
-amber = RGB 240 170 60

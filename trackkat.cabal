@@ -84,6 +84,7 @@ library
     TrackKat.UI.Draw
     TrackKat.UI.HeadView
     TrackKat.UI.Masthead
+    TrackKat.UI.Palette
     TrackKat.UI.Tray
     TrackKat.Updater
     TrackKat.Visibility

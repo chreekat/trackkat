@@ -19,6 +19,7 @@ import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Trackers (BlobRole (..))
 import TrackKat.UI.Draw
+import TrackKat.UI.Palette
 import TrackKat.UI.Tray (ClipSight (..), Holding (..))
 
 data HeadScene = HeadScene
@@ -380,17 +381,7 @@ cameraW = 640
 cameraH = 480
 
 -- As cbits/gui.c's C_ colours.
-backColour, boxColour, gridColour, textColour, dim, accent, accentFaint, headTick, amber, grey, frameColour, frameEdge, dotOff :: Colour
-backColour = RGB 30 34 40
-boxColour = RGB 38 43 51
-gridColour = RGB 56 62 72
-textColour = RGB 222 226 232
-dim = RGB 135 142 154
-accent = RGB 90 170 255
-accentFaint = RGB 66 112 166
-headTick = RGB 255 200 80
-amber = RGB 240 170 60
-grey = RGB 120 126 138
+frameColour, frameEdge, dotOff :: Colour
 frameColour = RGB 24 27 33
 frameEdge = RGB 58 64 76
 dotOff = RGB 74 81 96
