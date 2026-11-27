@@ -8,6 +8,9 @@ module TrackKat.Display (
     Notice (..),
     Shown (..),
     nothingShown,
+    shownHead,
+    Tracked (..),
+    tracked,
 ) where
 
 import TrackKat.Frame (Blob)
@@ -115,3 +118,20 @@ nothingShown =
         }
   where
     still = HeadPose 0 0 0 0 0 0
+
+-- | The head the window shows: as last seen, or while the clip is out of
+-- sight, the pose games are sent.
+shownHead :: Shown -> HeadPose
+shownHead s = case shownSighting s of
+    InSight hp _ -> hp
+    OutOfSight _ -> shownView s
+
+-- | Whether the head the window shows is the head as tracked now.
+data Tracked = TrackedNow | NotTrackedNow
+    deriving (Eq, Show)
+
+-- | Tracked now while the camera tracks and the clip is in sight.
+tracked :: Shown -> Tracked
+tracked s = case (shownCamera s, shownSighting s) of
+    (Tracking, InSight _ _) -> TrackedNow
+    _ -> NotTrackedNow

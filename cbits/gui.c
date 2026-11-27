@@ -3538,15 +3538,9 @@ void hts_gui_open_settings_now(void) { open_settings_file(); }
 /* Whether the tray icon is removed for good. */
 int hts_gui_stopping(void) { return InterlockedCompareExchange(&stopping, 0, 0); }
 
-/* What an axis's response plot shows, for TrackKat.Gui.Curve: its curve as
- * typed, in FIELD_MAX characters, where the head is along the axis, and
- * whether that is the head as tracked now. */
-void hts_gui_curve_state(int axis, wchar_t *text, double *head, int *live)
-{
-    GetWindowTextW(field_ctl[F_YAW + axis], text, FIELD_MAX);
-    *head = seen.head[axis];
-    *live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
-}
+/* An axis's curve as typed, in FIELD_MAX characters, for
+ * TrackKat.Gui.Curve. */
+void hts_gui_curve_text(int axis, wchar_t *text) { GetWindowTextW(field_ctl[F_YAW + axis], text, FIELD_MAX); }
 
 /* What the head view shows, from the last refresh, for
  * TrackKat.Gui.Live: the view shown, as head_view numbers them; the
