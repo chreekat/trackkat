@@ -112,6 +112,7 @@ library
       TrackKat.Gui.Masthead
       TrackKat.Gui.Paint
       TrackKat.Gui.Tray
+      TrackKat.Gui.Win32
       TrackKat.Install
       TrackKat.Windows
     c-sources:

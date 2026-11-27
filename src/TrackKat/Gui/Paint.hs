@@ -26,23 +26,23 @@ module TrackKat.Gui.Paint (
     buffered,
 ) where
 
-#include <windows.h>
-
 import Control.Exception (SomeAsyncException, bracket, catch, displayException, fromException, throwIO)
 import Data.Bits ((.|.))
 import Foreign.C.String (newCWString, withCWStringLen)
 import Foreign.C.Types (CInt (..), CIntPtr (..))
-import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Array (withArrayLen)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (FunPtr, Ptr, castPtr, nullPtr, wordPtrToPtr)
-import Foreign.Storable (pokeByteOff)
-import Graphics.Win32.GDI.Types (HDC, HICON, LPRECT, RECT, allocaRECT, peekRECT, pokeRECT)
+import Graphics.Win32.GDI.Bitmap (sRCCOPY)
+import Graphics.Win32.GDI.Brush (nULL_BRUSH)
+import Graphics.Win32.GDI.Pen (PenStyle, pS_DASH, pS_DOT, pS_SOLID)
+import Graphics.Win32.GDI.Types (HDC, HICON, LPRECT, RECT, allocaRECT, peekRECT, pokeRECT, tRANSPARENT)
 import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
+import Graphics.Win32.Resource (iMAGE_ICON, lR_SHARED)
 import Graphics.Win32.Window (WindowClosure, defWindowProc)
 import System.Win32.DLL (getModuleHandle)
-import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, LPCTSTR, UINT, getLastError)
+import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
+import TrackKat.Gui.Win32
 import TrackKat.UI.Draw
 
 foreign import ccall unsafe "hts_gui_dpi" c_dpi :: IO CInt
@@ -52,12 +52,12 @@ foreign import ccall unsafe "windows.h LoadImageW"
     c_LoadImage :: HINSTANCE -> LPCTSTR -> UINT -> CInt -> CInt -> UINT -> IO HICON
 foreign import ccall unsafe "windows.h LoadIconW" c_LoadIcon :: HINSTANCE -> LPCTSTR -> IO HICON
 foreign import ccall unsafe "windows.h CreateSolidBrush" c_CreateSolidBrush :: DWORD -> IO HANDLE
-foreign import ccall unsafe "windows.h CreatePen" c_CreatePen :: CInt -> CInt -> DWORD -> IO HANDLE
+foreign import ccall unsafe "windows.h CreatePen" c_CreatePen :: INT -> CInt -> DWORD -> IO HANDLE
 foreign import ccall unsafe "windows.h DeleteObject" c_DeleteObject :: HANDLE -> IO BOOL
 foreign import ccall unsafe "windows.h SelectObject" c_SelectObject :: HDC -> HANDLE -> IO HANDLE
 foreign import ccall unsafe "windows.h FillRect" c_FillRect :: HDC -> LPRECT -> HANDLE -> IO CInt
 foreign import ccall unsafe "windows.h SetTextColor" c_SetTextColor :: HDC -> DWORD -> IO DWORD
-foreign import ccall unsafe "windows.h SetBkMode" c_SetBkMode :: HDC -> CInt -> IO CInt
+foreign import ccall unsafe "windows.h SetBkMode" c_SetBkMode :: HDC -> INT -> IO INT
 foreign import ccall unsafe "windows.h DrawTextW" c_DrawText :: HDC -> Ptr () -> CInt -> LPRECT -> UINT -> IO CInt
 foreign import ccall unsafe "windows.h Polyline" c_Polyline :: HDC -> Ptr CInt -> CInt -> IO BOOL
 foreign import ccall unsafe "windows.h DrawIconEx"
@@ -69,7 +69,7 @@ foreign import ccall unsafe "windows.h RoundRect"
     c_RoundRect :: HDC -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> IO BOOL
 foreign import ccall unsafe "windows.h SetBkColor" c_SetBkColor :: HDC -> DWORD -> IO DWORD
 foreign import ccall unsafe "windows.h DrawFocusRect" c_DrawFocusRect :: HDC -> LPRECT -> IO BOOL
-foreign import ccall unsafe "windows.h GetStockObject" c_GetStockObject :: CInt -> IO HANDLE
+foreign import ccall unsafe "windows.h GetStockObject" c_GetStockObject :: INT -> IO HANDLE
 foreign import ccall unsafe "windows.h SetTextCharacterExtra" c_SetTextCharacterExtra :: HDC -> CInt -> IO CInt
 foreign import ccall unsafe "windows.h SaveDC" c_SaveDC :: HDC -> IO CInt
 foreign import ccall unsafe "windows.h RestoreDC" c_RestoreDC :: HDC -> CInt -> IO BOOL
@@ -93,16 +93,8 @@ registerPart report part className proc = do
     -- Both for the life of the process.
     wndProc <- mkProc (guarded report part proc)
     name <- newCWString className
-    atom <- allocaBytes size $ \p -> do
-        fillBytes p 0 size
-        #{poke WNDCLASSW, lpfnWndProc} p wndProc
-        #{poke WNDCLASSW, hInstance} p inst
-        #{poke WNDCLASSW, hCursor} p cursor
-        #{poke WNDCLASSW, lpszClassName} p name
-        c_RegisterClass (castPtr p)
+    atom <- withWndClass wndProc inst cursor name c_RegisterClass
     if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
-  where
-    size = #{size WNDCLASSW}
 
 -- | A window procedure that reports what fails in it, naming the part of
 -- the window, and leaves the message to Windows' handling: an exception
@@ -118,7 +110,7 @@ guarded report part proc w msg wp lp =
 resourceIcon :: Int -> CInt -> IO HICON
 resourceIcon number size = do
     inst <- getModuleHandle Nothing
-    icon <- c_LoadImage inst (resource number) #{const IMAGE_ICON} size size #{const LR_SHARED}
+    icon <- c_LoadImage inst (resource number) iMAGE_ICON size size lR_SHARED
     if icon /= nullPtr then pure icon else c_LoadIcon nullPtr (resource idiApplication)
   where
     resource :: Int -> LPCTSTR
@@ -152,7 +144,7 @@ fillRect dc r c = do
 textWidth :: HDC -> Font -> String -> IO CInt
 textWidth dc font s = do
     selectFont dc font
-    (_, _, right, _) <- drawText dc s (0, 0, 0, 0) (#{const DT_SINGLELINE} .|. #{const DT_NOPREFIX} .|. #{const DT_CALCRECT})
+    (_, _, right, _) <- drawText dc s (0, 0, 0, 0) (dtSingleLine .|. dtNoPrefix .|. dtCalcRect)
     pure (fromIntegral right)
 
 -- | Draw text on one line, centred down x, y, w, h and ended with an
@@ -161,7 +153,7 @@ textAt :: HDC -> Font -> Colour -> (CInt, CInt, CInt, CInt) -> UINT -> String ->
 textAt dc font c (x, y, w, h) align s = do
     selectFont dc font
     inkFor dc c
-    () <$ drawText dc s (rect x y w h) (align .|. #{const DT_SINGLELINE} .|. #{const DT_VCENTER} .|. #{const DT_NOPREFIX} .|. #{const DT_END_ELLIPSIS})
+    () <$ drawText dc s (rect x y w h) (align .|. dtSingleLine .|. dtVCenter .|. dtNoPrefix .|. dtEndEllipsis)
 
 -- | Text broken into lines at spaces, to fit a width.
 data Lines = Wrapped
@@ -170,7 +162,7 @@ data Lines = Wrapped
 textHeight :: HDC -> Font -> Lines -> CInt -> String -> IO CInt
 textHeight dc font Wrapped w s = do
     selectFont dc font
-    (_, top, _, bottom) <- drawText dc s (0, 0, fromIntegral w, 0) (#{const DT_WORDBREAK} .|. #{const DT_NOPREFIX} .|. #{const DT_CALCRECT})
+    (_, top, _, bottom) <- drawText dc s (0, 0, fromIntegral w, 0) (dtWordBreak .|. dtNoPrefix .|. dtCalcRect)
     pure (fromIntegral (bottom - top))
 
 -- | Draw text broken into lines in x, y, w, h, the last ended with an
@@ -179,13 +171,14 @@ textIn :: HDC -> Font -> Colour -> Lines -> (CInt, CInt, CInt, CInt) -> String -
 textIn dc font c Wrapped (x, y, w, h) s = do
     selectFont dc font
     inkFor dc c
-    () <$ drawText dc s (rect x y w h) (#{const DT_WORDBREAK} .|. #{const DT_EDITCONTROL} .|. #{const DT_NOPREFIX} .|. #{const DT_END_ELLIPSIS})
+    () <$ drawText dc s (rect x y w h) (dtWordBreak .|. dtEditControl .|. dtNoPrefix .|. dtEndEllipsis)
 
 -- | Draw lines through points with a pen of a stroke, width and colour.
 polyline :: HDC -> Stroke -> CInt -> Colour -> [(CInt, CInt)] -> IO ()
 polyline dc stroke width c points =
     withTools dc stroke width c Nothing $
-        withArrayLen (concatMap (\(x, y) -> [x, y]) points) $ \n p -> c_Polyline dc p (fromIntegral (n `div` 2))
+        withArrayLen (concatMap (\(x, y) -> [x, y]) points) $
+            \n p -> c_Polyline dc p (fromIntegral (n `div` 2))
 
 -- | Draw a disc of a fill colour, outlined in a pen's width and colour,
 -- of a radius about x, y.
@@ -203,7 +196,8 @@ draw dc = \case
         withTools dc stroke (n width) c Nothing (c_Ellipse dc (n (x - r)) (n (y - r)) (n (x + r + 1)) (n (y + r + 1)))
     Polygon c points ->
         withTools dc Solid 1 c (Just c) $
-            withArrayLen (concatMap (\(x, y) -> [n x, n y]) points) $ \k p -> c_Polygon dc p (fromIntegral (k `div` 2))
+            withArrayLen (concatMap (\(x, y) -> [n x, n y]) points) $
+                \k p -> c_Polygon dc p (fromIntegral (k `div` 2))
     Rounded fill edge corner (l, t, r, b) ->
         withTools dc Solid 1 edge fill (c_RoundRect dc (n l) (n t) (n r) (n b) (n corner) (n corner))
     Focus (l, t, r, b) -> allocaRECT $ \p -> do
@@ -218,7 +212,7 @@ draw dc = \case
     Paragraph font c r s -> do
         selectFont dc font
         inkFor dc c
-        () <$ drawText dc s (rectOf r) (#{const DT_LEFT} .|. #{const DT_WORDBREAK} .|. #{const DT_NOPREFIX})
+        () <$ drawText dc s (rectOf r) (dtLeft .|. dtWordBreak .|. dtNoPrefix)
     Clipped (l, t, r, b) shapes -> do
         _ <- c_SaveDC dc
         _ <- c_IntersectClipRect dc (n l) (n t) (n r) (n b)
@@ -229,17 +223,17 @@ draw dc = \case
     n = fromIntegral
     point (x, y) = (n x, n y)
     rectOf (l, t, r, b) = (fromIntegral l, fromIntegral t, fromIntegral r, fromIntegral b)
-    alignment AlignLeft = #{const DT_LEFT}
-    alignment AlignCentre = #{const DT_CENTER}
-    alignment AlignRight = #{const DT_RIGHT}
+    alignment AlignLeft = dtLeft
+    alignment AlignCentre = dtCenter
+    alignment AlignRight = dtRight
 
 -- | Draw with a pen of a stroke, width and colour, and a brush of a colour
 -- or none; a dotted or dashed pen's gaps leave what is there.
 withTools :: HDC -> Stroke -> CInt -> Colour -> Maybe Colour -> IO a -> IO ()
 withTools dc stroke width line fill act = do
-    _ <- c_SetBkMode dc #{const TRANSPARENT}
+    _ <- c_SetBkMode dc tRANSPARENT
     pen <- c_CreatePen (penStyle stroke) width (colourRef line)
-    brush <- maybe (c_GetStockObject #{const NULL_BRUSH}) solidBrush fill
+    brush <- maybe (c_GetStockObject nULL_BRUSH) solidBrush fill
     oldPen <- c_SelectObject dc pen
     oldBrush <- c_SelectObject dc brush
     _ <- act
@@ -247,14 +241,14 @@ withTools dc stroke width line fill act = do
     _ <- c_DeleteObject pen
     mapM_ (\_ -> c_DeleteObject brush) fill
 
-penStyle :: Stroke -> CInt
-penStyle Solid = #{const PS_SOLID}
-penStyle Dotted = #{const PS_DOT}
-penStyle Dashed = #{const PS_DASH}
+penStyle :: Stroke -> PenStyle
+penStyle Solid = pS_SOLID
+penStyle Dotted = pS_DOT
+penStyle Dashed = pS_DASH
 
 -- | Draw an icon at x, y, size pixels square.
 drawIcon :: HDC -> HICON -> CInt -> CInt -> CInt -> IO ()
-drawIcon dc icon x y size = () <$ c_DrawIconEx dc x y icon size size 0 nullPtr #{const DI_NORMAL}
+drawIcon dc icon x y size = () <$ c_DrawIconEx dc x y icon size size 0 nullPtr diNormal
 
 -- | Draw a width and height off screen, then onto a device context at x,
 -- y at once, so it never shows half drawn.
@@ -264,7 +258,7 @@ buffered dc (x, y, w, h) paint =
         bracket (c_CreateCompatibleBitmap dc w h) c_DeleteObject $ \bitmap ->
             bracket (c_SelectObject mem bitmap) (c_SelectObject mem) $ \_ -> do
                 paint mem
-                () <$ c_BitBlt dc x y w h mem 0 0 #{const SRCCOPY}
+                () <$ c_BitBlt dc x y w h mem 0 0 sRCCOPY
 
 selectFont :: HDC -> Font -> IO ()
 selectFont dc font = do
@@ -273,7 +267,7 @@ selectFont dc font = do
 
 -- | Text drawn over what is there, in a colour.
 inkFor :: HDC -> Colour -> IO ()
-inkFor dc c = c_SetBkMode dc #{const TRANSPARENT} >> () <$ c_SetTextColor dc (colourRef c)
+inkFor dc c = c_SetBkMode dc tRANSPARENT >> () <$ c_SetTextColor dc (colourRef c)
 
 rect :: CInt -> CInt -> CInt -> CInt -> RECT
 rect x y w h = (fromIntegral x, fromIntegral y, fromIntegral (x + w), fromIntegral (y + h))
