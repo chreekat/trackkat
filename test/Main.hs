@@ -49,6 +49,7 @@ import qualified Test.Tracker
 import qualified Test.Trackers
 import qualified Test.UI.Curve
 import qualified Test.UI.HeadView
+import qualified Test.UI.Live
 import qualified Test.UI.Masthead
 import qualified Test.UI.Tray
 import qualified Test.Updater
@@ -83,6 +84,7 @@ main = do
                 , Test.Trackers.tests
                 , Test.UI.Curve.tests
                 , Test.UI.HeadView.tests
+                , Test.UI.Live.tests
                 , Test.UI.Masthead.tests
                 , Test.UI.Tray.tests
                 , Test.Calibration.tests

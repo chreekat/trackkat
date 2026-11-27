@@ -44,6 +44,11 @@ data Shape
       Ring Stroke Int Colour Point Int
     | -- | filled, and outlined a pixel wide, in the colour
       Polygon Colour [Point]
+    | -- | a fill or none, an outline a pixel wide, and corners rounded to a
+      -- diameter
+      Rounded (Maybe Colour) Colour Int Rect
+    | -- | the dotted rectangle around what has the keyboard
+      Focus Rect
     | -- | on one line, centred down the rectangle, ended with an ellipsis if
       -- it doesn't fit, with extra pixels between letters
       Text Font Colour Int Align Rect String

@@ -65,6 +65,10 @@ foreign import ccall unsafe "windows.h DrawIconEx"
 foreign import ccall unsafe "windows.h Ellipse" c_Ellipse :: HDC -> CInt -> CInt -> CInt -> CInt -> IO BOOL
 foreign import ccall unsafe "windows.h Rectangle" c_Rectangle :: HDC -> CInt -> CInt -> CInt -> CInt -> IO BOOL
 foreign import ccall unsafe "windows.h Polygon" c_Polygon :: HDC -> Ptr CInt -> CInt -> IO BOOL
+foreign import ccall unsafe "windows.h RoundRect"
+    c_RoundRect :: HDC -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> IO BOOL
+foreign import ccall unsafe "windows.h SetBkColor" c_SetBkColor :: HDC -> DWORD -> IO DWORD
+foreign import ccall unsafe "windows.h DrawFocusRect" c_DrawFocusRect :: HDC -> LPRECT -> IO BOOL
 foreign import ccall unsafe "windows.h GetStockObject" c_GetStockObject :: CInt -> IO HANDLE
 foreign import ccall unsafe "windows.h SetTextCharacterExtra" c_SetTextCharacterExtra :: HDC -> CInt -> IO CInt
 foreign import ccall unsafe "windows.h SaveDC" c_SaveDC :: HDC -> IO CInt
@@ -200,6 +204,13 @@ draw dc = \case
     Polygon c points ->
         withTools dc Solid 1 c (Just c) $
             withArrayLen (concatMap (\(x, y) -> [n x, n y]) points) $ \k p -> c_Polygon dc p (fromIntegral (k `div` 2))
+    Rounded fill edge corner (l, t, r, b) ->
+        withTools dc Solid 1 edge fill (c_RoundRect dc (n l) (n t) (n r) (n b) (n corner) (n corner))
+    Focus (l, t, r, b) -> allocaRECT $ \p -> do
+        pokeRECT p (fromIntegral l, fromIntegral t, fromIntegral r, fromIntegral b)
+        _ <- c_SetTextColor dc 0
+        _ <- c_SetBkColor dc 0xFFFFFF
+        () <$ c_DrawFocusRect dc p
     Text font c spacing align (l, t, r, b) s -> do
         _ <- c_SetTextCharacterExtra dc (n spacing)
         textAt dc font c (n l, n t, n (r - l), n (b - t)) (alignment align) s
