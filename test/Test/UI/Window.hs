@@ -5,6 +5,7 @@ import Test.Tasty (TestTree)
 import Test.Tasty.QuickCheck (choose, elements, forAll, oneof, testProperty)
 
 import Test.Check (check, group, tree)
+import TrackKat.UI.Draw (scaledAt)
 import TrackKat.UI.Window
 
 tests :: TestTree
@@ -25,4 +26,4 @@ tests = group "Window" $ do
                 forAll (choose (-500, 3000)) $ \from ->
                     forAll (oneof [elements [LineUp, LineDown, PageUp, PageDown, ToTop, ToBottom], ScrollTo <$> choose (-500, 3000), Wheel <$> choose (-1200, 1200)]) $ \how ->
                         let to = scrolled dpi height from how
-                         in to >= 0 && to <= max 0 ((contentHeight * dpi + 48) `div` 96 - height)
+                         in to >= 0 && to <= max 0 (scaledAt dpi contentHeight - height)
