@@ -59,6 +59,7 @@ import Graphics.Win32.Message (wM_QUIT)
 import Graphics.Win32.Window (LPMSG, allocaMessage, dispatchMessage, getMessage, translateMessage)
 import Graphics.Win32.Window.PostMessage (postThreadMessage)
 import System.Win32.Thread (getCurrentThreadId)
+import System.Win32.Types (BOOL)
 
 import TrackKat.CommandLine (WindowAtStart (..))
 import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOrButton)
@@ -77,6 +78,7 @@ import TrackKat.UI.Tray (TrayChoice (..))
 
 foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
 foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> IO CInt
+foreign import ccall unsafe "windows.h SetProcessDPIAware" c_SetProcessDPIAware :: IO BOOL
 foreign import ccall safe "hts_gui_show" c_show :: IO ()
 foreign import ccall unsafe "hts_gui_ask" c_ask :: CInt -> IO ()
 foreign import ccall safe "hts_gui_dialog_message" c_dialog_message :: LPMSG -> IO CInt
@@ -128,6 +130,8 @@ withGui HaskellWindow w work = do
     -- messages: a bound thread, so it is always the same one.
     runGui made = do
         thread <- getCurrentThreadId
+        -- Before any window, each of which keeps the awareness it is made with.
+        _ <- c_SetProcessDPIAware
         rc <-
             firstFailure [registerMasthead guiLog, registerCurve guiLog, registerLive guiLog] >>= \case
                 Left e -> pure (fromIntegral e)
