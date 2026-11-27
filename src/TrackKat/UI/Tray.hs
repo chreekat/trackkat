@@ -1,7 +1,6 @@
 -- | What the system tray icon shows: its look, tooltip and menu. The icon
 -- itself is "TrackKat.Gui.Tray"'s.
 module TrackKat.UI.Tray (
-    TrayState (..),
     ClipSight (..),
     Holding (..),
     TrayLook (..),
@@ -15,19 +14,7 @@ module TrackKat.UI.Tray (
 
 import Data.List (intercalate)
 
-import TrackKat.Display (CameraState (..))
-
--- | What the tray tells of trackkat.
-data TrayState = TrayState
-    { trayCamera :: CameraState
-    , trayClip :: ClipSight
-    , trayGames :: Int
-    -- ^ games tracking
-    , trayHolding :: Holding
-    , trayOffer :: Maybe String
-    -- ^ the menu's item for what the window's strip offers, if it has one
-    }
-    deriving (Eq, Show)
+import TrackKat.Display (CameraState (..), Notice (..), Output (..), Shown (..), Sighting (..))
 
 -- | Whether the last frame showed the clip.
 data ClipSight = ClipInSight | ClipOutOfSight
@@ -42,21 +29,21 @@ data Holding = ViewLive | ViewHeld
 data TrayLook = LookTracking | LookClipLost | LookSearching | LookDown
     deriving (Eq, Show, Enum, Bounded)
 
-trayLook :: TrayState -> TrayLook
-trayLook s = case trayCamera s of
-    Tracking -> case trayClip s of
-        ClipInSight -> LookTracking
-        ClipOutOfSight -> LookClipLost
+trayLook :: Shown -> TrayLook
+trayLook s = case shownCamera s of
+    Tracking -> case shownSighting s of
+        InSight _ _ -> LookTracking
+        OutOfSight _ -> LookClipLost
     Searching -> LookSearching
     CameraDown _ -> LookDown
 
-trayTip :: TrayState -> String
+trayTip :: Shown -> String
 trayTip s =
     intercalate "\n" $
         ["trackkat", what]
-            ++ ["Game connected" | trayGames s > 0]
-            ++ ["Paused" | trayHolding s == ViewHeld]
-            ++ ["Update ready: restart to update" | Just _ <- [trayOffer s]]
+            ++ ["Game connected" | shownGames s > 0]
+            ++ ["Paused" | Paused _ <- [shownOutput s]]
+            ++ ["Update ready: restart to update" | Just _ <- [offerItem s]]
   where
     what = case trayLook s of
         LookTracking -> "Tracking"
@@ -75,13 +62,17 @@ data Tick = Ticked | Unticked
 data MenuEntry = MenuItem TrayChoice String Tick | MenuSeparator
     deriving (Eq, Show)
 
-trayMenu :: TrayState -> [MenuEntry]
+trayMenu :: Shown -> [MenuEntry]
 trayMenu s =
     [ MenuItem OpenChoice "&Open trackkat" Unticked
     , MenuItem RecenterChoice "&Recenter" Unticked
-    , MenuItem PauseChoice "&Pause" (if trayHolding s == ViewHeld then Ticked else Unticked)
+    , MenuItem PauseChoice "&Pause" (case shownOutput s of Paused _ -> Ticked; Live -> Unticked)
     , MenuItem TrimChoice "&Trim: make this view forward" Unticked
     , MenuSeparator
     ]
-        ++ concat [[MenuItem OfferChoice item Unticked, MenuSeparator] | Just item <- [trayOffer s]]
+        ++ concat [[MenuItem OfferChoice item Unticked, MenuSeparator] | Just item <- [offerItem s]]
         ++ [MenuItem QuitChoice "&Quit" Unticked]
+
+-- | The menu's item for what the window's masthead offers, if it has one.
+offerItem :: Shown -> Maybe String
+offerItem s = shownOffer s >>= noticeTray

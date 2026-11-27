@@ -3538,20 +3538,6 @@ void hts_gui_open_settings_now(void) { open_settings_file(); }
 /* Whether the tray icon is removed for good. */
 int hts_gui_stopping(void) { return InterlockedCompareExchange(&stopping, 0, 0); }
 
-/* What the last refresh saw, for the icon: the camera as hts_gui_camera
- * takes it and why it is down, whether the clip is out of sight, games,
- * whether paused, and the tray's item for an offer; texts of TEXT_MAX and
- * OFFER_TRAY_MAX characters. */
-void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *games, int *paused, wchar_t *offer)
-{
-    *camera = seen.camera;
-    copy_text(camera_text, TEXT_MAX, seen.camera_text);
-    *clip_lost = seen.blobs >= 0;
-    *games = seen.games;
-    *paused = seen.paused;
-    copy_text(offer, OFFER_TRAY_MAX, seen.offer_tray);
-}
-
 /* What an axis's response plot shows, for TrackKat.Gui.Curve: its curve as
  * typed, in FIELD_MAX characters, where the head is along the axis, and
  * whether that is the head as tracked now. */

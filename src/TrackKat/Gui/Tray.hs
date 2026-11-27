@@ -9,12 +9,9 @@ import Control.Exception (bracket)
 import Control.Monad (forM_, unless, void, when)
 import Data.Bits ((.&.), (.|.))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Foreign.C.String (CWString, peekCWString, withCWString)
+import Foreign.C.String (withCWString)
 import Foreign.C.Types (CInt (..))
-import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr, nullPtr)
-import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HICON, HMENU, HWND, LPRECT)
 import Graphics.Win32.Menu (appendMenu, createPopupMenu, destroyMenu, mFT_SEPARATOR, mFT_STRING, mF_CHECKED, setMenuDefaultItem, tPM_RIGHTBUTTON)
 import Graphics.Win32.Message (WindowMessage, wM_APP, wM_COMMAND, wM_LBUTTONDBLCLK, wM_LBUTTONUP, wM_RBUTTONUP, wM_TIMER)
@@ -34,17 +31,14 @@ import System.Win32.DLL (getModuleHandle)
 import System.Win32.Info (sM_CXSMICON)
 import System.Win32.Types (BOOL, DWORD, HINSTANCE, LPCTSTR, LPVOID, UINT, getLastError)
 
-import TrackKat.Display (CameraState (..))
 import TrackKat.Gui.Paint (guarded, resourceIcon)
-import TrackKat.Gui.Shown (takeSnapshot)
+import TrackKat.Gui.Shown (snapshot, takeSnapshot)
 import TrackKat.Gui.Win32 (nifIcon, nifMessage, nifTip, nimAdd, nimDelete, nimModify, withNotifyIconData, wmContextMenu)
 import TrackKat.UI.Tray
 
 foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
 foreign import ccall safe "hts_gui_open_settings_now" c_open_settings_now :: IO ()
 foreign import ccall unsafe "hts_gui_stopping" c_stopping :: IO CInt
-foreign import ccall unsafe "hts_gui_tray_state"
-    c_tray_state :: Ptr CInt -> CWString -> Ptr CInt -> Ptr CInt -> Ptr CInt -> CWString -> IO ()
 
 -- Calls that may hand the thread's windows messages, and so the window
 -- procedure here, while they wait: safe.
@@ -64,7 +58,7 @@ wmAppQuit = wM_APP + 4
 wmAppOpenSettings = wM_APP + 5
 
 -- | What the icon was last shown as, if it is shown.
-data Shown = NotShown | ShownAs TrayLook String
+data Showing = NotShown | ShownAs TrayLook String
     deriving (Eq)
 
 -- | Make the hidden window the tray icon talks to, for cbits/gui.c's
@@ -93,10 +87,10 @@ makeTray report choose = do
     -- As cbits/gui.c's hts_gui_quit_running and hts_gui_show_running find it.
     className = mkClassName "trackkat"
 
-trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
+trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> WindowMessage -> IORef Showing -> WindowClosure
 trayProc report choose taskbarCreated shown = guarded report "The tray icon" (respond choose taskbarCreated shown)
 
-respond :: (TrayChoice -> IO ()) -> WindowMessage -> IORef Shown -> WindowClosure
+respond :: (TrayChoice -> IO ()) -> WindowMessage -> IORef Showing -> WindowClosure
 respond choose taskbarCreated shown w msg wp lp
     | msg == taskbarCreated && taskbarCreated /= 0 = do
         -- Explorer restarted, and forgot the icon.
@@ -122,7 +116,7 @@ respond choose taskbarCreated shown w msg wp lp
     update = do
         stopping <- c_stopping
         when (stopping == 0) $ do
-            s <- trayState
+            s <- snapshot
             was <- readIORef shown
             let now = ShownAs (trayLook s) (trayTip s)
             unless (now == was) $ do
@@ -140,7 +134,7 @@ respond choose taskbarCreated shown w msg wp lp
                             pure new
                 writeIORef shown (if added then now else NotShown)
     menu = do
-        s <- trayState
+        s <- snapshot
         bracket createPopupMenu destroyMenu $ \m -> do
             forM_ (trayMenu s) $ \case
                 MenuItem choice name tick ->
@@ -160,32 +154,6 @@ firstItem = 300
 
 itemId :: TrayChoice -> UINT
 itemId c = fromIntegral (firstItem + fromEnum c)
-
--- | What cbits/gui.c last saw of trackkat.
-trayState :: IO TrayState
-trayState =
-    alloca $ \camera -> allocaArray textMax $ \cameraText -> alloca $ \clipLost -> alloca $ \games ->
-        alloca $ \paused -> allocaArray offerMax $ \offer -> do
-            c_tray_state camera cameraText clipLost games paused offer
-            cam <- peek camera
-            why <- peekCWString cameraText
-            lost <- peek clipLost
-            n <- peek games
-            p <- peek paused
-            item <- peekCWString offer
-            pure
-                TrayState
-                    { -- As hts_gui_camera's numbering.
-                      trayCamera = case cam of 0 -> Searching; 1 -> Tracking; _ -> CameraDown why
-                    , trayClip = if lost /= 0 then ClipOutOfSight else ClipInSight
-                    , trayGames = fromIntegral n
-                    , trayHolding = if p /= 0 then ViewHeld else ViewLive
-                    , trayOffer = if null item then Nothing else Just item
-                    }
-  where
-    -- As TEXT_MAX and OFFER_TRAY_MAX in cbits/gui.c.
-    textMax = 512
-    offerMax = 128
 
 -- | The look's icon (icons/trackkat.rc numbers them from 2 in the order of
 -- 'TrayLook'), at the size the tray shows.
