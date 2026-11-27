@@ -59,7 +59,7 @@ import Graphics.Win32.Message (wM_QUIT)
 import Graphics.Win32.Window (LPMSG, allocaMessage, dispatchMessage, getMessage, translateMessage)
 import Graphics.Win32.Window.PostMessage (postThreadMessage)
 import System.Win32.Thread (getCurrentThreadId)
-import System.Win32.Types (BOOL)
+import System.Win32.Types (BOOL, HANDLE)
 
 import TrackKat.CommandLine (WindowAtStart (..))
 import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOrButton)
@@ -67,6 +67,7 @@ import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Gui.Curve (registerCurve)
+import TrackKat.Gui.Kit (fontHandles, kitDpi, setUp)
 import TrackKat.Gui.Live (registerLive)
 import TrackKat.Gui.Log (registerLog)
 import TrackKat.Gui.Masthead (registerMasthead)
@@ -80,7 +81,7 @@ import TrackKat.UI.Live (TrimMoves (..), trimMoves)
 import TrackKat.UI.Tray (TrayChoice (..))
 
 foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
-foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> IO CInt
+foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> CInt -> Ptr HANDLE -> IO CInt
 foreign import ccall unsafe "windows.h SetProcessDPIAware" c_SetProcessDPIAware :: IO BOOL
 foreign import ccall safe "hts_gui_show" c_show :: IO ()
 foreign import ccall unsafe "hts_gui_ask" c_ask :: CInt -> IO ()
@@ -135,11 +136,14 @@ withGui HaskellWindow w work = do
         thread <- getCurrentThreadId
         -- Before any window, each of which keeps the awareness it is made with.
         _ <- c_SetProcessDPIAware
+        kit <- setUp
         takeSnapshot
         rc <-
-            firstFailure [registerMasthead guiLog, registerCurve guiLog, registerLive guiLog, registerLog guiLog] >>= \case
+            firstFailure (map (\register -> register kit guiLog) [registerMasthead, registerCurve, registerLive, registerLog]) >>= \case
                 Left e -> pure (fromIntegral e)
-                Right () -> makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
+                Right () ->
+                    makeTray guiLog choose
+                        >>= either (pure . fromIntegral) (\tray -> withArray (fontHandles kit) (c_create (windowCode w) tray (fromIntegral (kitDpi kit))))
         putMVar made (rc, thread)
         when (rc == 0) (allocaMessage messageLoop)
     firstFailure = foldr (\step rest -> step >>= either (pure . Left) (const rest)) (pure (Right ()))

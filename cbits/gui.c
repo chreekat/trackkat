@@ -3384,7 +3384,6 @@ static void make_fonts(void)
     m.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
     wcscpy(m.lfFaceName, L"Consolas");
     mono_font = CreateFontIndirectW(&m);
-    white_brush = CreateSolidBrush(RGB(255, 255, 255));
 }
 
 /* Register one of this file's window classes, unless the thread registered
@@ -3400,16 +3399,28 @@ static int register_class(const WNDCLASSW *wc)
 }
 
 /* Make the windows, with the hidden one the tray icon talks to: the one
- * given, or this file's. */
-static int create_windows(HWND tray)
+ * given, or this file's; and drawn at the screen's dpi in the fonts given,
+ * numbered as TrackKat.UI.Draw's Font, or else this file's. */
+static int create_windows(HWND tray, int given_dpi, const HFONT *fonts)
 {
     inst = GetModuleHandleW(NULL);
-    HDC screen = GetDC(NULL);
-    dpi = GetDeviceCaps(screen, LOGPIXELSY);
-    ReleaseDC(NULL, screen);
-    use_modern_controls();
-    init_common_controls();
-    make_fonts();
+    if (fonts) {
+        dpi = given_dpi;
+        ui_font = fonts[0];
+        bold_font = fonts[1];
+        small_font = fonts[2];
+        caps_font = fonts[3];
+        tiny_font = fonts[4];
+        mono_font = fonts[5];
+    } else {
+        HDC screen = GetDC(NULL);
+        dpi = GetDeviceCaps(screen, LOGPIXELSY);
+        ReleaseDC(NULL, screen);
+        use_modern_controls();
+        init_common_controls();
+        make_fonts();
+    }
+    white_brush = CreateSolidBrush(RGB(255, 255, 255));
 
     WNDCLASSW wc;
     memset(&wc, 0, sizeof wc);
@@ -3567,16 +3578,6 @@ int hts_gui_live_control(HWND w)
     return w == head_ctl ? LISTS : -1;
 }
 
-/* The screen's dots per inch, which the window is drawn to. */
-int hts_gui_dpi(void) { return dpi; }
-
-/* The window's fonts, numbered as TrackKat.UI.Draw's Font. */
-HFONT hts_gui_font(int which)
-{
-    HFONT fonts[] = {ui_font, bold_font, small_font, caps_font, tiny_font, mono_font};
-    return which >= 0 && which < (int)(sizeof fonts / sizeof fonts[0]) ? fonts[which] : ui_font;
-}
-
 /* Remove the tray icon, which Windows otherwise leaves behind until the
  * mouse passes over it. */
 void hts_gui_stop(void)
@@ -3603,12 +3604,13 @@ static BOOL WINAPI console_closing(DWORD event)
  * loop, with it shown or not, and with the hidden window the tray icon talks
  * to: one the thread made (a top-level window of class "trackkat", uID 1 its
  * icon's, sent this file's WM_APP_ messages and the timer's WM_TIMER), or
- * NULL for this file's. Returns 0, or a Windows error code. */
-int hts_gui_create(int show, HWND tray)
+ * NULL for this file's; and with the dpi and fonts of create_windows.
+ * Returns 0, or a Windows error code. */
+int hts_gui_create(int show, HWND tray, int given_dpi, const HFONT *fonts)
 {
     SetProcessDPIAware();
     SetConsoleCtrlHandler(console_closing, TRUE);
-    if (!create_windows(tray))
+    if (!create_windows(tray, given_dpi, fonts))
         return (int)GetLastError();
     if (show)
         show_window();
@@ -3622,7 +3624,7 @@ static int show_at_start;
 static DWORD WINAPI gui_thread(LPVOID unused)
 {
     (void)unused;
-    int rc = hts_gui_create(show_at_start, NULL);
+    int rc = hts_gui_create(show_at_start, NULL, 0, NULL);
     InterlockedExchange(&gui_error, (LONG)rc);
     InterlockedExchange(&gui_status, rc ? 2 : 1);
     if (rc)

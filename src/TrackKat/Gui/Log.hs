@@ -24,7 +24,8 @@ import System.Win32.Types (BOOL, DWORD, HANDLE, UINT, WPARAM)
 
 import TrackKat.Display (Shown (..))
 import TrackKat.Gui.Calls (createWindow, moveWindow, pointerParam, send, showWindow)
-import TrackKat.Gui.Paint (Background (..), Colour (..), Font (..), fontHandle, registerPart, scaled, solidBrush)
+import TrackKat.Gui.Kit (Kit, fontHandle, scaled)
+import TrackKat.Gui.Paint (Background (..), Colour (..), Font (..), registerPart, solidBrush)
 import TrackKat.Gui.Shown (logBook, snapshot)
 import TrackKat.Gui.Tips (makeTips, tip)
 import TrackKat.Gui.Win32
@@ -53,18 +54,18 @@ foreign import ccall safe "windows.h CloseClipboard" c_CloseClipboard :: IO BOOL
 data Parts = Parts {partHint, partBox, partVersion, partCopy, partClose :: HWND}
 
 -- | Register the log window's class, reporting what fails in it.
-registerLog :: (String -> IO ()) -> IO (Either Int ())
-registerLog report = do
+registerLog :: Kit -> (String -> IO ()) -> IO (Either Int ())
+registerLog kit report = do
     parts <- newIORef Nothing
     mark <- newIORef start
     -- Behind the read-only box, for the life of the process.
     white <- solidBrush (RGB 255 255 255)
-    registerPart report "The log window" "trackkat_log" ButtonFace (logProc parts mark white)
+    registerPart report "The log window" "trackkat_log" ButtonFace (logProc kit parts mark white)
 
-logProc :: IORef (Maybe Parts) -> IORef Mark -> HANDLE -> WindowClosure
-logProc parts mark white w msg wp lp
+logProc :: Kit -> IORef (Maybe Parts) -> IORef Mark -> HANDLE -> WindowClosure
+logProc kit parts mark white w msg wp lp
     | msg == wM_CREATE = do
-        p <- build w
+        p <- build kit w
         writeIORef parts (Just p)
         -- New lines join the box as often as the window refreshes.
         _ <- c_SetTimer w 1 33 nullPtr
@@ -80,10 +81,9 @@ logProc parts mark white w msg wp lp
                 _ <- c_SetBkColor (wordPtrToPtr (fromIntegral wp)) 0xFFFFFF
                 pure (fromIntegral (pointerParam white :: WPARAM))
             _ -> defWindowProc (Just w) msg wp lp
-    | msg == wM_SIZE = withParts (layout (fromIntegral (lp .&. 0xFFFF)) (fromIntegral ((lp `shiftR` 16) .&. 0xFFFF))) >> pure 0
+    | msg == wM_SIZE = withParts (layout kit (fromIntegral (lp .&. 0xFFFF)) (fromIntegral ((lp `shiftR` 16) .&. 0xFFFF))) >> pure 0
     | msg == wM_GETMINMAXINFO = do
-        [width, height] <- mapM scaled [400, 220]
-        setMinTrackSize (wordPtrToPtr (fromIntegral lp)) width height
+        setMinTrackSize (wordPtrToPtr (fromIntegral lp)) (scaled kit 400) (scaled kit 220)
         pure 0
     | msg == wM_CLOSE = showWindow w (fromIntegral sW_HIDE) >> pure 0
     | otherwise = defWindowProc (Just w) msg wp lp
@@ -102,9 +102,9 @@ closeId = 102
 
 -- | The window's controls: a hint, the log, the version, and Copy log and
 -- Close, with their help.
-build :: HWND -> IO Parts
-build w = do
-    tips <- makeTips w
+build :: Kit -> HWND -> IO Parts
+build kit w = do
+    tips <- makeTips kit w
     version <- shownVersion <$> snapshot
     hint <- control "STATIC" "What trackkat reports; copy it into bug reports." (sS_LEFT .|. sS_NOPREFIX) 0 UiFont
     box <- control "EDIT" "" (wS_VSCROLL .|. eS_MULTILINE .|. eS_READONLY .|. eS_AUTOVSCROLL) 0 MonoFont
@@ -118,26 +118,26 @@ build w = do
     tip tips close "Close the log window; trackkat keeps running, and the log keeps growing"
     let p = Parts hint box versionLabel copy close
     (_, _, right, bottom) <- getClientRect w
-    layout (fromIntegral right) (fromIntegral bottom) p
+    layout kit (fromIntegral right) (fromIntegral bottom) p
     pure p
   where
     control :: String -> String -> DWORD -> WPARAM -> Font -> IO HWND
     control cls text style ident font = do
         c <- createWindow (if cls == "EDIT" then wS_EX_CLIENTEDGE else 0) cls text (wS_CHILD .|. wS_VISIBLE .|. wS_CLIPSIBLINGS .|. style) (0, 0, 0, 0) (Just w) (fromIntegral ident)
-        f <- fontHandle font
-        _ <- send c wM_SETFONT (pointerParam f) 0
+        _ <- send c wM_SETFONT (pointerParam (fontHandle kit font)) 0
         pure c
 
 -- | The controls in a width and height: the hint along the top, the log
 -- below it, and the version, Copy log and Close along the bottom.
-layout :: CInt -> CInt -> Parts -> IO ()
-layout w h p = do
-    [s12, s10, s18, s24, s32, s48, s33, s240, s212, s38, s96, s26, s108] <- mapM scaled [12, 10, 18, 24, 32, 48, 33, 240, 212, 38, 96, 26, 108]
-    moveWindow (partHint p) (s12, s10, w - s24, s18)
-    moveWindow (partBox p) (s12, s32, w - s24, h - s32 - s48)
-    moveWindow (partVersion p) (s12, h - s33, w - s240, s18)
-    moveWindow (partCopy p) (w - s212, h - s38, s96, s26)
-    moveWindow (partClose p) (w - s108, h - s38, s96, s26)
+layout :: Kit -> CInt -> CInt -> Parts -> IO ()
+layout kit w h p = do
+    moveWindow (partHint p) (s 12, s 10, w - s 24, s 18)
+    moveWindow (partBox p) (s 12, s 32, w - s 24, h - s 32 - s 48)
+    moveWindow (partVersion p) (s 12, h - s 33, w - s 240, s 18)
+    moveWindow (partCopy p) (w - s 212, h - s 38, s 96, s 26)
+    moveWindow (partClose p) (w - s 108, h - s 38, s 96, s 26)
+  where
+    s = scaled kit
 
 -- | Add the lines logged since the box last took some.
 feed :: IORef Mark -> Parts -> IO ()

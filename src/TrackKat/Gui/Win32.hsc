@@ -1,6 +1,21 @@
 -- | What the parts of trackkat's window drawn in Haskell take from
 -- Windows' headers that the Win32 package doesn't give.
 module TrackKat.Gui.Win32 (
+    -- * Setting up
+    withActCtx,
+    withInitCommonControls,
+    logPixelsY,
+    LogFont,
+    withNonClientMetrics,
+    messageFontOf,
+    spiGetNonClientMetrics,
+    logFontSize,
+    logFontHeight,
+    setLogFontHeight,
+    setLogFontBold,
+    setLogFontFixed,
+    setLogFontFace,
+
     -- * Window classes
     withWndClass,
     gwlpUserData,
@@ -73,28 +88,103 @@ module TrackKat.Gui.Win32 (
 #include <commctrl.h>
 
 import Data.Bits ((.|.))
-import Foreign.C.String (withCWStringLen)
+import Foreign.C.String (withCWString, withCWStringLen)
 import Foreign.C.Types (CInt)
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Array (copyArray)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (FunPtr, Ptr, castPtr, plusPtr, wordPtrToPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
+import Data.Word (Word8)
 import Graphics.Win32.GDI.Types (HBRUSH, HCURSOR, HDC, HICON, HWND)
 import Graphics.Win32.Message (WindowMessage)
 import Graphics.Win32.Window (WindowClosure)
 import System.Win32.Types (DWORD, HINSTANCE, INT, LPCTSTR, UINT)
 
--- | A WNDCLASSW of a procedure, instance, cursor, background brush and
--- name, the rest zero.
-withWndClass :: FunPtr WindowClosure -> HINSTANCE -> HCURSOR -> HBRUSH -> LPCTSTR -> (Ptr () -> IO a) -> IO a
-withWndClass proc inst cursor background name act =
+-- | An ACTCTXW for a manifest among a module's resources, by its path and
+-- resource number.
+withActCtx :: String -> Int -> (Ptr () -> IO a) -> IO a
+withActCtx source resource act =
+    withCWString source $ \s -> allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke ACTCTXW, cbSize} p (fromIntegral size :: UINT)
+        #{poke ACTCTXW, dwFlags} p (#{const ACTCTX_FLAG_RESOURCE_NAME_VALID} :: DWORD)
+        #{poke ACTCTXW, lpSource} p s
+        #{poke ACTCTXW, lpResourceName} p (wordPtrToPtr (fromIntegral resource) :: LPCTSTR)
+        act p
+  where
+    size = #{size ACTCTXW}
+
+-- | An INITCOMMONCONTROLSEX for the classes the window uses: trackbars,
+-- tooltips, up-down arrows and the standard controls.
+withInitCommonControls :: (Ptr () -> IO a) -> IO a
+withInitCommonControls act =
+    allocaBytes size $ \p -> do
+        #{poke INITCOMMONCONTROLSEX, dwSize} p (fromIntegral size :: DWORD)
+        #{poke INITCOMMONCONTROLSEX, dwICC} p (#{const ICC_BAR_CLASSES} .|. #{const ICC_STANDARD_CLASSES} .|. #{const ICC_UPDOWN_CLASS} :: DWORD)
+        act p
+  where
+    size = #{size INITCOMMONCONTROLSEX}
+
+logPixelsY :: CInt
+logPixelsY = #{const LOGPIXELSY}
+
+-- | A LOGFONTW.
+data LogFont
+
+-- | A NONCLIENTMETRICSW, sized, and its size.
+withNonClientMetrics :: (Ptr () -> UINT -> IO a) -> IO a
+withNonClientMetrics act =
+    allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke NONCLIENTMETRICSW, cbSize} p (fromIntegral size :: UINT)
+        act p (fromIntegral size)
+  where
+    size = #{size NONCLIENTMETRICSW}
+
+-- | A NONCLIENTMETRICSW's font for messages.
+messageFontOf :: Ptr () -> Ptr LogFont
+messageFontOf p = p `plusPtr` #{offset NONCLIENTMETRICSW, lfMessageFont}
+
+spiGetNonClientMetrics :: UINT
+spiGetNonClientMetrics = #{const SPI_GETNONCLIENTMETRICS}
+
+logFontSize :: Int
+logFontSize = #{size LOGFONTW}
+
+-- | Its height: negative for the characters', positive for the cells'.
+logFontHeight :: Ptr LogFont -> IO CInt
+logFontHeight = #{peek LOGFONTW, lfHeight}
+
+setLogFontHeight :: Ptr LogFont -> CInt -> IO ()
+setLogFontHeight = #{poke LOGFONTW, lfHeight}
+
+setLogFontBold :: Ptr LogFont -> IO ()
+setLogFontBold p = #{poke LOGFONTW, lfWeight} p (#{const FW_BOLD} :: CInt)
+
+setLogFontFixed :: Ptr LogFont -> IO ()
+setLogFontFixed p = #{poke LOGFONTW, lfPitchAndFamily} p (#{const FIXED_PITCH} .|. #{const FF_MODERN} :: Word8)
+
+-- | Its face's name, cut to fit lfFaceName.
+setLogFontFace :: Ptr LogFont -> String -> IO ()
+setLogFontFace p face =
+    withCWStringLen face $ \(s, n) -> do
+        let field = castPtr (p `plusPtr` #{offset LOGFONTW, lfFaceName})
+            room = #{const LF_FACESIZE} - 1
+        fillBytes field 0 (#{const LF_FACESIZE} * 2)
+        copyArray field s (min n room)
+
+-- | A WNDCLASSW of a procedure, instance, cursor, background brush, icon
+-- (or null) and name, the rest zero.
+withWndClass :: FunPtr WindowClosure -> HINSTANCE -> HCURSOR -> HBRUSH -> HICON -> LPCTSTR -> (Ptr () -> IO a) -> IO a
+withWndClass proc inst cursor background icon name act =
     allocaBytes size $ \p -> do
         fillBytes p 0 size
         #{poke WNDCLASSW, lpfnWndProc} p proc
         #{poke WNDCLASSW, hInstance} p inst
         #{poke WNDCLASSW, hCursor} p cursor
         #{poke WNDCLASSW, hbrBackground} p background
+        #{poke WNDCLASSW, hIcon} p icon
         #{poke WNDCLASSW, lpszClassName} p name
         act p
   where

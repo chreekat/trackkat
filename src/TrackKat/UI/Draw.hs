@@ -28,7 +28,7 @@ data Stroke = Solid | Dotted | Dashed
 data Align = AlignLeft | AlignCentre | AlignRight
     deriving (Eq, Show)
 
--- | The window's fonts, as cbits/gui.c's hts_gui_font numbers them.
+-- | The window's fonts, in the order cbits/gui.c's hts_gui_build takes them.
 data Font = UiFont | BoldFont | SmallFont | CapsFont | TinyFont | MonoFont
     deriving (Eq, Show, Enum)
 

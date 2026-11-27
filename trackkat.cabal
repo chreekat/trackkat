@@ -110,6 +110,7 @@ library
       TrackKat.Gui
       TrackKat.Gui.Calls
       TrackKat.Gui.Curve
+      TrackKat.Gui.Kit
       TrackKat.Gui.Live
       TrackKat.Gui.Log
       TrackKat.Gui.Masthead

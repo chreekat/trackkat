@@ -1,18 +1,18 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- | What the parts of trackkat's window drawn in Haskell share: the
--- program's icons, the window's fonts and scale, drawing on a device
--- context, and window procedures an exception can't escape.
+-- program's icons, drawing on a device context with the window's kit, and
+-- window procedures an exception can't escape.
 module TrackKat.Gui.Paint (
     registerPart,
+    registerWindow,
     Background (..),
     guarded,
+    Canvas (..),
     painted,
     resourceIcon,
+    programIcon,
     Font (..),
-    fontHandle,
-    screenDpi,
-    scaled,
     Colour (..),
     solidBrush,
     draw,
@@ -46,15 +46,13 @@ import System.Win32.DLL (getModuleHandle)
 import System.Win32.Info (cOLOR_BTNFACE)
 import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
+import TrackKat.Gui.Kit (Kit, fontHandle)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Draw
-
-foreign import ccall unsafe "hts_gui_dpi" c_dpi :: IO CInt
 
 -- BeginPaint can send the window messages of its own, so it is safe.
 foreign import ccall safe "windows.h BeginPaint" c_BeginPaint :: HWND -> LPPAINTSTRUCT -> IO HDC
 foreign import ccall unsafe "windows.h EndPaint" c_EndPaint :: HWND -> LPPAINTSTRUCT -> IO BOOL
-foreign import ccall unsafe "hts_gui_font" c_font :: CInt -> IO HANDLE
 
 foreign import ccall unsafe "windows.h LoadImageW"
     c_LoadImage :: HINSTANCE -> LPCTSTR -> UINT -> CInt -> CInt -> UINT -> IO HICON
@@ -91,17 +89,26 @@ foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr ()
 foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
 
 -- | Register a window class for a part of the window drawn here, which
--- cbits/gui.c's hts_gui_create then makes it of rather than registering its
--- own; its procedure is 'guarded', named by the part. Left is a Windows
--- error code.
+-- cbits/gui.c then makes it of rather than registering its own; its
+-- procedure is 'guarded', named by the part. Left is a Windows error code.
 registerPart :: (String -> IO ()) -> String -> String -> Background -> WindowClosure -> IO (Either Int ())
-registerPart report part className background proc = do
+registerPart report part className background = registerClass report part className background nullPtr
+
+-- | Register a window class for a window of its own, with the program's
+-- icon at a size, as 'registerPart'.
+registerWindow :: (String -> IO ()) -> String -> String -> CInt -> WindowClosure -> IO (Either Int ())
+registerWindow report part className iconSize proc = do
+    icon <- resourceIcon programIcon iconSize
+    registerClass report part className ButtonFace icon proc
+
+registerClass :: (String -> IO ()) -> String -> String -> Background -> HICON -> WindowClosure -> IO (Either Int ())
+registerClass report part className background icon proc = do
     inst <- getModuleHandle Nothing
     cursor <- loadCursor Nothing iDC_ARROW
     -- Both for the life of the process.
     wndProc <- mkProc (guarded report part proc)
     name <- newCWString className
-    atom <- withWndClass wndProc inst cursor (backgroundBrush background) name c_RegisterClass
+    atom <- withWndClass wndProc inst cursor (backgroundBrush background) icon name c_RegisterClass
     if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
 
 -- | What Windows fills a part's window with before it is painted.
@@ -126,10 +133,12 @@ guarded report part proc w msg wp lp =
         Just async -> throwIO (async :: SomeAsyncException)
         Nothing -> report (part ++ " failed: " ++ displayException e) >> defWindowProc (Just w) msg wp lp
 
--- | Paint a window that asked to be, on its device context, ending the
--- paint whatever happens.
-painted :: HWND -> (HDC -> IO ()) -> IO ()
-painted w paint = allocaPAINTSTRUCT $ \ps -> bracket (c_BeginPaint w ps) (\_ -> c_EndPaint w ps) paint
+-- | A device context to draw on, and the kit to draw with.
+data Canvas = Canvas {canvasKit :: Kit, canvasDC :: HDC}
+
+-- | Paint a window that asked to be, ending the paint whatever happens.
+painted :: Kit -> HWND -> (Canvas -> IO ()) -> IO ()
+painted kit w paint = allocaPAINTSTRUCT $ \ps -> bracket (c_BeginPaint w ps) (\_ -> c_EndPaint w ps) (paint . Canvas kit)
 
 -- | An icon from the program's resources (icons/trackkat.rc) at a size in
 -- pixels, or Windows' own if the build left it out. Shared: never destroyed.
@@ -144,13 +153,9 @@ resourceIcon number size = do
     -- IDI_APPLICATION, a resource number cast to a pointer.
     idiApplication = 32512
 
--- | The screen's dots per inch, which the window is drawn to.
-screenDpi :: IO Int
-screenDpi = fromIntegral <$> c_dpi
-
--- | A length at 96 dots per inch, at the screen's.
-scaled :: CInt -> IO CInt
-scaled x = (\dpi -> fromIntegral (scaledAt (fromIntegral dpi) (fromIntegral x))) <$> c_dpi
+-- | The program's own icon, in icons/trackkat.rc.
+programIcon :: Int
+programIcon = 1
 
 -- | A colour as Windows takes it: red, green and blue in its low bytes.
 colourRef :: Colour -> DWORD
@@ -160,64 +165,64 @@ solidBrush :: Colour -> IO HANDLE
 solidBrush = c_CreateSolidBrush . colourRef
 
 -- | Fill left, top, right, bottom with a colour.
-fillRect :: HDC -> RECT -> Colour -> IO ()
-fillRect dc r c = do
+fillRect :: Canvas -> RECT -> Colour -> IO ()
+fillRect (Canvas _ dc) r c = do
     brush <- solidBrush c
     _ <- allocaRECT $ \p -> pokeRECT p r >> c_FillRect dc p brush
     () <$ c_DeleteObject brush
 
 -- | How wide text is on one line in a font.
-textWidth :: HDC -> Font -> String -> IO CInt
-textWidth dc font s = do
-    selectFont dc font
-    (_, _, right, _) <- drawText dc s (0, 0, 0, 0) (dtSingleLine .|. dtNoPrefix .|. dtCalcRect)
+textWidth :: Canvas -> Font -> String -> IO CInt
+textWidth cv font s = do
+    selectFont cv font
+    (_, _, right, _) <- drawText (canvasDC cv) s (0, 0, 0, 0) (dtSingleLine .|. dtNoPrefix .|. dtCalcRect)
     pure (fromIntegral right)
 
 -- | Draw text on one line, centred down x, y, w, h and ended with an
 -- ellipsis if it doesn't fit, aligned by DT_LEFT and the like.
-textAt :: HDC -> Font -> Colour -> (CInt, CInt, CInt, CInt) -> UINT -> String -> IO ()
-textAt dc font c (x, y, w, h) align s = do
-    selectFont dc font
-    inkFor dc c
-    () <$ drawText dc s (rect x y w h) (align .|. dtSingleLine .|. dtVCenter .|. dtNoPrefix .|. dtEndEllipsis)
+textAt :: Canvas -> Font -> Colour -> (CInt, CInt, CInt, CInt) -> UINT -> String -> IO ()
+textAt cv font c (x, y, w, h) align s = do
+    selectFont cv font
+    inkFor (canvasDC cv) c
+    () <$ drawText (canvasDC cv) s (rect x y w h) (align .|. dtSingleLine .|. dtVCenter .|. dtNoPrefix .|. dtEndEllipsis)
 
 -- | Text broken into lines at spaces, to fit a width.
 data Lines = Wrapped
 
 -- | How tall text broken into lines comes to in a width.
-textHeight :: HDC -> Font -> Lines -> CInt -> String -> IO CInt
-textHeight dc font Wrapped w s = do
-    selectFont dc font
-    (_, top, _, bottom) <- drawText dc s (0, 0, fromIntegral w, 0) (dtWordBreak .|. dtNoPrefix .|. dtCalcRect)
+textHeight :: Canvas -> Font -> Lines -> CInt -> String -> IO CInt
+textHeight cv font Wrapped w s = do
+    selectFont cv font
+    (_, top, _, bottom) <- drawText (canvasDC cv) s (0, 0, fromIntegral w, 0) (dtWordBreak .|. dtNoPrefix .|. dtCalcRect)
     pure (fromIntegral (bottom - top))
 
 -- | Draw text broken into lines in x, y, w, h, the last ended with an
 -- ellipsis if it doesn't fit.
-textIn :: HDC -> Font -> Colour -> Lines -> (CInt, CInt, CInt, CInt) -> String -> IO ()
-textIn dc font c Wrapped (x, y, w, h) s = do
-    selectFont dc font
-    inkFor dc c
-    () <$ drawText dc s (rect x y w h) (dtWordBreak .|. dtEditControl .|. dtNoPrefix .|. dtEndEllipsis)
+textIn :: Canvas -> Font -> Colour -> Lines -> (CInt, CInt, CInt, CInt) -> String -> IO ()
+textIn cv font c Wrapped (x, y, w, h) s = do
+    selectFont cv font
+    inkFor (canvasDC cv) c
+    () <$ drawText (canvasDC cv) s (rect x y w h) (dtWordBreak .|. dtEditControl .|. dtNoPrefix .|. dtEndEllipsis)
 
 -- | Draw lines through points with a pen of a stroke, width and colour.
-polyline :: HDC -> Stroke -> CInt -> Colour -> [(CInt, CInt)] -> IO ()
-polyline dc stroke width c points =
+polyline :: Canvas -> Stroke -> CInt -> Colour -> [(CInt, CInt)] -> IO ()
+polyline (Canvas _ dc) stroke width c points =
     withTools dc stroke width c Nothing $
         withArrayLen (concatMap (\(x, y) -> [x, y]) points) $
             \n p -> c_Polyline dc p (fromIntegral (n `div` 2))
 
 -- | Draw a disc of a fill colour, outlined in a pen's width and colour,
 -- of a radius about x, y.
-disc :: HDC -> Colour -> CInt -> Colour -> (CInt, CInt) -> CInt -> IO ()
-disc dc fill width line (x, y) r = withTools dc Solid width line (Just fill) (c_Ellipse dc (x - r) (y - r) (x + r + 1) (y + r + 1))
+disc :: Canvas -> Colour -> CInt -> Colour -> (CInt, CInt) -> CInt -> IO ()
+disc (Canvas _ dc) fill width line (x, y) r = withTools dc Solid width line (Just fill) (c_Ellipse dc (x - r) (y - r) (x + r + 1) (y + r + 1))
 
 -- | Draw a shape.
-draw :: HDC -> Shape -> IO ()
-draw dc = \case
-    Fill c r -> fillRect dc (rectOf r) c
+draw :: Canvas -> Shape -> IO ()
+draw cv = \case
+    Fill c r -> fillRect cv (rectOf r) c
     Frame c (l, t, r, b) -> withTools dc Solid 1 c Nothing (c_Rectangle dc (n l) (n t) (n r) (n b))
-    Line stroke width c points -> polyline dc stroke (n width) c (map point points)
-    Disc fill width line centre r -> disc dc fill (n width) line (point centre) (n r)
+    Line stroke width c points -> polyline cv stroke (n width) c (map point points)
+    Disc fill width line centre r -> disc cv fill (n width) line (point centre) (n r)
     Ring stroke width c (x, y) r ->
         withTools dc stroke (n width) c Nothing (c_Ellipse dc (n (x - r)) (n (y - r)) (n (x + r + 1)) (n (y + r + 1)))
     Polygon c points ->
@@ -233,18 +238,19 @@ draw dc = \case
         () <$ c_DrawFocusRect dc p
     Text font c spacing align (l, t, r, b) s -> do
         _ <- c_SetTextCharacterExtra dc (n spacing)
-        textAt dc font c (n l, n t, n (r - l), n (b - t)) (alignment align) s
+        textAt cv font c (n l, n t, n (r - l), n (b - t)) (alignment align) s
         () <$ c_SetTextCharacterExtra dc 0
     Paragraph font c r s -> do
-        selectFont dc font
+        selectFont cv font
         inkFor dc c
         () <$ drawText dc s (rectOf r) (dtLeft .|. dtWordBreak .|. dtNoPrefix)
     Clipped (l, t, r, b) shapes -> do
         _ <- c_SaveDC dc
         _ <- c_IntersectClipRect dc (n l) (n t) (n r) (n b)
-        mapM_ (draw dc) shapes
+        mapM_ (draw cv) shapes
         () <$ c_RestoreDC dc (-1)
   where
+    dc = canvasDC cv
     n :: Int -> CInt
     n = fromIntegral
     point (x, y) = (n x, n y)
@@ -277,25 +283,21 @@ penStyle Dotted = pS_DOT
 penStyle Dashed = pS_DASH
 
 -- | Draw an icon at x, y, size pixels square.
-drawIcon :: HDC -> HICON -> CInt -> CInt -> CInt -> IO ()
-drawIcon dc icon x y size = () <$ c_DrawIconEx dc x y icon size size 0 nullPtr diNormal
+drawIcon :: Canvas -> HICON -> CInt -> CInt -> CInt -> IO ()
+drawIcon (Canvas _ dc) icon x y size = () <$ c_DrawIconEx dc x y icon size size 0 nullPtr diNormal
 
 -- | Draw a width and height off screen, then onto a device context at x,
 -- y at once, so it never shows half drawn.
-buffered :: HDC -> (CInt, CInt, CInt, CInt) -> (HDC -> IO ()) -> IO ()
-buffered dc (x, y, w, h) paint =
+buffered :: Canvas -> (CInt, CInt, CInt, CInt) -> (Canvas -> IO ()) -> IO ()
+buffered (Canvas kit dc) (x, y, w, h) paint =
     bracket (c_CreateCompatibleDC dc) c_DeleteDC $ \mem ->
         bracket (c_CreateCompatibleBitmap dc w h) c_DeleteObject $ \bitmap ->
             bracket (c_SelectObject mem bitmap) (c_SelectObject mem) $ \_ -> do
-                paint mem
+                paint (Canvas kit mem)
                 () <$ c_BitBlt dc x y w h mem 0 0 sRCCOPY
 
-selectFont :: HDC -> Font -> IO ()
-selectFont dc font = fontHandle font >>= \f -> () <$ c_SelectObject dc f
-
--- | One of the window's fonts, made by cbits/gui.c.
-fontHandle :: Font -> IO HANDLE
-fontHandle font = c_font (fromIntegral (fromEnum font))
+selectFont :: Canvas -> Font -> IO ()
+selectFont (Canvas kit dc) font = () <$ c_SelectObject dc (fontHandle kit font)
 
 -- | Text drawn over what is there, in a colour.
 inkFor :: HDC -> Colour -> IO ()

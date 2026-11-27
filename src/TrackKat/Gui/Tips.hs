@@ -13,7 +13,7 @@ import Graphics.Win32.GDI.Types (HWND)
 import Graphics.Win32.Window (cW_USEDEFAULT, wS_EX_TOPMOST, wS_POPUP)
 
 import TrackKat.Gui.Calls (createWindow, pointerParam, send)
-import TrackKat.Gui.Paint (scaled)
+import TrackKat.Gui.Kit (Kit, scaled)
 import TrackKat.Gui.Win32 (ttdtAutoPop, ttmAddTool, ttmSetDelayTime, ttmSetMaxTipWidth, ttsAlwaysTip, ttsNoPrefix, withToolInfo)
 
 -- | The tooltips over a window.
@@ -21,11 +21,10 @@ data Tips = Tips HWND HWND
 
 -- | Tooltips over a window, the longest wrapped, each shown for half a
 -- minute.
-makeTips :: HWND -> IO Tips
-makeTips owner = do
+makeTips :: Kit -> HWND -> IO Tips
+makeTips kit owner = do
     t <- createWindow wS_EX_TOPMOST "tooltips_class32" "" (wS_POPUP .|. ttsAlwaysTip .|. ttsNoPrefix) (d, d, d, d) (Just owner) 0
-    width <- scaled 360
-    _ <- send t ttmSetMaxTipWidth 0 (fromIntegral width)
+    _ <- send t ttmSetMaxTipWidth 0 (fromIntegral (scaled kit 360))
     _ <- send t ttmSetDelayTime (fromIntegral ttdtAutoPop) 30000
     pure (Tips t owner)
   where

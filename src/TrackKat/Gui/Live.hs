@@ -15,6 +15,7 @@ import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, getPa
 import System.Win32.Types (HANDLE, LPCTSTR)
 
 import TrackKat.Config (HeadView (..))
+import TrackKat.Gui.Kit (Kit, kitDpi)
 import TrackKat.Gui.Paint
 import TrackKat.Gui.Shown (snapshot)
 import TrackKat.Gui.Win32 (drawItemDC, drawItemRect, drawItemState, drawItemWindow, idcHand, odsFocus, odsNoFocusRect, odsSelected)
@@ -28,8 +29,8 @@ foreign import ccall unsafe "windows.h SetCursor" c_SetCursor :: HANDLE -> IO HA
 foreign import ccall unsafe "windows.h LoadCursorW" c_LoadCursor :: Ptr () -> LPCTSTR -> IO HANDLE
 
 -- | Register the live view's window class, reporting what fails in it.
-registerLive :: (String -> IO ()) -> IO (Either Int ())
-registerLive report = registerPart report "The live view" "trackkat_live" Unfilled liveProc
+registerLive :: Kit -> (String -> IO ()) -> IO (Either Int ())
+registerLive kit report = registerPart report "The live view" "trackkat_live" Unfilled (liveProc kit)
 
 -- | One of the live view's controls drawn here.
 data Control = SwitchControl Switch | HeadViewControl
@@ -41,20 +42,20 @@ control w =
         _ | i >= 0 && i < 4 -> Just (SwitchControl (toEnum (fromIntegral i)))
         _ -> Nothing
 
-liveProc :: WindowClosure
-liveProc w msg wp lp
+liveProc :: Kit -> WindowClosure
+liveProc kit w msg wp lp
     | msg == wM_ERASEBKGND = pure 1
     | msg == wM_PAINT = do
-        painted w $ \dc -> do
+        painted kit w $ \dc -> do
             (_, _, right, bottom) <- getClientRect w
-            dpi <- screenDpi
+            let dpi = kitDpi kit
             live <- snapshot
             buffered dc (0, 0, fromIntegral right, fromIntegral bottom) $ \mem ->
                 mapM_ (draw mem) (livePane dpi (fromIntegral right, fromIntegral bottom) live)
         pure 0
     | msg == wM_DRAWITEM = do
         let item = wordPtrToPtr (fromIntegral lp)
-        drawItemWindow item >>= control >>= mapM_ (drawItem item)
+        drawItemWindow item >>= control >>= mapM_ (drawItem kit item)
         pure 1
     -- A hand over the head view, which a click switches.
     | msg == wM_SETCURSOR =
@@ -67,12 +68,12 @@ liveProc w msg wp lp
 
 -- | A switch or the head view, with a focus rectangle while it has the
 -- keyboard. The head view is drawn off screen first, so it doesn't flicker.
-drawItem :: Ptr () -> Control -> IO ()
-drawItem item which = do
-    dc <- drawItemDC item
+drawItem :: Kit -> Ptr () -> Control -> IO ()
+drawItem kit item which = do
+    dc <- Canvas kit <$> drawItemDC item
     (left, top, right, bottom) <- drawItemRect item
     itemState <- drawItemState item
-    dpi <- screenDpi
+    let dpi = kitDpi kit
     live <- snapshot
     view <- headViewShown
     let focused = itemState .&. odsFocus /= 0 && itemState .&. odsNoFocusRect == 0
