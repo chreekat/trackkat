@@ -48,6 +48,8 @@ settings =
     , ("z", "1:2.5")
     , ("lean", "view")
     , ("npclient", "trackkat")
+    , ("startup", "off")
+    , ("updates", "on")
     , ("head view", "virtual")
     ]
 

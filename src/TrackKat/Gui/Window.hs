@@ -14,14 +14,14 @@ import Foreign.Ptr (Ptr, wordPtrToPtr)
 import Graphics.Win32.GDI.Types (HWND)
 import Graphics.Win32.Message (WindowMessage, wM_CLOSE, wM_COMMAND, wM_GETMINMAXINFO, wM_SIZE, wM_VSCROLL)
 import Graphics.Win32.Misc (iDCANCEL)
-import Graphics.Win32.Window (WindowClosure, adjustWindowRect, getClientRect, getWindowRect, sW_HIDE, wS_MAXIMIZEBOX, wS_OVERLAPPEDWINDOW, wS_VSCROLL)
+import Graphics.Win32.Window (WindowClosure, adjustWindowRect, getClientRect, getParent, getWindowRect, sW_HIDE, wS_MAXIMIZEBOX, wS_OVERLAPPEDWINDOW, wS_VSCROLL)
 import System.Win32.Info (sM_CXVSCROLL)
 import System.Win32.Types (BOOL, INT, LPARAM, LRESULT, WPARAM)
 
 import TrackKat.Display (Shown (..))
-import TrackKat.Gui.Calls (resizeWindow, scrollContent, setScrollPos, setScrollRange, showWindow)
+import TrackKat.Gui.Calls (resizeWindow, scrollContent, send, setScrollPos, setScrollRange, showWindow)
 import TrackKat.Gui.Kit (Kit, kitDpi, scaled)
-import TrackKat.Gui.Paint (ownWindow)
+import TrackKat.Gui.Paint (isGroup, ownWindow)
 import TrackKat.Gui.Shown (snapshot)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Window
@@ -53,6 +53,16 @@ makeMain kit report = do
 
 mainProc :: Kit -> Scrolling -> WindowClosure
 mainProc kit sc w msg wp lp
+    -- Enter pressing a group's button commands this window, the dialog's.
+    | msg == wM_COMMAND && lp /= 0 = do
+        parent <- getParent (wordPtrToPtr (fromIntegral lp))
+        own <- if parent == w then pure False else isGroup parent
+        if own then send parent msg wp lp else windowProc kit sc w msg wp lp
+    | otherwise = windowProc kit sc w msg wp lp
+
+-- | The window's handling of a message not for a group.
+windowProc :: Kit -> Scrolling -> WindowClosure
+windowProc kit sc w msg wp lp
     -- The multipliers' arrows send it too, as themselves.
     | msg == wM_VSCROLL && lp == 0 = do
         (_, (_, _, _, dragged)) <- withScrollInfo (c_GetScrollInfo w sbVert)

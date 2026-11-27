@@ -50,8 +50,12 @@ module TrackKat.Gui.Win32 (
     spiGetWorkArea,
     gwlStyle,
 
-    -- * Edit controls
+    -- * Buttons and edit controls
+    bmGetCheck,
+    bmSetCheck,
+    bstChecked,
     ssNotify,
+    ssEtchedHorz,
     emGetSel,
     emSetSel,
     emReplaceSel,
@@ -278,8 +282,16 @@ spiGetWorkArea = #{const SPI_GETWORKAREA}
 gwlStyle :: INT
 gwlStyle = #{const GWL_STYLE}
 
-ssNotify :: DWORD
+bmGetCheck, bmSetCheck :: WindowMessage
+bmGetCheck = #{const BM_GETCHECK}
+bmSetCheck = #{const BM_SETCHECK}
+
+bstChecked :: WPARAM
+bstChecked = #{const BST_CHECKED}
+
+ssNotify, ssEtchedHorz :: DWORD
 ssNotify = #{const SS_NOTIFY}
+ssEtchedHorz = #{const SS_ETCHEDHORZ}
 
 emGetSel, emSetSel, emReplaceSel, emGetFirstVisibleLine, emLineFromChar, emLineIndex, emLineScroll, emScrollCaret, emSetLimitText :: WindowMessage
 emGetSel = #{const EM_GETSEL}

@@ -53,7 +53,7 @@ import Data.Bits (shiftL, shiftR, testBit, (.&.))
 import Data.Either (isRight)
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
-import Foreign.C.Types (CFloat (..), CInt (..))
+import Foreign.C.Types (CFloat (..), CInt (..), CUInt (..))
 import Foreign.Marshal.Array (allocaArray, withArray, withArrayLen)
 import Foreign.Ptr (Ptr, nullPtr)
 import Graphics.Win32.GDI.Types (HWND)
@@ -68,12 +68,14 @@ import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOr
 import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
+import TrackKat.Gui.BottomRow (makeBottomRow)
 import TrackKat.Gui.Calls (raiseWindow)
 import TrackKat.Gui.Curve (registerCurve)
 import TrackKat.Gui.Kit (fontHandles, kitDpi, setUp)
 import TrackKat.Gui.Live (registerLive)
 import TrackKat.Gui.Log (makeLog)
 import TrackKat.Gui.Masthead (registerMasthead)
+import TrackKat.Gui.Settings (newSettings, pushSetting, showPushes, takeSaved)
 import TrackKat.Gui.Shown (logLine, takeSnapshot, tell)
 import TrackKat.Gui.Tray (makeTray, startTray)
 import TrackKat.Gui.Window (makeMain)
@@ -85,7 +87,8 @@ import TrackKat.UI.Live (TrimMoves (..), trimMoves)
 import TrackKat.UI.Tray (TrayChoice (..))
 
 foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
-foreign import ccall safe "hts_gui_build" c_build :: HWND -> HWND -> HWND -> CInt -> Ptr HANDLE -> IO ()
+foreign import ccall safe "hts_gui_build" c_build :: HWND -> HWND -> HWND -> CInt -> Ptr HANDLE -> CUInt -> IO ()
+foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
 foreign import ccall unsafe "windows.h SetProcessDPIAware" c_SetProcessDPIAware :: IO BOOL
 foreign import ccall unsafe "hts_gui_ask" c_ask :: CInt -> IO ()
 foreign import ccall safe "hts_gui_dialog_message" c_dialog_message :: LPMSG -> IO CInt
@@ -147,10 +150,14 @@ withGui HaskellWindow w work = do
     start kit = first (\(Failed e) -> e) <$> try (makeAll kit)
     makeAll kit = do
         mapM_ (\register -> register kit guiLog >>= orFail) [registerMasthead, registerCurve, registerLive]
+        settings <- newSettings guiLog (ask SaveAction)
         window <- makeMain kit guiLog >>= orFail
         logWindow <- makeLog kit guiLog >>= orFail
-        tray <- makeTray guiLog (choose window) >>= orFail
-        withArray (fontHandles kit) (c_build tray window logWindow (fromIntegral (kitDpi kit)))
+        tray <- makeTray guiLog (choose window) (c_refresh >> takeSnapshot >> showPushes settings) >>= orFail
+        -- See Note [The groups cbits/gui.c leaves out].
+        withArray (fontHandles kit) $ \fonts -> c_build tray window logWindow (fromIntegral (kitDpi kit)) fonts groupBottomRow
+        _ <- makeBottomRow kit guiLog settings (ask QuitAction) (ask OpenSettingsAction) window >>= orFail
+        showPushes settings
         startTray tray
         case w of
             WindowShown -> raiseWindow window
@@ -161,6 +168,17 @@ withGui HaskellWindow w work = do
             handled <- c_dialog_message msg
             when (handled == 0) (translateMessage msg >> void (dispatchMessage msg))
             messageLoop msg
+
+-- Note [The groups cbits/gui.c leaves out]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- The window's groups of controls move from cbits/gui.c to Haskell one at a
+-- time. hts_gui_build is told, as its GROUP_ bits, which it leaves out, and
+-- each is made here after it, to come after its controls when Tab moves
+-- through them, as it did in cbits/gui.c.
+
+-- | The groups cbits/gui.c leaves out: its GROUP_BOTTOM_ROW.
+groupBottomRow :: CUInt
+groupBottomRow = 0x1
 
 -- | A Windows error code that making the window failed with.
 newtype Failed = Failed Int
@@ -440,7 +458,9 @@ showCalibration s = withCWString s c_calibration
 
 -- | Show a setting's value, by its name in the settings file.
 showSetting :: String -> String -> IO ()
-showSetting name value = withCWString name $ \n -> withCWString value (c_set_setting n)
+showSetting name value = do
+    pushSetting name value
+    withCWString name $ \n -> withCWString value (c_set_setting n)
 
 -- | The line beside the response's heading: whether the last change was
 -- saved, and if not, why.
@@ -449,9 +469,9 @@ showSettingsMessage s = withCWString s c_settings_message
 
 -- | Take the named settings the user changed in the window and asked to
 -- save, with their values, leaving out the rest. See Note [The window's
--- changes] in cbits/gui.c.
+-- changes] in "TrackKat.UI.Settings".
 takeSavedSettings :: [String] -> IO [(String, String)]
-takeSavedSettings names = concat <$> mapM saved names
+takeSavedSettings names = (++) <$> (concat <$> mapM saved names) <*> takeSaved names
   where
     saved name = withCWString name $ \n -> allocaArray size $ \buf -> do
         shown <- c_take_saved_setting n buf (fromIntegral size)

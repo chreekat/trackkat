@@ -3,6 +3,7 @@
 module TrackKat.UI.Window (
     contentWidth,
     contentHeight,
+    bottomRowHeight,
     Scroll (..),
     scrolled,
 ) where
@@ -14,6 +15,11 @@ import TrackKat.UI.Draw (scaledAt)
 contentWidth, contentHeight :: Int
 contentWidth = 720
 contentHeight = 896
+
+-- | The row along the window's bottom, at 96 dpi: how trackkat runs, and
+-- the way out.
+bottomRowHeight :: Int
+bottomRowHeight = 46
 
 -- | A way to scroll the window, as its scroll bar and mouse wheel ask.
 data Scroll

@@ -31,11 +31,10 @@ import System.Win32.Types (BOOL, DWORD, LPCTSTR, UINT, WPARAM, getLastError)
 
 import TrackKat.Gui.Calls (createWindow)
 import TrackKat.Gui.Paint (guarded, resourceIcon)
-import TrackKat.Gui.Shown (snapshot, takeSnapshot)
+import TrackKat.Gui.Shown (snapshot)
 import TrackKat.Gui.Win32 (nifIcon, nifMessage, nifTip, nimAdd, nimDelete, nimModify, withNotifyIconData, wmContextMenu)
 import TrackKat.UI.Tray
 
-foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
 foreign import ccall safe "hts_gui_open_settings_now" c_open_settings_now :: IO ()
 foreign import ccall unsafe "hts_gui_stopping" c_stopping :: IO CInt
 
@@ -60,11 +59,11 @@ data Showing = NotShown | ShownAs TrayLook String
     deriving (Eq)
 
 -- | Make the hidden window the tray icon talks to; it is told what the user
--- chose from the icon or its menu, or another trackkat asked for, and
--- reports what failed with the first function given. Left is a Windows
--- error code.
-makeTray :: (String -> IO ()) -> (TrayChoice -> IO ()) -> IO (Either Int HWND)
-makeTray report choose = do
+-- chose from the icon or its menu, or another trackkat asked for, brings
+-- the window up to date with the last function given before the icon, and
+-- reports what failed with the first. Left is a Windows error code.
+makeTray :: (String -> IO ()) -> (TrayChoice -> IO ()) -> IO () -> IO (Either Int HWND)
+makeTray report choose tick = do
     inst <- getModuleHandle Nothing
     registered <- registerClass (0, inst, Nothing, Nothing, Nothing, Nothing, className)
     case registered of
@@ -78,7 +77,7 @@ makeTray report choose = do
                 else do
                     taskbarCreated <- withCWString "TaskbarCreated" c_RegisterWindowMessage
                     shown <- newIORef NotShown
-                    void (setWindowClosure w (trayProc report choose taskbarCreated shown))
+                    void (setWindowClosure w (trayProc report choose tick taskbarCreated shown))
                     pure (Right w)
   where
     -- As cbits/gui.c's hts_gui_quit_running and hts_gui_show_running find it.
@@ -89,17 +88,17 @@ makeTray report choose = do
 startTray :: HWND -> IO ()
 startTray w = void (c_SetTimer w 1 33 nullPtr)
 
-trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> WindowMessage -> IORef Showing -> WindowClosure
-trayProc report choose taskbarCreated shown = guarded report "The tray icon" (respond choose taskbarCreated shown)
+trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> IO () -> WindowMessage -> IORef Showing -> WindowClosure
+trayProc report choose tick taskbarCreated shown = guarded report "The tray icon" (respond choose tick taskbarCreated shown)
 
-respond :: (TrayChoice -> IO ()) -> WindowMessage -> IORef Showing -> WindowClosure
-respond choose taskbarCreated shown w msg wp lp
+respond :: (TrayChoice -> IO ()) -> IO () -> WindowMessage -> IORef Showing -> WindowClosure
+respond choose tick taskbarCreated shown w msg wp lp
     | msg == taskbarCreated && taskbarCreated /= 0 = do
         -- Explorer restarted, and forgot the icon.
         writeIORef shown NotShown
         update
         pure 0
-    | msg == wM_TIMER = c_refresh >> takeSnapshot >> update >> pure 0
+    | msg == wM_TIMER = tick >> update >> pure 0
     | msg == wmAppTray = do
         let mouse = fromIntegral lp
         if mouse == wM_LBUTTONUP || mouse == wM_LBUTTONDBLCLK
@@ -139,8 +138,8 @@ respond choose taskbarCreated shown w msg wp lp
         s <- snapshot
         bracket createPopupMenu destroyMenu $ \m -> do
             forM_ (trayMenu s) $ \case
-                MenuItem choice name tick ->
-                    appendMenu m (mFT_STRING .|. (case tick of Ticked -> mF_CHECKED; Unticked -> 0)) (itemId choice) (Just name)
+                MenuItem choice name ticked ->
+                    appendMenu m (mFT_STRING .|. (case ticked of Ticked -> mF_CHECKED; Unticked -> 0)) (itemId choice) (Just name)
                 MenuSeparator -> appendMenu m mFT_SEPARATOR 0 Nothing
             setMenuDefaultItem m (itemId OpenChoice) False
             (x, y) <- getCursorPos

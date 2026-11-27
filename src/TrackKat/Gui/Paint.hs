@@ -8,6 +8,9 @@ module TrackKat.Gui.Paint (
     ownWindow,
     Background (..),
     guarded,
+    orReport,
+    makeGroup,
+    isGroup,
     Canvas (..),
     painted,
     resourceIcon,
@@ -31,7 +34,7 @@ module TrackKat.Gui.Paint (
 
 import Control.Exception (SomeAsyncException, bracket, catch, displayException, fromException, throwIO)
 import Data.Bits ((.|.))
-import Foreign.C.String (newCWString, withCWStringLen)
+import Foreign.C.String (newCWString, withCWString, withCWStringLen)
 import Foreign.C.Types (CInt (..), CIntPtr (..))
 import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Ptr (FunPtr, Ptr, castPtr, nullPtr, wordPtrToPtr)
@@ -42,13 +45,13 @@ import Graphics.Win32.GDI.Types (HDC, HICON, HWND, LPRECT, RECT, allocaRECT, pee
 import Graphics.Win32.Message (wM_SETICON)
 import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Resource (iMAGE_ICON, lR_SHARED)
-import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, adjustWindowRect, allocaPAINTSTRUCT, cW_USEDEFAULT, defWindowProc, wS_EX_CONTROLPARENT)
+import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, adjustWindowRect, allocaPAINTSTRUCT, cW_USEDEFAULT, defWindowProc, wS_CHILD, wS_EX_CONTROLPARENT, wS_VISIBLE)
 import System.Win32.DLL (getModuleHandle)
 import System.Win32.Info (cOLOR_BTNFACE, sM_CXICON, sM_CXSMICON)
 import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
 import TrackKat.Gui.Calls (createWindow, pointerParam, send)
-import TrackKat.Gui.Kit (Kit, fontHandle)
+import TrackKat.Gui.Kit (Kit, fontHandle, scaled)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Draw
 
@@ -88,6 +91,8 @@ foreign import ccall unsafe "windows.h CreateCompatibleBitmap" c_CreateCompatibl
 foreign import ccall unsafe "windows.h BitBlt"
     c_BitBlt :: HDC -> CInt -> CInt -> CInt -> CInt -> HDC -> CInt -> CInt -> DWORD -> IO BOOL
 foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr () -> IO ATOM
+foreign import ccall unsafe "windows.h SetPropW" c_SetProp :: HWND -> LPCTSTR -> HANDLE -> IO BOOL
+foreign import ccall unsafe "windows.h GetPropW" c_GetProp :: HWND -> LPCTSTR -> IO HANDLE
 foreign import ccall unsafe "windows.h GetSystemMetrics" c_GetSystemMetrics :: CInt -> IO CInt
 foreign import ccall unsafe "windows.h SystemParametersInfoW" c_SystemParametersInfo :: UINT -> UINT -> Ptr () -> UINT -> IO BOOL
 foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
@@ -156,10 +161,41 @@ backgroundBrush ButtonFace = wordPtrToPtr (fromIntegral cOLOR_BTNFACE + 1)
 -- the window, and leaves the message to Windows' handling: an exception
 -- can't leave a window procedure but by ending the process.
 guarded :: (String -> IO ()) -> String -> WindowClosure -> WindowClosure
-guarded report part proc w msg wp lp =
-    proc w msg wp lp `catch` \e -> case fromException e of
+guarded report part proc w msg wp lp = orReport report part (proc w msg wp lp) (defWindowProc (Just w) msg wp lp)
+
+-- | Run something called back from Windows, or, if it fails, report that,
+-- naming what it was, and run the second thing instead.
+orReport :: (String -> IO ()) -> String -> IO a -> IO a -> IO a
+orReport report what act instead =
+    act `catch` \e -> case fromException e of
         Just async -> throwIO (async :: SomeAsyncException)
-        Nothing -> report (part ++ " failed: " ++ displayException e) >> defWindowProc (Just w) msg wp lp
+        Nothing -> report (what ++ " failed: " ++ displayException e) >> instead
+
+-- | A group of the window's controls, a child of it at x, y, w, h at 96
+-- dpi, unscrolled, of a class registered for it as by 'registerPart'. Its
+-- controls' commands are its own: see 'isGroup'. Left is a Windows error
+-- code.
+makeGroup :: Kit -> (String -> IO ()) -> String -> String -> HWND -> (Int, Int, Int, Int) -> WindowClosure -> IO (Either Int HWND)
+makeGroup kit report part cls window (x, y, w, h) proc = do
+    registered <- registerPart report part cls ButtonFace proc
+    case registered of
+        Left e -> pure (Left e)
+        Right () -> do
+            g <- createWindow wS_EX_CONTROLPARENT cls "" (wS_CHILD .|. wS_VISIBLE) (s x, s y, s w, s h) (Just window) 0
+            if g == nullPtr
+                then Left . fromIntegral <$> getLastError
+                else do
+                    _ <- withCWString groupMark $ \mark -> c_SetProp g mark (wordPtrToPtr 1)
+                    pure (Right g)
+  where
+    s = scaled kit . fromIntegral
+
+-- | Whether a window is a group made by 'makeGroup'.
+isGroup :: HWND -> IO Bool
+isGroup w = (/= nullPtr) <$> withCWString groupMark (c_GetProp w)
+
+groupMark :: String
+groupMark = "trackkat.group"
 
 -- | A device context to draw on, and the kit to draw with.
 data Canvas = Canvas {canvasKit :: Kit, canvasDC :: HDC}

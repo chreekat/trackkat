@@ -87,6 +87,7 @@ library
     TrackKat.UI.Log
     TrackKat.UI.Masthead
     TrackKat.UI.Palette
+    TrackKat.UI.Settings
     TrackKat.UI.Tray
     TrackKat.UI.Window
     TrackKat.Updater
@@ -109,13 +110,16 @@ library
   if os(windows)
     exposed-modules:
       TrackKat.Gui
+      TrackKat.Gui.BottomRow
       TrackKat.Gui.Calls
+      TrackKat.Gui.Controls
       TrackKat.Gui.Curve
       TrackKat.Gui.Kit
       TrackKat.Gui.Live
       TrackKat.Gui.Log
       TrackKat.Gui.Masthead
       TrackKat.Gui.Paint
+      TrackKat.Gui.Settings
       TrackKat.Gui.Shown
       TrackKat.Gui.Tips
       TrackKat.Gui.Tray
@@ -280,6 +284,7 @@ test-suite tests
     Test.UI.Live
     Test.UI.Log
     Test.UI.Masthead
+    Test.UI.Settings
     Test.UI.Tray
     Test.UI.Window
     Test.Updater

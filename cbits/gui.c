@@ -342,7 +342,7 @@ void hts_gui_set_setting(const wchar_t *name, const wchar_t *value)
 /* Take a setting's value as the user changed it in the window and asked to
  * save it. Returns 0, leaving buf alone, if none waits: for a setting the
  * window doesn't show, or one not changed since it was last taken. See
- * Note [The window's changes]. */
+ * Note [The window's changes] in TrackKat.UI.Settings. */
 int hts_gui_take_saved_setting(const wchar_t *name, wchar_t *buf, int size)
 {
     int i = field_index(name);
@@ -2084,16 +2084,7 @@ static int field_value(int i, wchar_t *out, size_t size)
     return 1;
 }
 
-/* Note [The window's changes]
- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
- * The user can change a setting in the window or in the settings file, and
- * neither undoes the other's changes. Saving hands Haskell just the fields
- * the user changed in the window since they were last saved, and Haskell
- * writes just those into the file, which keeps what it says of the rest. A
- * setting the file pushes to a field changed and not yet saved is dropped:
- * the user's change is the newer, and once saved, the file holds it and
- * pushes it back. Every other push is shown, so the window and the file come
- * to agree once neither is changing. */
+/* See Note [The window's changes] in TrackKat.UI.Settings. */
 static void save_settings(void)
 {
     unsigned fields = changed;
@@ -2580,7 +2571,7 @@ static void refresh(void)
     memcpy(additions, added, sizeof added);
     ReleaseSRWLockExclusive(&lock);
 
-    /* See Note [The window's changes]. */
+    /* See Note [The window's changes] in TrackKat.UI.Settings. */
     for (int i = 0; i < F_COUNT; i++)
         if (fields & 1u << i && !(changed & 1u << i))
             show_field(i, values[i]);
@@ -2675,7 +2666,12 @@ static HWND group(const wchar_t *caption, int x, int y, int w, int h)
     return g;
 }
 
-static void build_window(void)
+/* The groups of controls TrackKat.Gui makes instead, as hts_gui_build is
+ * told them. */
+#define GROUP_BOTTOM_ROW 0x1
+
+/* Build the window's controls, leaving out the groups given. */
+static void build_window(unsigned skip)
 {
     make_tips();
 
@@ -2856,24 +2852,26 @@ static void build_window(void)
         L"Open the log, all that trackkat reports, in a window of its own");
 
     /* How trackkat runs, and the way out. */
-    control(L"STATIC", L"", SS_ETCHEDHORZ, 0, MODES_Y, CLIENT_W, 2, 0);
-    field_ctl[F_STARTUP] = tip(
-        control(L"BUTTON", L"Start with Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 14, MODES_Y + 12, 130, 22,
-                ID_FIELD + F_STARTUP),
-        L"Start trackkat in the tray when you log in; anti-cheat mode needs it running");
-    field_ctl[F_UPDATES] = tip(
-        control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 156, MODES_Y + 12, 116, 22,
-                ID_FIELD + F_UPDATES),
-        L"Once installed, fetch newer versions in the background as they come out");
-    field_ctl[F_NPCLIENT] = tip(
-        control(L"BUTTON", L"Anti-cheat mode", WS_TABSTOP | BS_AUTOCHECKBOX, 284, MODES_Y + 12, 120, 22,
-                ID_FIELD + F_NPCLIENT),
-        L"For anti-cheat that blocks trackkat's NPClient: games load NaturalPoint's");
-    tip(control(L"BUTTON", L"Edit settings file", WS_TABSTOP | BS_PUSHBUTTON, 440, MODES_Y + 10, 130, 26,
-                ID_OPEN_SETTINGS),
-        L"Open trackkat.conf in a text editor; trackkat applies it each time it is saved");
-    tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 590, MODES_Y + 10, 116, 26, ID_QUIT),
-        L"Stop tracking and quit; closing the window instead keeps trackkat in the tray");
+    if (!(skip & GROUP_BOTTOM_ROW)) {
+        control(L"STATIC", L"", SS_ETCHEDHORZ, 0, MODES_Y, CLIENT_W, 2, 0);
+        field_ctl[F_STARTUP] = tip(
+            control(L"BUTTON", L"Start with Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 14, MODES_Y + 12, 130, 22,
+                    ID_FIELD + F_STARTUP),
+            L"Start trackkat in the tray when you log in; anti-cheat mode needs it running");
+        field_ctl[F_UPDATES] = tip(
+            control(L"BUTTON", L"Keep up to date", WS_TABSTOP | BS_AUTOCHECKBOX, 156, MODES_Y + 12, 116, 22,
+                    ID_FIELD + F_UPDATES),
+            L"Once installed, fetch newer versions in the background as they come out");
+        field_ctl[F_NPCLIENT] = tip(
+            control(L"BUTTON", L"Anti-cheat mode", WS_TABSTOP | BS_AUTOCHECKBOX, 284, MODES_Y + 12, 120, 22,
+                    ID_FIELD + F_NPCLIENT),
+            L"For anti-cheat that blocks trackkat's NPClient: games load NaturalPoint's");
+        tip(control(L"BUTTON", L"Edit settings file", WS_TABSTOP | BS_PUSHBUTTON, 440, MODES_Y + 10, 130, 26,
+                    ID_OPEN_SETTINGS),
+            L"Open trackkat.conf in a text editor; trackkat applies it each time it is saved");
+        tip(control(L"BUTTON", L"Quit trackkat", WS_TABSTOP | BS_PUSHBUTTON, 590, MODES_Y + 10, 116, 26, ID_QUIT),
+            L"Stop tracking and quit; closing the window instead keeps trackkat in the tray");
+    }
 
     /* Boxes last, beneath the controls they frame. */
     group(L"Control bindings", 10, BIND_Y, 700, BIND_H);
@@ -3467,7 +3465,7 @@ static int create_windows(void)
      * rather than shrunk from the big one. */
     HICON small_icon = resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXSMICON));
     SendMessageW(main_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
-    build_window();
+    build_window(0);
     fit_scroll();
 
     /* The log's own window, top-level, so it can sit beside a game. */
@@ -3589,8 +3587,9 @@ static int create(int show)
 /* Build the controls not yet made in Haskell into the window and log
  * window TrackKat.Gui.Window and TrackKat.Gui.Log made, with the hidden
  * window the tray icon talks to, drawn at the screen's dpi in fonts
- * numbered as TrackKat.UI.Draw's Font: window = haskell. */
-void hts_gui_build(HWND tray, HWND main, HWND log, int given_dpi, const HFONT *fonts)
+ * numbered as TrackKat.UI.Draw's Font, leaving out the GROUP_ groups
+ * given: window = haskell. */
+void hts_gui_build(HWND tray, HWND main, HWND log, int given_dpi, const HFONT *fonts, unsigned skip)
 {
     inst = GetModuleHandleW(NULL);
     SetConsoleCtrlHandler(console_closing, TRUE);
@@ -3605,8 +3604,16 @@ void hts_gui_build(HWND tray, HWND main, HWND log, int given_dpi, const HFONT *f
     tiny_font = fonts[4];
     mono_font = fonts[5];
     white_brush = CreateSolidBrush(RGB(255, 255, 255));
-    build_window();
+    build_window(skip);
     refresh();
+}
+
+/* Save the changes waiting to be, now: for TrackKat.Gui.BottomRow's Edit
+ * settings file. */
+void hts_gui_save_now(void)
+{
+    KillTimer(main_hwnd, ID_AUTOSAVE);
+    save_settings();
 }
 
 /* The window's messages that TrackKat.Gui.Window passes on. */
