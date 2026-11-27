@@ -13,7 +13,7 @@ import Foreign.Ptr (Ptr, ptrToIntPtr, wordPtrToPtr)
 import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HDC, HWND)
 import Graphics.Win32.Message (wM_COMMAND, wM_ERASEBKGND, wM_PAINT)
-import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect, getParent, sendMessage)
+import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, getParent, sendMessage)
 import System.Win32.Types (HANDLE)
 
 import TrackKat.Display (UpdateCheck (..), UpdateStatus (..))
@@ -38,10 +38,7 @@ mastheadProc :: HANDLE -> HANDLE -> WindowClosure
 mastheadProc quiet offering w msg wp lp
     | msg == wM_ERASEBKGND = pure 1
     | msg == wM_PAINT = do
-        allocaPAINTSTRUCT $ \ps -> do
-            dc <- beginPaint w ps
-            paintIn w dc
-            endPaint w ps
+        painted w (paintIn w)
         pure 0
     -- Behind the buttons' rounded corners.
     | msg == wmPrintClient = paintIn w (wordPtrToPtr (fromIntegral wp)) >> pure 0

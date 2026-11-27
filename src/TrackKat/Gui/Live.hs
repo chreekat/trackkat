@@ -15,7 +15,7 @@ import Foreign.Ptr (Ptr, nullPtr, wordPtrToPtr)
 import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HWND)
 import Graphics.Win32.Message (wM_COMMAND, wM_DRAWITEM, wM_ERASEBKGND, wM_PAINT, wM_SETCURSOR)
-import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect, getParent, sendMessage)
+import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, getParent, sendMessage)
 import System.Win32.Types (HANDLE, LPCTSTR)
 
 import TrackKat.Config (HeadView (..))
@@ -58,14 +58,12 @@ liveProc :: WindowClosure
 liveProc w msg wp lp
     | msg == wM_ERASEBKGND = pure 1
     | msg == wM_PAINT = do
-        allocaPAINTSTRUCT $ \ps -> do
-            dc <- beginPaint w ps
+        painted w $ \dc -> do
             (_, _, right, bottom) <- getClientRect w
             dpi <- screenDpi
             (_, live) <- state
             buffered dc (0, 0, fromIntegral right, fromIntegral bottom) $ \mem ->
                 mapM_ (draw mem) (livePane dpi (fromIntegral right, fromIntegral bottom) live)
-            endPaint w ps
         pure 0
     | msg == wM_DRAWITEM = do
         let item = wordPtrToPtr (fromIntegral lp)

@@ -11,7 +11,7 @@ import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HDC, HWND)
 import Graphics.Win32.Message (wM_ERASEBKGND, wM_PAINT)
-import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect)
+import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect)
 import System.Win32.Types (INT)
 
 import TrackKat.Gui.Paint
@@ -33,14 +33,12 @@ curveProc :: WindowClosure
 curveProc w msg wp lp
     | msg == wM_ERASEBKGND = pure 1
     | msg == wM_PAINT = do
-        allocaPAINTSTRUCT $ \ps -> do
-            dc <- beginPaint w ps
+        painted w $ \dc -> do
             (_, _, right, bottom) <- getClientRect w
             let (width, height) = (fromIntegral right, fromIntegral bottom)
             -- cbits/gui.c's build_window numbers each plot by its axis.
             axis <- c_GetWindowLongPtr w gwlpUserData
             buffered dc (0, 0, width, height) (\mem -> paint mem (fromIntegral axis) width height)
-            endPaint w ps
         pure 0
     | otherwise = defWindowProc (Just w) msg wp lp
 

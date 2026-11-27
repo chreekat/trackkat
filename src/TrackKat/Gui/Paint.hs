@@ -6,6 +6,7 @@
 module TrackKat.Gui.Paint (
     registerPart,
     guarded,
+    painted,
     resourceIcon,
     Font (..),
     screenDpi,
@@ -35,10 +36,10 @@ import Foreign.Ptr (FunPtr, Ptr, castPtr, nullPtr, wordPtrToPtr)
 import Graphics.Win32.GDI.Bitmap (sRCCOPY)
 import Graphics.Win32.GDI.Brush (nULL_BRUSH)
 import Graphics.Win32.GDI.Pen (PenStyle, pS_DASH, pS_DOT, pS_SOLID)
-import Graphics.Win32.GDI.Types (HDC, HICON, LPRECT, RECT, allocaRECT, peekRECT, pokeRECT, tRANSPARENT)
+import Graphics.Win32.GDI.Types (HDC, HICON, HWND, LPRECT, RECT, allocaRECT, peekRECT, pokeRECT, tRANSPARENT)
 import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Resource (iMAGE_ICON, lR_SHARED)
-import Graphics.Win32.Window (WindowClosure, defWindowProc)
+import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, allocaPAINTSTRUCT, defWindowProc)
 import System.Win32.DLL (getModuleHandle)
 import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
@@ -46,6 +47,10 @@ import TrackKat.Gui.Win32
 import TrackKat.UI.Draw
 
 foreign import ccall unsafe "hts_gui_dpi" c_dpi :: IO CInt
+
+-- BeginPaint can send the window messages of its own, so it is safe.
+foreign import ccall safe "windows.h BeginPaint" c_BeginPaint :: HWND -> LPPAINTSTRUCT -> IO HDC
+foreign import ccall unsafe "windows.h EndPaint" c_EndPaint :: HWND -> LPPAINTSTRUCT -> IO BOOL
 foreign import ccall unsafe "hts_gui_font" c_font :: CInt -> IO HANDLE
 
 foreign import ccall unsafe "windows.h LoadImageW"
@@ -104,6 +109,11 @@ guarded report part proc w msg wp lp =
     proc w msg wp lp `catch` \e -> case fromException e of
         Just async -> throwIO (async :: SomeAsyncException)
         Nothing -> report (part ++ " failed: " ++ displayException e) >> defWindowProc (Just w) msg wp lp
+
+-- | Paint a window that asked to be, on its device context, ending the
+-- paint whatever happens.
+painted :: HWND -> (HDC -> IO ()) -> IO ()
+painted w paint = allocaPAINTSTRUCT $ \ps -> bracket (c_BeginPaint w ps) (\_ -> c_EndPaint w ps) paint
 
 -- | An icon from the program's resources (icons/trackkat.rc) at a size in
 -- pixels, or Windows' own if the build left it out. Shared: never destroyed.
@@ -232,14 +242,18 @@ draw dc = \case
 withTools :: HDC -> Stroke -> CInt -> Colour -> Maybe Colour -> IO a -> IO ()
 withTools dc stroke width line fill act = do
     _ <- c_SetBkMode dc tRANSPARENT
-    pen <- c_CreatePen (penStyle stroke) width (colourRef line)
-    brush <- maybe (c_GetStockObject nULL_BRUSH) solidBrush fill
-    oldPen <- c_SelectObject dc pen
-    oldBrush <- c_SelectObject dc brush
-    _ <- act
-    mapM_ (c_SelectObject dc) [oldBrush, oldPen]
-    _ <- c_DeleteObject pen
-    mapM_ (\_ -> c_DeleteObject brush) fill
+    bracket acquire release (\_ -> () <$ act)
+  where
+    acquire = do
+        pen <- c_CreatePen (penStyle stroke) width (colourRef line)
+        brush <- maybe (c_GetStockObject nULL_BRUSH) solidBrush fill
+        oldPen <- c_SelectObject dc pen
+        oldBrush <- c_SelectObject dc brush
+        pure (pen, brush, oldPen, oldBrush)
+    release (pen, brush, oldPen, oldBrush) = do
+        mapM_ (c_SelectObject dc) [oldBrush, oldPen]
+        _ <- c_DeleteObject pen
+        mapM_ (\_ -> c_DeleteObject brush) fill
 
 penStyle :: Stroke -> PenStyle
 penStyle Solid = pS_SOLID
