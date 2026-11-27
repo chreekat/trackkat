@@ -9,13 +9,15 @@
 -- for updates finds a newer version the second time, which Restart to
 -- update takes back.
 --
--- usage: fakegui [c | haskell] [seconds]: the window in C by default, as
--- trackkat's settings have it.
+-- usage: fakegui [c | haskell] [seconds [at]]: the window in C by default, as
+-- trackkat's settings have it; with a time, the script held at that many
+-- seconds in, so two windows can be compared.
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, when)
 import Data.Fixed (mod')
+import Data.Maybe (fromMaybe)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
@@ -61,7 +63,7 @@ data Script = Script
 
 main :: IO ()
 main = do
-    (which, seconds) <-
+    (which, (seconds, at)) <-
         getArgs >>= \case
             "haskell" : rest -> pure (HaskellWindow, secondsIn rest)
             "c" : rest -> pure (CWindow, secondsIn rest)
@@ -69,14 +71,15 @@ main = do
     showUpdateButton UpdateButtonEnabled
     withGui which WindowShown $ \started -> do
         either (\e -> hPutStrLn stderr ("could not start the GUI (error " ++ show e ++ ")") >> exitFailure) pure started
-        script seconds
+        script seconds at
 
-secondsIn :: [String] -> Int
-secondsIn [s] = read s
-secondsIn _ = 30
+secondsIn :: [String] -> (Int, Maybe Double)
+secondsIn [s] = (read s, Nothing)
+secondsIn [s, at] = (read s, Just (read at))
+secondsIn _ = (30, Nothing)
 
-script :: Int -> IO ()
-script seconds = do
+script :: Int -> Maybe Double -> IO ()
+script seconds at = do
     forM_ settings (uncurry showSetting)
     guiLog "Games will load NPClient from C:\\Games\\trackkat"
     guiLog "Recenter: F12, Throttle - HOTAS Warthog button 4 double   Pause: Ctrl+F9   Trim: Throttle - HOTAS Warthog button 4   Aim: Throttle - HOTAS Warthog button 4 hold"
@@ -89,13 +92,13 @@ script seconds = do
     -- the centre: its left, right and top reflectors, from the neck pivot.
     showClip (Just (V3 38 92 71, V3 (-32) 92 71, V3 3 148.2 (-16.9)))
     showCamera Tracking
-    run (seconds * 60) 0 (Script False NotAiming 0 0)
+    run (seconds * 60) at 0 (Script False NotAiming 0 0)
 
-run :: Int -> Int -> Script -> IO ()
-run frames i s
+run :: Int -> Maybe Double -> Int -> Script -> IO ()
+run frames at i s
     | i >= frames = pure ()
     | otherwise = do
-        let t = fromIntegral i / 60 :: Double
+        let t = fromMaybe (fromIntegral i / 60) at
             headPose = HeadPose (14 * sin (t * 0.9)) (-6 + 5 * sin (t * 1.3)) (3 * sin (t * 0.7)) (10 * sin (t * 0.5)) (-4 * sin (t * 0.8)) (15 * sin (t * 0.4))
             view = HeadPose (yaw headPose * 6) (pitch headPose * 7) (roll headPose * 4) (tx headPose * 3) (ty headPose * 4) (tz headPose * 2.5)
             lost = t `mod'` 12 > 10
@@ -129,7 +132,7 @@ run frames i s
         showUpdateCheck (if left > 0 then CheckRunning else CheckIdle)
         if QuitAction `elem` acts
             then pure ()
-            else threadDelay 16000 >> run frames (i + 1) s'{sChecking = left, sChecks = checks}
+            else threadDelay 16000 >> run frames at (i + 1) s'{sChecking = left, sChecks = checks}
 
 -- | What the script does for something the user asked for.
 act :: HeadPose -> Action -> Script -> IO Script
