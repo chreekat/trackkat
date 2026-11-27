@@ -108,7 +108,7 @@ library
     exposed-modules:
       TrackKat.Gui
       TrackKat.Gui.Curve
-      TrackKat.Gui.HeadView
+      TrackKat.Gui.Live
       TrackKat.Gui.Masthead
       TrackKat.Gui.Paint
       TrackKat.Gui.Tray

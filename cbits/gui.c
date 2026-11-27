@@ -3577,7 +3577,7 @@ void hts_gui_curve_state(int axis, wchar_t *text, double *head, int *live)
 }
 
 /* What the head view shows, from the last refresh, for
- * TrackKat.Gui.HeadView: the view shown, as head_view numbers them; the
+ * TrackKat.Gui.Live: the view shown, as head_view numbers them; the
  * camera, blobs and reflectors_seen, as State has them; whether paused; the
  * head and the view games see, six each; whether the clip is shown and its
  * reflectors, nine; up to BLOBS_MAX blobs of seven, as hts_gui_blobs takes
@@ -3610,12 +3610,34 @@ void hts_gui_head_state(int *view, int *camera, int *blobs, int *reflectors_seen
     memcpy(area, seen.area, sizeof seen.area[0] * seen.areas);
 }
 
-/* Whether a window is the head view, which TrackKat.Gui.HeadView draws. */
-int hts_gui_is_head_view(HWND w) { return w == head_ctl; }
+/* What the rest of the live view shows, from the last refresh, for
+ * TrackKat.Gui.Live: why the camera is down, in TEXT_MAX characters; the
+ * view held while paused, two; whether trimmed, the trim, two, and whether
+ * it moves the view too; whether aiming; how many games and one's name, in
+ * 64 characters; and the figures, in TEXT_MAX. */
+void hts_gui_live_state(wchar_t *camera_text, float *held, int *trimmed, float *trim, int *trim_moves, int *aiming,
+                        int *games, wchar_t *game_name, wchar_t *stats)
+{
+    copy_text(camera_text, TEXT_MAX, seen.camera_text);
+    memcpy(held, seen.held, sizeof seen.held);
+    *trimmed = seen.trimmed;
+    memcpy(trim, seen.trim, sizeof seen.trim);
+    *trim_moves = seen.trim_moves;
+    *aiming = seen.aiming;
+    *games = seen.games;
+    copy_text(game_name, 64, seen.game_name);
+    copy_text(stats, TEXT_MAX, seen.stats);
+}
 
-/* The rest of the live view, for TrackKat.Gui.HeadView. */
-void hts_gui_paint_live(HDC dc, int width, int height) { paint_live(dc, width, height); }
-void hts_gui_draw_switch(const DRAWITEMSTRUCT *d) { draw_switch(d); }
+/* Which of the live view's controls a window is, for TrackKat.Gui.Live:
+ * a switch, numbered as the binding lists, LISTS for the head view, or -1. */
+int hts_gui_live_control(HWND w)
+{
+    for (int i = 0; i < LISTS; i++)
+        if (w == switch_ctl[i])
+            return i;
+    return w == head_ctl ? LISTS : -1;
+}
 
 /* The screen's dots per inch, which the window is drawn to. */
 int hts_gui_dpi(void) { return dpi; }

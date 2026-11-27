@@ -66,7 +66,7 @@ import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Gui.Curve (registerCurve)
-import TrackKat.Gui.HeadView (registerLive)
+import TrackKat.Gui.Live (registerLive)
 import TrackKat.Gui.Masthead (registerMasthead)
 import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
