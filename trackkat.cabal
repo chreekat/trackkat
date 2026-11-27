@@ -88,6 +88,7 @@ library
     TrackKat.UI.Masthead
     TrackKat.UI.Palette
     TrackKat.UI.Tray
+    TrackKat.UI.Window
     TrackKat.Updater
     TrackKat.Visibility
     TrackKat.USB
@@ -119,6 +120,7 @@ library
       TrackKat.Gui.Tips
       TrackKat.Gui.Tray
       TrackKat.Gui.Win32
+      TrackKat.Gui.Window
       TrackKat.Install
       TrackKat.Windows
     c-sources:
@@ -279,6 +281,7 @@ test-suite tests
     Test.UI.Log
     Test.UI.Masthead
     Test.UI.Tray
+    Test.UI.Window
     Test.Updater
     Test.Visibility
     Test.World

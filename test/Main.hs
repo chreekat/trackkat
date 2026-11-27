@@ -53,6 +53,7 @@ import qualified Test.UI.Live
 import qualified Test.UI.Log
 import qualified Test.UI.Masthead
 import qualified Test.UI.Tray
+import qualified Test.UI.Window
 import qualified Test.Updater
 import qualified Test.Visibility
 import qualified Test.World
@@ -89,6 +90,7 @@ main = do
                 , Test.UI.Log.tests
                 , Test.UI.Masthead.tests
                 , Test.UI.Tray.tests
+                , Test.UI.Window.tests
                 , Test.Calibration.tests
                 , Test.Visibility.tests
                 , Test.Response.tests

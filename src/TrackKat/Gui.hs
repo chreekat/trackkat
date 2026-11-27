@@ -46,9 +46,11 @@ module TrackKat.Gui (
 
 import Control.Concurrent.Async (link, wait, withAsyncBound)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (bracket, finally)
+import Control.Exception (Exception, bracket, finally, throwIO, try)
 import Control.Monad (forM_, void, when)
+import Data.Bifunctor (first)
 import Data.Bits (shiftL, shiftR, testBit, (.&.))
+import Data.Either (isRight)
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
@@ -66,13 +68,15 @@ import TrackKat.Config (KeyOrButton, WhichWindow (..), keyFromCodes, renderKeyOr
 import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
+import TrackKat.Gui.Calls (raiseWindow)
 import TrackKat.Gui.Curve (registerCurve)
 import TrackKat.Gui.Kit (fontHandles, kitDpi, setUp)
 import TrackKat.Gui.Live (registerLive)
-import TrackKat.Gui.Log (registerLog)
+import TrackKat.Gui.Log (makeLog, registerLog)
 import TrackKat.Gui.Masthead (registerMasthead)
 import TrackKat.Gui.Shown (logLine, takeSnapshot, tell)
-import TrackKat.Gui.Tray (makeTray)
+import TrackKat.Gui.Tray (makeTray, startTray)
+import TrackKat.Gui.Window (makeMain, registerMain)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..), Trim (..))
@@ -81,9 +85,8 @@ import TrackKat.UI.Live (TrimMoves (..), trimMoves)
 import TrackKat.UI.Tray (TrayChoice (..))
 
 foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
-foreign import ccall safe "hts_gui_create" c_create :: CInt -> HWND -> CInt -> Ptr HANDLE -> IO CInt
+foreign import ccall safe "hts_gui_build" c_build :: HWND -> HWND -> HWND -> CInt -> Ptr HANDLE -> IO ()
 foreign import ccall unsafe "windows.h SetProcessDPIAware" c_SetProcessDPIAware :: IO BOOL
-foreign import ccall safe "hts_gui_show" c_show :: IO ()
 foreign import ccall unsafe "hts_gui_ask" c_ask :: CInt -> IO ()
 foreign import ccall safe "hts_gui_dialog_message" c_dialog_message :: LPMSG -> IO CInt
 foreign import ccall safe "hts_gui_stop" c_stop :: IO ()
@@ -126,9 +129,9 @@ withGui HaskellWindow w work = do
     made <- newEmptyMVar
     withAsyncBound (runGui made) $ \gui -> do
         link gui
-        (rc, thread) <- takeMVar made
-        work (started rc)
-            `finally` (c_stop >> when (rc == 0) (postThreadMessage thread wM_QUIT 0 0) >> wait gui)
+        (result, thread) <- takeMVar made
+        work result
+            `finally` (c_stop >> when (isRight result) (postThreadMessage thread wM_QUIT 0 0) >> wait gui)
   where
     -- Windows belong to the thread that made them, which alone gets their
     -- messages: a bound thread, so it is always the same one.
@@ -138,30 +141,42 @@ withGui HaskellWindow w work = do
         _ <- c_SetProcessDPIAware
         kit <- setUp
         takeSnapshot
-        rc <-
-            firstFailure (map (\register -> register kit guiLog) [registerMasthead, registerCurve, registerLive, registerLog]) >>= \case
-                Left e -> pure (fromIntegral e)
-                Right () ->
-                    makeTray guiLog choose
-                        >>= either (pure . fromIntegral) (\tray -> withArray (fontHandles kit) (c_create (windowCode w) tray (fromIntegral (kitDpi kit))))
-        putMVar made (rc, thread)
-        when (rc == 0) (allocaMessage messageLoop)
-    firstFailure = foldr (\step rest -> step >>= either (pure . Left) (const rest)) (pure (Right ()))
+        result <- start kit
+        putMVar made (result, thread)
+        when (isRight result) (allocaMessage messageLoop)
+    start kit = first (\(Failed e) -> e) <$> try (makeAll kit)
+    makeAll kit = do
+        mapM_ (\register -> register kit guiLog >>= orFail) [registerMain, registerMasthead, registerCurve, registerLive, registerLog]
+        window <- makeMain kit >>= orFail
+        logWindow <- makeLog kit >>= orFail
+        tray <- makeTray guiLog (choose window) >>= orFail
+        withArray (fontHandles kit) (c_build tray window logWindow (fromIntegral (kitDpi kit)))
+        startTray tray
+        case w of
+            WindowShown -> raiseWindow window
+            WindowHidden -> pure ()
+    orFail = either (throwIO . Failed) pure
     messageLoop msg =
         getMessage msg Nothing >>= \more -> when more $ do
             handled <- c_dialog_message msg
             when (handled == 0) (translateMessage msg >> void (dispatchMessage msg))
             messageLoop msg
 
+-- | A Windows error code that making the window failed with.
+newtype Failed = Failed Int
+    deriving (Show)
+
+instance Exception Failed
+
 -- | What the user chose from the tray icon or its menu, or another trackkat
--- asked for.
-choose :: TrayChoice -> IO ()
-choose OpenChoice = c_show
-choose RecenterChoice = ask RecenterAction
-choose PauseChoice = ask PauseAction
-choose TrimChoice = ask TrimAction
-choose OfferChoice = ask OfferAction
-choose QuitChoice = ask QuitAction
+-- asked for, with the window.
+choose :: HWND -> TrayChoice -> IO ()
+choose window OpenChoice = raiseWindow window
+choose _ RecenterChoice = ask RecenterAction
+choose _ PauseChoice = ask PauseAction
+choose _ TrimChoice = ask TrimAction
+choose _ OfferChoice = ask OfferAction
+choose _ QuitChoice = ask QuitAction
 
 -- | Ask for something, as the window does, for 'takeActions'.
 ask :: Action -> IO ()

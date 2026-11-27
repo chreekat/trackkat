@@ -6,6 +6,7 @@
 module TrackKat.Gui.Paint (
     registerPart,
     registerWindow,
+    topWindow,
     Background (..),
     guarded,
     Canvas (..),
@@ -39,13 +40,15 @@ import Graphics.Win32.GDI.Bitmap (sRCCOPY)
 import Graphics.Win32.GDI.Brush (nULL_BRUSH)
 import Graphics.Win32.GDI.Pen (PenStyle, pS_DASH, pS_DOT, pS_SOLID)
 import Graphics.Win32.GDI.Types (HDC, HICON, HWND, LPRECT, RECT, allocaRECT, peekRECT, pokeRECT, tRANSPARENT)
+import Graphics.Win32.Message (wM_SETICON)
 import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Resource (iMAGE_ICON, lR_SHARED)
-import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, allocaPAINTSTRUCT, defWindowProc)
+import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, adjustWindowRect, allocaPAINTSTRUCT, cW_USEDEFAULT, defWindowProc, wS_EX_CONTROLPARENT)
 import System.Win32.DLL (getModuleHandle)
-import System.Win32.Info (cOLOR_BTNFACE)
+import System.Win32.Info (cOLOR_BTNFACE, sM_CXSMICON)
 import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
+import TrackKat.Gui.Calls (createWindow, pointerParam, send)
 import TrackKat.Gui.Kit (Kit, fontHandle)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Draw
@@ -86,10 +89,11 @@ foreign import ccall unsafe "windows.h CreateCompatibleBitmap" c_CreateCompatibl
 foreign import ccall unsafe "windows.h BitBlt"
     c_BitBlt :: HDC -> CInt -> CInt -> CInt -> CInt -> HDC -> CInt -> CInt -> DWORD -> IO BOOL
 foreign import ccall unsafe "windows.h RegisterClassW" c_RegisterClass :: Ptr () -> IO ATOM
+foreign import ccall unsafe "windows.h GetSystemMetrics" c_GetSystemMetrics :: CInt -> IO CInt
+foreign import ccall unsafe "windows.h SystemParametersInfoW" c_SystemParametersInfo :: UINT -> UINT -> Ptr () -> UINT -> IO BOOL
 foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosure)
 
--- | Register a window class for a part of the window drawn here, which
--- cbits/gui.c then makes it of rather than registering its own; its
+-- | Register a window class for a part of the window drawn here; its
 -- procedure is 'guarded', named by the part. Left is a Windows error code.
 registerPart :: (String -> IO ()) -> String -> String -> Background -> WindowClosure -> IO (Either Int ())
 registerPart report part className background = registerClass report part className background nullPtr
@@ -110,6 +114,32 @@ registerClass report part className background icon proc = do
     name <- newCWString className
     atom <- withWndClass wndProc inst cursor (backgroundBrush background) icon name c_RegisterClass
     if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
+
+-- | Make a window of its own, hidden, of a class, title and style, with
+-- a client area of a width and height but no taller than the screen's work
+-- area, and the program's small icon. Left is a Windows error code.
+topWindow :: String -> String -> DWORD -> (CInt, CInt) -> IO (Either Int HWND)
+topWindow cls title style (w, h) = do
+    (l, t, r, b) <- adjustWindowRect (0, 0, fromIntegral w, fromIntegral h) style False
+    work <- workArea
+    let height = maybe id (\(_, top, _, bottom) -> min (bottom - top)) work (b - t)
+    wnd <- createWindow wS_EX_CONTROLPARENT cls title style (anywhere, anywhere, fromIntegral (r - l), fromIntegral height) Nothing 0
+    if wnd == nullPtr
+        then Left . fromIntegral <$> getLastError
+        else do
+            -- The title bar's and taskbar's, drawn at its own size rather
+            -- than shrunk from the class's.
+            small <- c_GetSystemMetrics (fromIntegral sM_CXSMICON) >>= resourceIcon programIcon
+            _ <- send wnd wM_SETICON iconSmall (pointerParam small)
+            pure (Right wnd)
+  where
+    anywhere = fromIntegral cW_USEDEFAULT
+
+-- | The screen's but for the taskbar, if Windows says.
+workArea :: IO (Maybe RECT)
+workArea = allocaRECT $ \p -> do
+    ok <- c_SystemParametersInfo spiGetWorkArea 0 (castPtr p) 0
+    if ok then Just <$> peekRECT p else pure Nothing
 
 -- | What Windows fills a part's window with before it is painted.
 data Background

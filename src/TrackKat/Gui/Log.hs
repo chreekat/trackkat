@@ -1,9 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- | The log's own window, with window = haskell: the whole log, and
--- trackkat's version, to copy into a bug report. cbits/gui.c makes it, of
--- the class registered here, and shows and hides it; it builds itself.
-module TrackKat.Gui.Log (registerLog) where
+-- trackkat's version, to copy into a bug report. cbits/gui.c's Open log
+-- shows it.
+module TrackKat.Gui.Log (registerLog, makeLog) where
 
 import Control.Monad (unless, void)
 import Data.Bits (shiftR, (.&.), (.|.))
@@ -18,19 +18,21 @@ import Graphics.Win32.GDI.Clip (cF_UNICODETEXT)
 import Graphics.Win32.GDI.Types (HWND, LPRECT)
 import Graphics.Win32.Message (WindowMessage, wM_APP, wM_CLOSE, wM_COMMAND, wM_CREATE, wM_GETMINMAXINFO, wM_SETFONT, wM_SETREDRAW, wM_SIZE, wM_TIMER)
 import Graphics.Win32.Misc (iDCANCEL)
-import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, sW_HIDE, wS_CHILD, wS_CLIPSIBLINGS, wS_EX_CLIENTEDGE, wS_TABSTOP, wS_VISIBLE, wS_VSCROLL)
+import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, sW_HIDE, wS_CHILD, wS_CLIPSIBLINGS, wS_EX_CLIENTEDGE, wS_OVERLAPPEDWINDOW, wS_TABSTOP, wS_VISIBLE, wS_VSCROLL)
+import System.Win32.Info (sM_CXICON)
 import System.Win32.Mem (gMEM_MOVEABLE)
 import System.Win32.Types (BOOL, DWORD, HANDLE, UINT, WPARAM)
 
 import TrackKat.Display (Shown (..))
 import TrackKat.Gui.Calls (createWindow, moveWindow, pointerParam, send, showWindow)
 import TrackKat.Gui.Kit (Kit, fontHandle, scaled)
-import TrackKat.Gui.Paint (Background (..), Colour (..), Font (..), registerPart, solidBrush)
+import TrackKat.Gui.Paint (Colour (..), Font (..), registerWindow, solidBrush, topWindow)
 import TrackKat.Gui.Shown (logBook, snapshot)
 import TrackKat.Gui.Tips (makeTips, tip)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Log (Mark, logMax, since, start)
 
+foreign import ccall unsafe "windows.h GetSystemMetrics" c_GetSystemMetrics :: CInt -> IO CInt
 foreign import ccall unsafe "windows.h SetTimer" c_SetTimer :: HWND -> WPARAM -> UINT -> Ptr () -> IO WPARAM
 foreign import ccall unsafe "windows.h SetBkColor" c_SetBkColor :: Ptr () -> DWORD -> IO DWORD
 foreign import ccall unsafe "windows.h GetScrollInfo" c_GetScrollInfo :: HWND -> CInt -> Ptr () -> IO BOOL
@@ -60,7 +62,13 @@ registerLog kit report = do
     mark <- newIORef start
     -- Behind the read-only box, for the life of the process.
     white <- solidBrush (RGB 255 255 255)
-    registerPart report "The log window" "trackkat_log" ButtonFace (logProc kit parts mark white)
+    size <- c_GetSystemMetrics (fromIntegral sM_CXICON)
+    registerWindow report "The log window" "trackkat_log" size (logProc kit parts mark white)
+
+-- | Make the log window, hidden: top-level, so it can sit beside a game.
+-- Left is a Windows error code.
+makeLog :: Kit -> IO (Either Int HWND)
+makeLog kit = topWindow "trackkat_log" "trackkat log" wS_OVERLAPPEDWINDOW (scaled kit 680, scaled kit 460)
 
 logProc :: Kit -> IORef (Maybe Parts) -> IORef Mark -> HANDLE -> WindowClosure
 logProc kit parts mark white w msg wp lp
@@ -153,7 +161,7 @@ append :: HWND -> String -> IO ()
 append box text = do
     _ <- send box wM_SETREDRAW 0 0
     (start0, end0) <- selection
-    (_, (page, pos, top)) <- withScrollInfo (c_GetScrollInfo box sbVert)
+    (_, (page, pos, top, _)) <- withScrollInfo (c_GetScrollInfo box sbVert)
     let following = start0 == end0 && (page == 0 || pos + fromIntegral page >= top)
     first0 <- send box emGetFirstVisibleLine 0 0
     len0 <- c_GetWindowTextLength box

@@ -1,9 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- | trackkat's system tray icon, with window = haskell: the hidden window it
--- talks to, its look and tooltip ("TrackKat.UI.Tray"), and its menu. The window
--- it opens is cbits/gui.c's.
-module TrackKat.Gui.Tray (makeTray) where
+-- talks to, its look and tooltip ("TrackKat.UI.Tray"), and its menu.
+module TrackKat.Gui.Tray (makeTray, startTray) where
 
 import Control.Exception (bracket)
 import Control.Monad (forM_, unless, void, when)
@@ -28,7 +27,7 @@ import Graphics.Win32.Window.ForegroundWindow (setForegroundWindow)
 import Graphics.Win32.Window.PostMessage (postMessage)
 import System.Win32.DLL (getModuleHandle)
 import System.Win32.Info (sM_CXSMICON)
-import System.Win32.Types (BOOL, DWORD, LPCTSTR, UINT, getLastError)
+import System.Win32.Types (BOOL, DWORD, LPCTSTR, UINT, WPARAM, getLastError)
 
 import TrackKat.Gui.Calls (createWindow)
 import TrackKat.Gui.Paint (guarded, resourceIcon)
@@ -46,6 +45,7 @@ foreign import ccall safe "shellapi.h Shell_NotifyIconW" c_Shell_NotifyIcon :: D
 foreign import ccall safe "windows.h TrackPopupMenu"
     c_TrackPopupMenu :: HMENU -> UINT -> CInt -> CInt -> CInt -> HWND -> LPRECT -> IO BOOL
 foreign import ccall unsafe "windows.h GetSystemMetrics" c_GetSystemMetrics :: CInt -> IO CInt
+foreign import ccall unsafe "windows.h SetTimer" c_SetTimer :: HWND -> WPARAM -> UINT -> Ptr () -> IO WPARAM
 foreign import ccall unsafe "windows.h RegisterWindowMessageW" c_RegisterWindowMessage :: LPCTSTR -> IO WindowMessage
 
 -- As cbits/gui.c's WM_APP_ messages, which other trackkats send too.
@@ -59,10 +59,10 @@ wmAppOpenSettings = wM_APP + 5
 data Showing = NotShown | ShownAs TrayLook String
     deriving (Eq)
 
--- | Make the hidden window the tray icon talks to, for cbits/gui.c's
--- hts_gui_create, which times it; it is told what the user chose from the
--- icon or its menu, or another trackkat asked for, and reports what failed
--- with the first function given. Left is a Windows error code.
+-- | Make the hidden window the tray icon talks to; it is told what the user
+-- chose from the icon or its menu, or another trackkat asked for, and
+-- reports what failed with the first function given. Left is a Windows
+-- error code.
 makeTray :: (String -> IO ()) -> (TrayChoice -> IO ()) -> IO (Either Int HWND)
 makeTray report choose = do
     inst <- getModuleHandle Nothing
@@ -83,6 +83,11 @@ makeTray report choose = do
   where
     -- As cbits/gui.c's hts_gui_quit_running and hts_gui_show_running find it.
     className = mkClassName "trackkat"
+
+-- | Show the icon, and keep it and the window up to date, as often as the
+-- window's live view moves.
+startTray :: HWND -> IO ()
+startTray w = void (c_SetTimer w 1 33 nullPtr)
 
 trayProc :: (String -> IO ()) -> (TrayChoice -> IO ()) -> WindowMessage -> IORef Showing -> WindowClosure
 trayProc report choose taskbarCreated shown = guarded report "The tray icon" (respond choose taskbarCreated shown)

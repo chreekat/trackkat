@@ -26,7 +26,28 @@ module TrackKat.Gui.Win32 (
     wmCtlColorBtn,
     wmCtlColorStatic,
     wmContextMenu,
+    wmMouseWheel,
     setMinTrackSize,
+    setMaxTrackSize,
+    iconSmall,
+
+    -- * Scrolling
+    sbLineUp,
+    sbLineDown,
+    sbPageUp,
+    sbPageDown,
+    sbThumbTrack,
+    sbThumbPosition,
+    sbTop,
+    sbBottom,
+    swScrollChildren,
+    swInvalidate,
+    swErase,
+    withScrollRange,
+
+    -- * The screen
+    spiGetWorkArea,
+    gwlStyle,
 
     -- * Edit controls
     ssNotify,
@@ -99,7 +120,7 @@ import Data.Word (Word8)
 import Graphics.Win32.GDI.Types (HBRUSH, HCURSOR, HDC, HICON, HWND)
 import Graphics.Win32.Message (WindowMessage)
 import Graphics.Win32.Window (WindowClosure)
-import System.Win32.Types (DWORD, HINSTANCE, INT, LPCTSTR, UINT)
+import System.Win32.Types (DWORD, HINSTANCE, INT, LPCTSTR, UINT, WPARAM)
 
 -- | An ACTCTXW for a manifest among a module's resources, by its path and
 -- resource number.
@@ -196,7 +217,8 @@ gwlpUserData = #{const GWLP_USERDATA}
 idcHand :: LPCTSTR
 idcHand = wordPtrToPtr #{const IDC_HAND}
 
-wmPrintClient, wmCtlColorBtn, wmCtlColorStatic, wmContextMenu :: WindowMessage
+wmPrintClient, wmCtlColorBtn, wmCtlColorStatic, wmContextMenu, wmMouseWheel :: WindowMessage
+wmMouseWheel = #{const WM_MOUSEWHEEL}
 wmPrintClient = #{const WM_PRINTCLIENT}
 wmCtlColorBtn = #{const WM_CTLCOLORBTN}
 wmCtlColorStatic = #{const WM_CTLCOLORSTATIC}
@@ -207,6 +229,50 @@ setMinTrackSize :: Ptr () -> CInt -> CInt -> IO ()
 setMinTrackSize p w h = do
     #{poke MINMAXINFO, ptMinTrackSize.x} p w
     #{poke MINMAXINFO, ptMinTrackSize.y} p h
+
+-- | Set a MINMAXINFO's largest size the window can be dragged to.
+setMaxTrackSize :: Ptr () -> CInt -> CInt -> IO ()
+setMaxTrackSize p w h = do
+    #{poke MINMAXINFO, ptMaxTrackSize.x} p w
+    #{poke MINMAXINFO, ptMaxTrackSize.y} p h
+
+iconSmall :: WPARAM
+iconSmall = #{const ICON_SMALL}
+
+sbLineUp, sbLineDown, sbPageUp, sbPageDown, sbThumbTrack, sbThumbPosition, sbTop, sbBottom :: WPARAM
+sbLineUp = #{const SB_LINEUP}
+sbLineDown = #{const SB_LINEDOWN}
+sbPageUp = #{const SB_PAGEUP}
+sbPageDown = #{const SB_PAGEDOWN}
+sbThumbTrack = #{const SB_THUMBTRACK}
+sbThumbPosition = #{const SB_THUMBPOSITION}
+sbTop = #{const SB_TOP}
+sbBottom = #{const SB_BOTTOM}
+
+swScrollChildren, swInvalidate, swErase :: UINT
+swScrollChildren = #{const SW_SCROLLCHILDREN}
+swInvalidate = #{const SW_INVALIDATE}
+swErase = #{const SW_ERASE}
+
+-- | A SCROLLINFO setting a scroll bar's range, from 0 to a largest
+-- position, and its page.
+withScrollRange :: CInt -> UINT -> (Ptr () -> IO a) -> IO a
+withScrollRange top page act =
+    allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke SCROLLINFO, cbSize} p (fromIntegral size :: UINT)
+        #{poke SCROLLINFO, fMask} p (#{const SIF_RANGE} .|. #{const SIF_PAGE} :: UINT)
+        #{poke SCROLLINFO, nMax} p top
+        #{poke SCROLLINFO, nPage} p page
+        act p
+  where
+    size = #{size SCROLLINFO}
+
+spiGetWorkArea :: UINT
+spiGetWorkArea = #{const SPI_GETWORKAREA}
+
+gwlStyle :: INT
+gwlStyle = #{const GWL_STYLE}
 
 ssNotify :: DWORD
 ssNotify = #{const SS_NOTIFY}
@@ -226,8 +292,8 @@ sbVert :: CInt
 sbVert = #{const SB_VERT}
 
 -- | A SCROLLINFO asking for everything, to fill, and then its page,
--- position and largest position.
-withScrollInfo :: (Ptr () -> IO a) -> IO (a, (UINT, CInt, CInt))
+-- position, largest position, and where its box is being dragged.
+withScrollInfo :: (Ptr () -> IO a) -> IO (a, (UINT, CInt, CInt, CInt))
 withScrollInfo act =
     allocaBytes size $ \p -> do
         fillBytes p 0 size
@@ -237,7 +303,8 @@ withScrollInfo act =
         page <- #{peek SCROLLINFO, nPage} p
         pos <- #{peek SCROLLINFO, nPos} p
         top <- #{peek SCROLLINFO, nMax} p
-        pure (r, (page, pos, top))
+        dragged <- #{peek SCROLLINFO, nTrackPos} p
+        pure (r, (page, pos, top, dragged))
   where
     size = #{size SCROLLINFO}
 

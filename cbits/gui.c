@@ -1,6 +1,6 @@
 /* trackkat's window and system tray icon, on a thread of their own: this
- * file's (hts_gui_start), or one TrackKat.Gui runs (hts_gui_create), with
- * the tray icon TrackKat.Gui.Tray's.
+ * file's (hts_gui_start), or, with window = haskell, the controls not yet
+ * made in Haskell, built into TrackKat.Gui.Window's (hts_gui_build).
  *
  * Haskell pushes state in with the hts_gui_* setters and polls what the user
  * asked for with hts_gui_take_actions, as with the hotkeys. The GUI thread
@@ -305,14 +305,14 @@ void hts_gui_checking(int checking)
 }
 
 /* The version shown in the title, the strip and the log window. Call before
- * hts_gui_create. */
+ * the window is made. */
 void hts_gui_version(const wchar_t *text)
 {
     copy_text(version_text, 64, text);
 }
 
 /* Whether this copy can update itself, so Check for updates works. Call
- * before hts_gui_create. */
+ * before the window is made. */
 void hts_gui_updatable(int can)
 {
     updatable = can;
@@ -464,7 +464,6 @@ static int dpi = 96;
 static HFONT ui_font, mono_font, small_font, bold_font, caps_font, tiny_font;
 static HBRUSH white_brush;
 static UINT taskbar_created;
-static int own_tray; /* whether the tray icon is this file's */
 static int tray_added;
 static NOTIFYICONDATAW nid;
 static int icon_shown = -1;
@@ -3386,90 +3385,68 @@ static void make_fonts(void)
     mono_font = CreateFontIndirectW(&m);
 }
 
-/* Register one of this file's window classes, unless the thread registered
- * its own by that name: TrackKat.Gui draws that part of the window. 0 if
- * neither. */
-enum { CLASS_OURS = 1, CLASS_THEIRS };
-static int register_class(const WNDCLASSW *wc)
+/* Set the thread up to make the window on, and the window's fonts and
+ * scale: window = c. */
+static void set_up(void)
 {
-    WNDCLASSW theirs;
-    if (GetClassInfoW(inst, wc->lpszClassName, &theirs))
-        return CLASS_THEIRS;
-    return RegisterClassW(wc) ? CLASS_OURS : 0;
+    HDC screen = GetDC(NULL);
+    dpi = GetDeviceCaps(screen, LOGPIXELSY);
+    ReleaseDC(NULL, screen);
+    use_modern_controls();
+    init_common_controls();
+    make_fonts();
+    white_brush = CreateSolidBrush(RGB(255, 255, 255));
 }
 
-/* Make the windows, with the hidden one the tray icon talks to: the one
- * given, or this file's; and drawn at the screen's dpi in the fonts given,
- * numbered as TrackKat.UI.Draw's Font, or else this file's. */
-static int create_windows(HWND tray, int given_dpi, const HFONT *fonts)
+/* Make the windows, with the hidden one the tray icon talks to. */
+static int create_windows(void)
 {
     inst = GetModuleHandleW(NULL);
-    if (fonts) {
-        dpi = given_dpi;
-        ui_font = fonts[0];
-        bold_font = fonts[1];
-        small_font = fonts[2];
-        caps_font = fonts[3];
-        tiny_font = fonts[4];
-        mono_font = fonts[5];
-    } else {
-        HDC screen = GetDC(NULL);
-        dpi = GetDeviceCaps(screen, LOGPIXELSY);
-        ReleaseDC(NULL, screen);
-        use_modern_controls();
-        init_common_controls();
-        make_fonts();
-    }
-    white_brush = CreateSolidBrush(RGB(255, 255, 255));
+    set_up();
 
     WNDCLASSW wc;
     memset(&wc, 0, sizeof wc);
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    if (!tray) {
-        wc.lpfnWndProc = tray_proc;
-        wc.lpszClassName = L"trackkat";
-        if (!RegisterClassW(&wc))
-            return 0;
-        /* Hidden, but top-level, so a second trackkat can find it and
-         * Explorer's TaskbarCreated reaches it. */
-        tray = CreateWindowExW(0, L"trackkat", L"trackkat", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, inst, NULL);
-        if (!tray)
-            return 0;
-        taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
-        memset(&nid, 0, sizeof nid);
-        nid.cbSize = sizeof nid;
-        nid.hWnd = tray;
-        nid.uID = 1;
-        nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-        nid.uCallbackMessage = WM_APP_TRAY;
-        own_tray = 1;
-    }
-    tray_hwnd = tray;
+    wc.lpfnWndProc = tray_proc;
+    wc.lpszClassName = L"trackkat";
+    if (!RegisterClassW(&wc))
+        return 0;
+    /* Hidden, but top-level, so a second trackkat can find it and
+     * Explorer's TaskbarCreated reaches it. */
+    tray_hwnd = CreateWindowExW(0, L"trackkat", L"trackkat", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, inst, NULL);
+    if (!tray_hwnd)
+        return 0;
+    taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+    memset(&nid, 0, sizeof nid);
+    nid.cbSize = sizeof nid;
+    nid.hWnd = tray_hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+    nid.uCallbackMessage = WM_APP_TRAY;
     wc.lpfnWndProc = main_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.hIcon = resource_icon(PROGRAM_ICON, GetSystemMetrics(SM_CXICON));
     wc.lpszClassName = L"trackkat_window";
-    if (!register_class(&wc))
+    if (!RegisterClassW(&wc))
         return 0;
     wc.lpfnWndProc = live_proc;
     wc.hbrBackground = NULL;
     wc.lpszClassName = L"trackkat_live";
-    if (!register_class(&wc))
+    if (!RegisterClassW(&wc))
         return 0;
     wc.lpfnWndProc = curve_proc;
     wc.lpszClassName = L"trackkat_curve";
-    if (!register_class(&wc))
+    if (!RegisterClassW(&wc))
         return 0;
     wc.lpfnWndProc = strip_proc;
     wc.lpszClassName = L"trackkat_strip";
-    if (!register_class(&wc))
+    if (!RegisterClassW(&wc))
         return 0;
     wc.lpfnWndProc = log_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"trackkat_log";
-    int log_class = register_class(&wc);
-    if (!log_class)
+    if (!RegisterClassW(&wc))
         return 0;
 
     RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
@@ -3501,13 +3478,10 @@ static int create_windows(HWND tray, int given_dpi, const HFONT *fonts)
     if (!log_hwnd)
         return 0;
     SendMessageW(log_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
-    /* TrackKat.Gui.Log's builds its own. */
-    if (log_class == CLASS_OURS)
-        build_log_window();
+    build_log_window();
 
     refresh();
-    if (own_tray)
-        update_tray(1);
+    update_tray(1);
     SetTimer(tray_hwnd, TIMER_ID, TIMER_MS, NULL);
     return 1;
 }
@@ -3549,8 +3523,6 @@ int hts_gui_dialog_message(MSG *msg)
 
 /* Bring the window up to date with what Haskell pushed: on each WM_TIMER. */
 void hts_gui_refresh(void) { refresh(); }
-
-void hts_gui_show(void) { show_window(); }
 
 /* Ask for something, as the window does: ACT_ bits. */
 void hts_gui_ask(int act) { InterlockedOr(&actions, act); }
@@ -3601,20 +3573,50 @@ static BOOL WINAPI console_closing(DWORD event)
 }
 
 /* Make the window on the calling thread, which must then run its message
- * loop, with it shown or not, and with the hidden window the tray icon talks
- * to: one the thread made (a top-level window of class "trackkat", uID 1 its
- * icon's, sent this file's WM_APP_ messages and the timer's WM_TIMER), or
- * NULL for this file's; and with the dpi and fonts of create_windows.
- * Returns 0, or a Windows error code. */
-int hts_gui_create(int show, HWND tray, int given_dpi, const HFONT *fonts)
+ * loop, with it shown or not: window = c. Returns 0, or a Windows error
+ * code. */
+static int create(int show)
 {
     SetProcessDPIAware();
     SetConsoleCtrlHandler(console_closing, TRUE);
-    if (!create_windows(tray, given_dpi, fonts))
+    if (!create_windows())
         return (int)GetLastError();
     if (show)
         show_window();
     return 0;
+}
+
+/* Build the controls not yet made in Haskell into the window and log
+ * window TrackKat.Gui.Window and TrackKat.Gui.Log made, with the hidden
+ * window the tray icon talks to, drawn at the screen's dpi in fonts
+ * numbered as TrackKat.UI.Draw's Font: window = haskell. */
+void hts_gui_build(HWND tray, HWND main, HWND log, int given_dpi, const HFONT *fonts)
+{
+    inst = GetModuleHandleW(NULL);
+    SetConsoleCtrlHandler(console_closing, TRUE);
+    tray_hwnd = tray;
+    main_hwnd = main;
+    log_hwnd = log;
+    dpi = given_dpi;
+    ui_font = fonts[0];
+    bold_font = fonts[1];
+    small_font = fonts[2];
+    caps_font = fonts[3];
+    tiny_font = fonts[4];
+    mono_font = fonts[5];
+    white_brush = CreateSolidBrush(RGB(255, 255, 255));
+    build_window();
+    refresh();
+}
+
+/* The window's messages that TrackKat.Gui.Window passes on. */
+LRESULT hts_gui_main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) { return main_proc(w, msg, wp, lp); }
+
+/* TrackKat.Gui.Window scrolled the window's content up so far. */
+void hts_gui_scrolled(int pos)
+{
+    scroll_pos = pos;
+    place_bindings_tip();
 }
 
 static volatile LONG gui_status; /* 0 starting, 1 running, 2 failed */
@@ -3624,7 +3626,7 @@ static int show_at_start;
 static DWORD WINAPI gui_thread(LPVOID unused)
 {
     (void)unused;
-    int rc = hts_gui_create(show_at_start, NULL, 0, NULL);
+    int rc = create(show_at_start);
     InterlockedExchange(&gui_error, (LONG)rc);
     InterlockedExchange(&gui_status, rc ? 2 : 1);
     if (rc)
