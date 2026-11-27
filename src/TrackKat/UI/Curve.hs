@@ -8,9 +8,7 @@ module TrackKat.UI.Curve (
 
 import TrackKat.Config (parseCurve)
 import TrackKat.Response (Curve (..), Multiplier (..), applyCurve)
-
--- | Pixels across and down from the plot's top left.
-type Point = (Int, Int)
+import TrackKat.UI.Draw (Point, lround)
 
 data CurvePlot = Unreadable | Plotted Plot
     deriving (Eq, Show)
@@ -55,7 +53,3 @@ curvePlot range text x (w, h) margin = case parseCurve range text of
     slope (Expo m) = factor m
     slope (Points ps) = case reverse ps of (i, o) : _ -> o / i; [] -> 1
     clamp lo hi = max lo . min hi
-
--- | To the nearest pixel, halves away from zero, as cbits/gui.c rounds.
-lround :: Double -> Int
-lround v = truncate (v + if v < 0 then -0.5 else 0.5)

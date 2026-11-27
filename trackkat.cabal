@@ -81,6 +81,7 @@ library
     TrackKat.Tracker.Trail
     TrackKat.Trackers
     TrackKat.UI.Curve
+    TrackKat.UI.Draw
     TrackKat.UI.Masthead
     TrackKat.UI.Tray
     TrackKat.Updater

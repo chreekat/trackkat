@@ -23,15 +23,13 @@ import TrackKat.UI.Masthead
 
 foreign import ccall unsafe "hts_gui_masthead_state"
     c_masthead_state :: CWString -> CWString -> Ptr CInt -> CWString -> Ptr CInt -> IO ()
-foreign import ccall unsafe "windows.h CreateSolidBrush" c_CreateSolidBrush :: Colour -> IO HANDLE
-
 -- | Register the masthead's window class, reporting what fails in it.
 registerMasthead :: (String -> IO ()) -> IO (Either Int ())
 registerMasthead report = do
     -- The brushes behind its buttons' rounded corners, for the life of the
     -- process.
-    quiet <- c_CreateSolidBrush stripColour
-    offering <- c_CreateSolidBrush offerColour
+    quiet <- solidBrush stripColour
+    offering <- solidBrush offerColour
     -- As cbits/gui.c's build_window makes it.
     registerPart report "The masthead" "trackkat_strip" (mastheadProc quiet offering)
 
@@ -72,11 +70,11 @@ paint dc w h s = do
     drawIcon dc icon s10 ((h - size) `div` 2) size
     let x0 = s10 + size + s8
     name <- textWidth dc BoldFont "trackkat"
-    textAt dc BoldFont (rgb 27 27 27) (x0, 0, name, h) #{const DT_LEFT} "trackkat"
+    textAt dc BoldFont (RGB 27 27 27) (x0, 0, name, h) #{const DT_LEFT} "trackkat"
     let version = mastheadVersion s
         x1 = x0 + name + s8
     versionWidth <- textWidth dc UiFont version
-    textAt dc UiFont (rgb 85 85 85) (x1, 0, versionWidth, h) #{const DT_LEFT} version
+    textAt dc UiFont (RGB 85 85 85) (x1, 0, versionWidth, h) #{const DT_LEFT} version
     let x = x1 + versionWidth + s12
     right <- (w -) <$> scaled (buttonWidth + 20)
     when (right > x) $ case says of
@@ -95,7 +93,7 @@ paint dc w h s = do
                     polyline dc Solid s2 goodColour [(x + s1, cy), (x + s4, cy + s3), (x + s10', cy - s4)]
                     pure (x + s15)
                 Plain -> pure x
-            textAt dc UiFont (case verdict of Good -> goodColour; Plain -> rgb 85 85 85) (x', 0, right - x', h) #{const DT_LEFT} text
+            textAt dc UiFont (case verdict of Good -> goodColour; Plain -> RGB 85 85 85) (x', 0, right - x', h) #{const DT_LEFT} text
         SaysNothing -> pure ()
 
 -- | What cbits/gui.c last saw for the masthead.
@@ -128,9 +126,9 @@ buttonWidth :: CInt
 buttonWidth = 150
 
 stripColour, stripEdge, offerColour, offerEdge, offerText, goodColour :: Colour
-stripColour = rgb 228 228 228
-stripEdge = rgb 207 207 207
-offerColour = rgb 255 244 214
-offerEdge = rgb 230 207 138
-offerText = rgb 106 75 0
-goodColour = rgb 46 107 52
+stripColour = RGB 228 228 228
+stripEdge = RGB 207 207 207
+offerColour = RGB 255 244 214
+offerEdge = RGB 230 207 138
+offerText = RGB 106 75 0
+goodColour = RGB 46 107 52

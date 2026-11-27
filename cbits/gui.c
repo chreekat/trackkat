@@ -3579,10 +3579,10 @@ void hts_gui_curve_state(int axis, wchar_t *text, double *head, int *live)
 /* The screen's dots per inch, which the window is drawn to. */
 int hts_gui_dpi(void) { return dpi; }
 
-/* The window's fonts, numbered as TrackKat.Gui.Paint's Font. */
+/* The window's fonts, numbered as TrackKat.UI.Draw's Font. */
 HFONT hts_gui_font(int which)
 {
-    HFONT fonts[] = {ui_font, bold_font, small_font};
+    HFONT fonts[] = {ui_font, bold_font, small_font, caps_font, tiny_font, mono_font};
     return which >= 0 && which < (int)(sizeof fonts / sizeof fonts[0]) ? fonts[which] : ui_font;
 }
 

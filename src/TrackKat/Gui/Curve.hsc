@@ -84,9 +84,9 @@ curveState axis =
 
 -- As cbits/gui.c's C_ colours.
 boxColour, gridColour, dim, accent, headTick, amber :: Colour
-boxColour = rgb 38 43 51
-gridColour = rgb 56 62 72
-dim = rgb 135 142 154
-accent = rgb 90 170 255
-headTick = rgb 255 200 80
-amber = rgb 240 170 60
+boxColour = RGB 38 43 51
+gridColour = RGB 56 62 72
+dim = RGB 135 142 154
+accent = RGB 90 170 255
+headTick = RGB 255 200 80
+amber = RGB 240 170 60
