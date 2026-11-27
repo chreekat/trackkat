@@ -2,10 +2,6 @@
 -- as games see it, the head as measured with the clip on it, or the
 -- camera's whole picture. It is drawn by "TrackKat.Gui.HeadView".
 module TrackKat.UI.HeadView (
-    HeadScene (..),
-    Sight (..),
-    Spot (..),
-    Area (..),
     Facing (..),
     headScene,
     onHead,
@@ -15,53 +11,13 @@ module TrackKat.UI.HeadView (
 import Data.List (intercalate)
 
 import TrackKat.Config (HeadView (..))
+import TrackKat.Display (CameraState (..), Output (..), Shown (..), Sighting (..), Tracked (..), shownHead, tracked)
+import TrackKat.Frame (Blob (..))
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Trackers (BlobRole (..))
 import TrackKat.UI.Draw
 import TrackKat.UI.Palette
-import TrackKat.UI.Tray (ClipSight (..), Holding (..))
-
-data HeadScene = HeadScene
-    { sceneView :: HeadView
-    , sceneSight :: Sight
-    , sceneHead :: HeadPose
-    , scenePose :: HeadPose
-    -- ^ as games see it
-    , sceneHolding :: Holding
-    , sceneMissing :: [Reflector]
-    -- ^ out of sight in the last frame
-    , sceneSpots :: [Spot]
-    -- ^ the last frame's blobs, heaviest first
-    , sceneAreas :: [Area]
-    , sceneClip :: Maybe (V3, V3, V3)
-    -- ^ the left, right and top reflectors, in mm from the neck pivot along
-    -- the head's axes, once there is a calibration to put them by
-    }
-    deriving (Eq, Show)
-
--- | Whether the camera is tracking, and then whether it sees the clip.
-data Sight = NoTracking | Tracking ClipSight
-    deriving (Eq, Show)
-
--- | A blob in the camera's image, and what it was taken for.
-data Spot = Spot
-    { spotX :: Double
-    , spotY :: Double
-    -- ^ in the camera's image, in pixels
-    , spotPixels :: Double
-    , spotRole :: BlobRole
-    , spotVarX :: Double
-    , spotVarY :: Double
-    , spotCovXY :: Double
-    -- ^ the spread of its lit pixels, in pixels squared
-    }
-    deriving (Eq, Show)
-
--- | The area masked around a still light: its centre and radius in the
--- camera's image, in pixels.
-data Area = Area Double Double Double
-    deriving (Eq, Show)
 
 -- | Whether a point on the head is on the side of it that faces us.
 data Facing = Front | Back
@@ -76,52 +32,52 @@ data Head = Head Double Double Double
 -- for each view at the bottom, the one shown lit. The virtual and physical
 -- views have what the camera sees in the top right corner, and a note at
 -- the bottom when there is something to say.
-headScene :: Int -> Int -> HeadScene -> [Shape]
-headScene dpi size scene =
+headScene :: Int -> Int -> HeadView -> Shown -> [Shape]
+headScene dpi size which scene =
     Fill boxColour (0, 0, size, size)
-        : Clipped (0, 0, size, size) shown
+        : Clipped (0, 0, size, size) content
         : Text CapsFont nameColour (s 1) AlignLeft (box (s 8) (s 5) (size - s 66) (s 14)) name
         : Text SmallFont dim 0 AlignLeft (box (s 8) (s 19) (size - s 66) (s 14)) what
         : [ Disc c 1 c (size `div` 2 + (i - 1) * s 12, size - s 10) (s 3)
           | (i, v) <- zip [0 ..] [VirtualView, PhysicalView, CameraView]
-          , let c = if v == sceneView scene then textColour else dotOff
+          , let c = if v == which then textColour else dotOff
           ]
         ++ note
   where
     s = scaledAt dpi
-    tracking = case sceneSight scene of NoTracking -> False; Tracking _ -> True
-    live = sceneSight scene == Tracking ClipInSight
-    (name, what, nameColour) = case sceneView scene of
+    tracking = shownCamera scene == Tracking
+    live = tracked scene == TrackedNow
+    (name, what, nameColour) = case which of
         VirtualView -> ("VIRTUAL", "what games see", RGB 185 220 255)
         PhysicalView -> ("PHYSICAL", "your head, as measured", RGB 255 210 122)
         CameraView -> ("CAMERA", "what the sensor sees", textColour)
-    shown = case sceneView scene of
+    content = case which of
         CameraView -> cameraView dpi size scene
         view ->
             [ Line Dotted 1 gridColour [(size `div` 2, 0), (size `div` 2, size)]
             , Line Dotted 1 gridColour [(0, size `div` 2), (size, size `div` 2)]
             ]
                 -- Under the head, which can pass over it.
-                ++ (if tracking then smallCamera dpi (size - s 54) (s 6) (s 48) (sceneSpots scene) else [])
+                ++ (if tracking then smallCamera dpi (size - s 54) (s 6) (s 48) (shownBlobs scene) else [])
                 ++ (if view == VirtualView then virtualHead dpi size live scene else physicalHead dpi size live scene)
     centred = Text BoldFont amber 0 AlignCentre (box 0 (size - s 40) size (s 20))
-    note = case sceneView scene of
+    note = case which of
         CameraView -> []
         _
             | not live -> [centred (if tracking then "Clip out of sight" else "No tracking")]
         VirtualView
-            | sceneHolding scene == ViewHeld -> [centred "PAUSED"]
+            | Paused _ <- shownOutput scene -> [centred "PAUSED"]
         PhysicalView
-            | Nothing <- sceneClip scene ->
+            | Nothing <- shownClip scene ->
                 [Paragraph SmallFont dim (box (s 8) (size - s 48) (size - s 16) (s 32)) "The clip shows once trackkat has learned your neck."]
-            | otherwise -> [Text SmallFont dim 0 AlignLeft (box (s 8) (size - s 32) (size - s 16) (s 14)) (unseenReflectors (sceneMissing scene))]
+            | otherwise -> [Text SmallFont dim 0 AlignLeft (box (s 8) (size - s 32) (size - s 16) (s 14)) (unseenReflectors (missedReflectors scene))]
         _ -> []
 
 -- | The camera view: the camera's whole image, as big as fits the box below
 -- the view's name: each blob at its size and shape, the clip's reflectors
 -- blue and joined as a triangle, others amber, still lights grey, with the
 -- area masked around each dashed; and a legend.
-cameraView :: Int -> Int -> HeadScene -> [Shape]
+cameraView :: Int -> Int -> Shown -> [Shape]
 cameraView dpi size scene =
     legend 0 accent "clip"
         ++ legend 11 amber "stray"
@@ -135,7 +91,7 @@ cameraView dpi size scene =
         ++ [Text BoldFont amber 0 AlignCentre (box fx fy fw fh) "No camera" | not tracking]
   where
     s = scaledAt dpi
-    tracking = sceneSight scene /= NoTracking
+    tracking = shownCamera scene == Tracking
     legend dy c word =
         let right = size - s 6
             y = s 6 + s dy
@@ -150,16 +106,16 @@ cameraView dpi size scene =
     k = fromIntegral fw / fromIntegral cameraW
     at x y = (fx + lround (x * k), fy + lround (y * k))
     picture =
-        [Ring Dashed 1 grey (at x y) (lround (r * k)) | Area x y r <- sceneAreas scene]
+        [Ring Dashed 1 grey (at x y) (lround (r * k)) | ((x, y), r) <- shownAreas scene]
             ++ triangle
             -- Masked lights first, then strays, so the clip shows over them.
             ++ [ Polygon c (blobOutline dpi k (fx, fy) b)
                | (role, c) <- [(MaskedBlob, grey), (StrayBlob, amber), (ReflectorBlob, accent)]
-               , b <- sceneSpots scene
-               , spotRole b == role
+               , (b, role') <- shownBlobs scene
+               , role' == role
                ]
     -- The clip's triangle, between its three heaviest blobs.
-    corners = take 3 [at (spotX b) (spotY b) | b <- sceneSpots scene, spotRole b == ReflectorBlob]
+    corners = take 3 [at (blobX b) (blobY b) | (b, ReflectorBlob) <- shownBlobs scene]
     triangle = case corners of
         [a, b, c] -> [Line Solid 1 accentFaint [p, q] | (p, q) <- [(a, b), (b, c), (c, a)]]
         [a, b] -> [Line Solid 1 accentFaint [a, b]]
@@ -168,10 +124,10 @@ cameraView dpi size scene =
 -- | A blob at its size and shape, scaled by k, in the camera's image drawn
 -- with its top left corner at a point: an ellipse as long and wide as its
 -- lit pixels spread, as many pixels in area, at least a dot.
-blobOutline :: Int -> Double -> Point -> Spot -> [Point]
+blobOutline :: Int -> Double -> Point -> Blob -> [Point]
 blobOutline dpi k (left, top) b =
-    [ ( lround (fromIntegral left + spotX b * k + u * cos angle - v * sin angle)
-      , lround (fromIntegral top + spotY b * k + u * sin angle + v * cos angle)
+    [ ( lround (fromIntegral left + blobX b * k + u * cos angle - v * sin angle)
+      , lround (fromIntegral top + blobY b * k + u * sin angle + v * cos angle)
       )
     | i <- [0 .. 23 :: Int]
     , let t = 2 * pi * fromIntegral i / 24
@@ -180,9 +136,9 @@ blobOutline dpi k (left, top) b =
     ]
   where
     -- The spread in single precision, as cbits/gui.c works it out.
-    vx = realToFrac (spotVarX b) :: Float
-    vy = realToFrac (spotVarY b) :: Float
-    cv = realToFrac (spotCovXY b) :: Float
+    vx = realToFrac (blobVarX b) :: Float
+    vy = realToFrac (blobVarY b) :: Float
+    cv = realToFrac (blobCovXY b) :: Float
     mid = realToFrac ((vx + vy) / 2) :: Double
     half = sqrt (realToFrac ((vx - vy) * (vx - vy) / 4 + cv * cv)) :: Double
     major = mid + half
@@ -190,23 +146,23 @@ blobOutline dpi k (left, top) b =
     ratio = if major > minor then sqrt (major / minor) else 1
     angle = 0.5 * atan2 (realToFrac (2 * cv)) (realToFrac (vx - vy)) :: Double
     least = fromIntegral (scaledAt dpi 1) + 0.5
-    along = max least (sqrt (spotPixels b / pi * ratio) * k)
-    across = max least (sqrt (spotPixels b / pi / ratio) * k)
+    along = max least (sqrt (fromIntegral (blobPoints b) / pi * ratio) * k)
+    across = max least (sqrt (fromIntegral (blobPoints b) / pi / ratio) * k)
 
 -- | What the camera sees, small, with its top left corner at left, top: each
 -- blob a dot at its place, sized by its area but half as big again to be
 -- seen, coloured by what it was taken for.
-smallCamera :: Int -> Int -> Int -> Int -> [Spot] -> [Shape]
+smallCamera :: Int -> Int -> Int -> Int -> [(Blob, BlobRole)] -> [Shape]
 smallCamera dpi left top width spots =
     Fill frameColour (left, top, left + width, top + height)
         : Frame frameEdge (left, top, left + width, top + height)
         -- Masked lights first, so the clip shows over them.
-        : [ Disc c 1 c (left + lround (spotX b * k), top + lround (spotY b * k)) r
+        : [ Disc c 1 c (left + lround (blobX b * k), top + lround (blobY b * k)) r
           | masked <- [True, False]
-          , b <- spots
-          , (spotRole b == MaskedBlob) == masked
-          , let c = case spotRole b of ReflectorBlob -> accent; StrayBlob -> amber; MaskedBlob -> grey
-                r = max (scaledAt dpi 1) (lround (1.5 * sqrt (spotPixels b / pi) * k))
+          , (b, role) <- spots
+          , (role == MaskedBlob) == masked
+          , let c = case role of ReflectorBlob -> accent; StrayBlob -> amber; MaskedBlob -> grey
+                r = max (scaledAt dpi 1) (lround (1.5 * sqrt (fromIntegral (blobPoints b) / pi) * k))
           ]
   where
     height = width * cameraH `div` cameraW
@@ -214,11 +170,11 @@ smallCamera dpi left top width spots =
 
 -- | The virtual view: the head as games see it, a face that turns, tilts and
 -- moves with the view, a line out of the nose showing where it looks.
-virtualHead :: Int -> Int -> Bool -> HeadScene -> [Shape]
+virtualHead :: Int -> Int -> Bool -> Shown -> [Shape]
 virtualHead dpi size live scene =
     concatMap layer [Back, Front] ++ eyes ++ nose ++ mouth
   where
-    v = scenePose scene
+    v = shownView scene
     h@(Head _ _ r) = headAt v size
     skin = if live then RGB 78 88 104 else RGB 58 62 70
     line = if live then RGB 205 212 224 else dim
@@ -245,7 +201,7 @@ virtualHead dpi size live scene =
 -- | The physical view: the head as the camera measures it, dotted yellow,
 -- turning about its neck pivot, a grey dot with the neck below it; and once
 -- the pivot is learnt, the clip where it sits on it, all in the box.
-physicalHead :: Int -> Int -> Bool -> HeadScene -> [Shape]
+physicalHead :: Int -> Int -> Bool -> Shown -> [Shape]
 physicalHead dpi size live scene =
     clipSide Back
         ++ [ Line Solid (s 2) dotOff [pivot, neck]
@@ -260,8 +216,8 @@ physicalHead dpi size live scene =
         ++ clipSide Front
   where
     s = scaledAt dpi
-    v = sceneHead scene
-    clip = if live then sceneClip scene else Nothing
+    v = shownHead scene
+    clip = if live then shownClip scene else Nothing
     reflectors = maybe [] (\(l, rt, t) -> map clipPoint [l, rt, t]) clip
     h@(Head cx cy r) = fitted dpi size reflectors (headAt v size)
     at = project h v
@@ -280,7 +236,7 @@ physicalHead dpi size live scene =
             | (((p, f), _), ((q, g), _)) <- zip placed (drop 1 placed ++ take 1 placed)
             , (if f == Front && g == Front then Front else Back) == side
             ]
-                ++ [ if which `elem` sceneMissing scene then Ring Solid 1 accent p (s 3) else Disc accent 1 backColour p (s 3)
+                ++ [ if which `elem` missedReflectors scene then Ring Solid 1 accent p (s 3) else Disc accent 1 backColour p (s 3)
                    | ((p, f), which) <- placed
                    , f == side
                    ]
@@ -358,6 +314,13 @@ headMM = 90
 -- midline and level with the ear lobes, about where the top of the neck is.
 neckDrop :: Double
 neckDrop = 0.35
+
+-- | The reflectors the last frame missed: all of them, with the clip out of
+-- sight.
+missedReflectors :: Shown -> [Reflector]
+missedReflectors scene = case shownSighting scene of
+    InSight _ out -> out
+    OutOfSight _ -> [LeftReflector, RightReflector, TopReflector]
 
 -- | Which reflectors the last frame missed, as "top reflector not seen",
 -- by the wearer's sides: the left reflector is the one on the left of the

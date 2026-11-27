@@ -1,8 +1,6 @@
 -- | What the system tray icon shows: its look, tooltip and menu. The icon
 -- itself is "TrackKat.Gui.Tray"'s.
 module TrackKat.UI.Tray (
-    ClipSight (..),
-    Holding (..),
     TrayLook (..),
     trayLook,
     trayTip,
@@ -15,14 +13,6 @@ module TrackKat.UI.Tray (
 import Data.List (intercalate)
 
 import TrackKat.Display (CameraState (..), Notice (..), Output (..), Shown (..), Sighting (..))
-
--- | Whether the last frame showed the clip.
-data ClipSight = ClipInSight | ClipOutOfSight
-    deriving (Eq, Show)
-
--- | Whether games see the head move, or a view held by pausing.
-data Holding = ViewLive | ViewHeld
-    deriving (Eq, Show)
 
 -- | The cat of icons/tray.svg, its eyes glowing in a colour by state: green,
 -- amber, grey and red, in this order.

@@ -75,6 +75,7 @@ import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..), Trim (..))
 import TrackKat.Trackers (BlobRole (..))
+import TrackKat.UI.Live (TrimMoves (..), trimMoves)
 import TrackKat.UI.Tray (TrayChoice (..))
 
 foreign import ccall safe "hts_gui_start" c_start :: CInt -> IO CInt
@@ -399,10 +400,7 @@ showTrim :: Trim -> IO ()
 showTrim trim = tell (\s -> s{shownTrim = case trim of NoTrim -> NoTrim; Trim t -> Trim (poseC t)}) >> push trim
   where
     push NoTrim = c_trim 0 0 0 0
-    push (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (if movesToo then 1 else 0)
-      where
-        -- Beyond turning, enough to notice.
-        movesToo = abs (roll t) >= 1 || any ((>= 5) . abs) [tx t, ty t, tz t]
+    push (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (case trimMoves t of MovesToo -> 1; TurnsOnly -> 0)
 
 -- | Light the Aim button, or not.
 showAim :: Aiming -> IO ()

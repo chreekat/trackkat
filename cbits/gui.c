@@ -3542,58 +3542,8 @@ int hts_gui_stopping(void) { return InterlockedCompareExchange(&stopping, 0, 0);
  * TrackKat.Gui.Curve. */
 void hts_gui_curve_text(int axis, wchar_t *text) { GetWindowTextW(field_ctl[F_YAW + axis], text, FIELD_MAX); }
 
-/* What the head view shows, from the last refresh, for
- * TrackKat.Gui.Live: the view shown, as head_view numbers them; the
- * camera, blobs and reflectors_seen, as State has them; whether paused; the
- * head and the view games see, six each; whether the clip is shown and its
- * reflectors, nine; up to BLOBS_MAX blobs of seven, as hts_gui_blobs takes
- * them; and up to AREAS_MAX areas of three. */
-void hts_gui_head_state(int *view, int *camera, int *blobs, int *reflectors_seen, int *paused, float *head,
-                        float *pose, int *clip_shown, float *clip, int *spots, float *spot, int *areas, float *area)
-{
-    *view = head_view;
-    *camera = seen.camera;
-    *blobs = seen.blobs;
-    *reflectors_seen = seen.reflectors_seen;
-    *paused = seen.paused;
-    memcpy(head, seen.head, sizeof seen.head);
-    memcpy(pose, seen.view, sizeof seen.view);
-    *clip_shown = seen.clip_shown;
-    memcpy(clip, seen.clip, sizeof seen.clip);
-    *spots = seen.spots;
-    for (int i = 0; i < seen.spots; i++) {
-        const Spot *b = &seen.spot[i];
-        float *out = spot + 7 * i;
-        out[0] = b->x;
-        out[1] = b->y;
-        out[2] = b->pixels;
-        out[3] = (float)b->role;
-        out[4] = b->var_x;
-        out[5] = b->var_y;
-        out[6] = b->cov_xy;
-    }
-    *areas = seen.areas;
-    memcpy(area, seen.area, sizeof seen.area[0] * seen.areas);
-}
-
-/* What the rest of the live view shows, from the last refresh, for
- * TrackKat.Gui.Live: why the camera is down, in TEXT_MAX characters; the
- * view held while paused, two; whether trimmed, the trim, two, and whether
- * it moves the view too; whether aiming; how many games and one's name, in
- * 64 characters; and the figures, in TEXT_MAX. */
-void hts_gui_live_state(wchar_t *camera_text, float *held, int *trimmed, float *trim, int *trim_moves, int *aiming,
-                        int *games, wchar_t *game_name, wchar_t *stats)
-{
-    copy_text(camera_text, TEXT_MAX, seen.camera_text);
-    memcpy(held, seen.held, sizeof seen.held);
-    *trimmed = seen.trimmed;
-    memcpy(trim, seen.trim, sizeof seen.trim);
-    *trim_moves = seen.trim_moves;
-    *aiming = seen.aiming;
-    *games = seen.games;
-    copy_text(game_name, 64, seen.game_name);
-    copy_text(stats, TEXT_MAX, seen.stats);
-}
+/* The head view shown, numbered as head_view, for TrackKat.Gui.Live. */
+int hts_gui_head_view(void) { return head_view; }
 
 /* Which of the live view's controls a window is, for TrackKat.Gui.Live:
  * a switch, numbered as the binding lists, LISTS for the head view, or -1. */
