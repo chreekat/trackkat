@@ -3,8 +3,6 @@
 -- cbits/gui.c's.
 module TrackKat.Gui.Curve (registerCurve) where
 
-#include <windows.h>
-
 import Foreign.C.String (CWString, peekCWString)
 import Foreign.C.Types (CDouble (..), CInt (..), CIntPtr (..))
 import Foreign.Marshal.Alloc (alloca)
@@ -12,16 +10,19 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HDC, HWND)
+import Graphics.Win32.Message (wM_ERASEBKGND, wM_PAINT)
 import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect)
+import System.Win32.Types (INT)
 
 import TrackKat.Gui.Paint
+import TrackKat.Gui.Win32 (dtCenter, gwlpUserData)
 import TrackKat.Response (leanRange, pitchRange, rollRange, yawRange)
 import TrackKat.UI.Curve
 import TrackKat.UI.Palette
 
 foreign import ccall unsafe "hts_gui_curve_state"
     c_curve_state :: CInt -> CWString -> Ptr CDouble -> Ptr CInt -> IO ()
-foreign import ccall unsafe "windows.h GetWindowLongPtrW" c_GetWindowLongPtr :: HWND -> CInt -> IO CIntPtr
+foreign import ccall unsafe "windows.h GetWindowLongPtrW" c_GetWindowLongPtr :: HWND -> INT -> IO CIntPtr
 
 -- | Register the response plots' window class, reporting what fails in
 -- them.
@@ -30,14 +31,14 @@ registerCurve report = registerPart report "A response plot" "trackkat_curve" cu
 
 curveProc :: WindowClosure
 curveProc w msg wp lp
-    | msg == #{const WM_ERASEBKGND} = pure 1
-    | msg == #{const WM_PAINT} = do
+    | msg == wM_ERASEBKGND = pure 1
+    | msg == wM_PAINT = do
         allocaPAINTSTRUCT $ \ps -> do
             dc <- beginPaint w ps
             (_, _, right, bottom) <- getClientRect w
             let (width, height) = (fromIntegral right, fromIntegral bottom)
             -- cbits/gui.c's build_window numbers each plot by its axis.
-            axis <- c_GetWindowLongPtr w (#{const GWLP_USERDATA})
+            axis <- c_GetWindowLongPtr w gwlpUserData
             buffered dc (0, 0, width, height) (\mem -> paint mem (fromIntegral axis) width height)
             endPaint w ps
         pure 0
@@ -53,7 +54,7 @@ paint dc axis w h = do
     (text, x, sight) <- curveState axis
     [s2, s3] <- mapM scaled [2, 3]
     case curvePlot (range axis) text x (fromIntegral w, fromIntegral h) (fromIntegral s2) of
-        Unreadable -> textAt dc SmallFont amber (0, 0, w, h) #{const DT_CENTER} "?"
+        Unreadable -> textAt dc SmallFont amber (0, 0, w, h) dtCenter "?"
         Plotted p -> do
             mapM_ (\(a, b) -> polyline dc Dotted 1 dim [pixel a, pixel b]) (plotPlain p)
             polyline dc Solid s2 accent (map pixel (plotCurve p))

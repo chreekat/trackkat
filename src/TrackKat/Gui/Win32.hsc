@@ -3,6 +3,7 @@
 module TrackKat.Gui.Win32 (
     -- * Window classes
     withWndClass,
+    gwlpUserData,
 
     -- * Text and icons
     dtLeft,
@@ -26,7 +27,7 @@ import Foreign.Ptr (FunPtr, Ptr)
 import Foreign.Storable (pokeByteOff)
 import Graphics.Win32.GDI.Types (HCURSOR)
 import Graphics.Win32.Window (WindowClosure)
-import System.Win32.Types (HINSTANCE, LPCTSTR, UINT)
+import System.Win32.Types (HINSTANCE, INT, LPCTSTR, UINT)
 
 -- | A WNDCLASSW of a procedure, instance, cursor and name, the rest zero.
 withWndClass :: FunPtr WindowClosure -> HINSTANCE -> HCURSOR -> LPCTSTR -> (Ptr () -> IO a) -> IO a
@@ -40,6 +41,9 @@ withWndClass proc inst cursor name act =
         act p
   where
     size = #{size WNDCLASSW}
+
+gwlpUserData :: INT
+gwlpUserData = #{const GWLP_USERDATA}
 
 dtLeft, dtCenter, dtRight, dtSingleLine, dtVCenter, dtNoPrefix, dtCalcRect, dtEndEllipsis, dtWordBreak, dtEditControl :: UINT
 dtLeft = #{const DT_LEFT}
