@@ -6,22 +6,22 @@
 -- cbits/gui.c's buttons, drawn here.
 module TrackKat.Gui.Live (registerLive) where
 
-#include <windows.h>
-
 import Data.Bits ((.&.))
 import Foreign.C.String (CWString, peekCWString)
 import Foreign.C.Types (CFloat (..), CInt (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
 import Foreign.Ptr (Ptr, nullPtr, wordPtrToPtr)
-import Foreign.Storable (peek, peekByteOff)
-import Graphics.Win32.GDI.Types (HDC, HWND)
+import Foreign.Storable (peek)
+import Graphics.Win32.GDI.Types (HWND)
+import Graphics.Win32.Message (wM_COMMAND, wM_DRAWITEM, wM_ERASEBKGND, wM_PAINT, wM_SETCURSOR)
 import Graphics.Win32.Window (WindowClosure, allocaPAINTSTRUCT, beginPaint, defWindowProc, endPaint, getClientRect, getParent, sendMessage)
-import System.Win32.Types (HANDLE, LPCTSTR, UINT)
+import System.Win32.Types (HANDLE, LPCTSTR)
 
 import TrackKat.Config (HeadView (..))
 import qualified TrackKat.Display as Display
 import TrackKat.Gui.Paint
+import TrackKat.Gui.Win32 (drawItemDC, drawItemRect, drawItemState, drawItemWindow, idcHand, odsFocus, odsNoFocusRect, odsSelected)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..))
@@ -32,8 +32,8 @@ import TrackKat.UI.Live
 import TrackKat.UI.Tray (ClipSight (..), Holding (..))
 
 foreign import ccall unsafe "hts_gui_head_state"
-    c_head_state
-        :: Ptr CInt -> Ptr CInt -> Ptr CInt -> Ptr CInt -> Ptr CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> IO ()
+    c_head_state ::
+        Ptr CInt -> Ptr CInt -> Ptr CInt -> Ptr CInt -> Ptr CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> IO ()
 foreign import ccall unsafe "hts_gui_live_state"
     c_live_state :: CWString -> Ptr CFloat -> Ptr CInt -> Ptr CFloat -> Ptr CInt -> Ptr CInt -> Ptr CInt -> CWString -> CWString -> IO ()
 foreign import ccall unsafe "hts_gui_live_control" c_live_control :: HWND -> IO CInt
@@ -56,8 +56,8 @@ control w =
 
 liveProc :: WindowClosure
 liveProc w msg wp lp
-    | msg == #{const WM_ERASEBKGND} = pure 1
-    | msg == #{const WM_PAINT} = do
+    | msg == wM_ERASEBKGND = pure 1
+    | msg == wM_PAINT = do
         allocaPAINTSTRUCT $ \ps -> do
             dc <- beginPaint w ps
             (_, _, right, bottom) <- getClientRect w
@@ -67,32 +67,29 @@ liveProc w msg wp lp
                 mapM_ (draw mem) (livePane dpi (fromIntegral right, fromIntegral bottom) live)
             endPaint w ps
         pure 0
-    | msg == #{const WM_DRAWITEM} = do
+    | msg == wM_DRAWITEM = do
         let item = wordPtrToPtr (fromIntegral lp)
-        #{peek DRAWITEMSTRUCT, hwndItem} item >>= control >>= mapM_ (drawItem item)
+        drawItemWindow item >>= control >>= mapM_ (drawItem item)
         pure 1
     -- A hand over the head view, which a click switches.
-    | msg == #{const WM_SETCURSOR} =
+    | msg == wM_SETCURSOR =
         control (wordPtrToPtr (fromIntegral wp)) >>= \case
-            Just HeadViewControl -> 1 <$ (c_SetCursor =<< c_LoadCursor nullPtr (wordPtrToPtr #{const IDC_HAND}))
+            Just HeadViewControl -> 1 <$ (c_SetCursor =<< c_LoadCursor nullPtr idcHand)
             _ -> defWindowProc (Just w) msg wp lp
     -- The switches' and head view's clicks are the window's to act on.
-    | msg == #{const WM_COMMAND} = getParent w >>= \parent -> sendMessage parent msg wp lp
+    | msg == wM_COMMAND = getParent w >>= \parent -> sendMessage parent msg wp lp
     | otherwise = defWindowProc (Just w) msg wp lp
 
 -- | A switch or the head view, with a focus rectangle while it has the
 -- keyboard. The head view is drawn off screen first, so it doesn't flicker.
 drawItem :: Ptr () -> Control -> IO ()
 drawItem item which = do
-    dc <- #{peek DRAWITEMSTRUCT, hDC} item :: IO HDC
-    left <- #{peek DRAWITEMSTRUCT, rcItem.left} item :: IO CInt
-    top <- #{peek DRAWITEMSTRUCT, rcItem.top} item
-    right <- #{peek DRAWITEMSTRUCT, rcItem.right} item
-    bottom <- #{peek DRAWITEMSTRUCT, rcItem.bottom} item
-    itemState <- #{peek DRAWITEMSTRUCT, itemState} item :: IO UINT
+    dc <- drawItemDC item
+    (left, top, right, bottom) <- drawItemRect item
+    itemState <- drawItemState item
     dpi <- screenDpi
     (scene, live) <- state
-    let focused = itemState .&. #{const ODS_FOCUS} /= 0 && itemState .&. #{const ODS_NOFOCUSRECT} == 0
+    let focused = itemState .&. odsFocus /= 0 && itemState .&. odsNoFocusRect == 0
         s = scaledAt dpi
         (l, t, r, b) = (fromIntegral left, fromIntegral top, fromIntegral right, fromIntegral bottom)
     case which of
@@ -103,7 +100,7 @@ drawItem item which = do
                         ++ [Focus (s 2, s 2, r - l - s 2, b - t - s 2) | focused]
         SwitchControl sw ->
             mapM_ (draw dc) $
-                switchFace dpi (l, t, r, b) (if itemState .&. #{const ODS_SELECTED} /= 0 then Pressed else Released) live sw
+                switchFace dpi (l, t, r, b) (if itemState .&. odsSelected /= 0 then Pressed else Released) live sw
                     ++ [Focus (l + s 4, t + s 4, r - s 4, b - s 4) | focused]
 
 -- | What cbits/gui.c last saw for the live view.

@@ -4,6 +4,7 @@ module TrackKat.Gui.Win32 (
     -- * Window classes
     withWndClass,
     gwlpUserData,
+    idcHand,
 
     -- * Messages
     wmPrintClient,
@@ -21,15 +22,25 @@ module TrackKat.Gui.Win32 (
     dtWordBreak,
     dtEditControl,
     diNormal,
+
+    -- * Drawn buttons
+    drawItemWindow,
+    drawItemDC,
+    drawItemRect,
+    drawItemState,
+    odsSelected,
+    odsFocus,
+    odsNoFocusRect,
 ) where
 
 #include <windows.h>
 
+import Foreign.C.Types (CInt)
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (FunPtr, Ptr)
-import Foreign.Storable (pokeByteOff)
-import Graphics.Win32.GDI.Types (HCURSOR)
+import Foreign.Ptr (FunPtr, Ptr, wordPtrToPtr)
+import Foreign.Storable (peekByteOff, pokeByteOff)
+import Graphics.Win32.GDI.Types (HCURSOR, HDC, HWND)
 import Graphics.Win32.Message (WindowMessage)
 import Graphics.Win32.Window (WindowClosure)
 import System.Win32.Types (HINSTANCE, INT, LPCTSTR, UINT)
@@ -50,6 +61,9 @@ withWndClass proc inst cursor name act =
 gwlpUserData :: INT
 gwlpUserData = #{const GWLP_USERDATA}
 
+idcHand :: LPCTSTR
+idcHand = wordPtrToPtr #{const IDC_HAND}
+
 wmPrintClient, wmCtlColorBtn :: WindowMessage
 wmPrintClient = #{const WM_PRINTCLIENT}
 wmCtlColorBtn = #{const WM_CTLCOLORBTN}
@@ -68,3 +82,27 @@ dtEditControl = #{const DT_EDITCONTROL}
 
 diNormal :: UINT
 diNormal = #{const DI_NORMAL}
+
+-- | A DRAWITEMSTRUCT's control.
+drawItemWindow :: Ptr () -> IO HWND
+drawItemWindow = #{peek DRAWITEMSTRUCT, hwndItem}
+
+drawItemDC :: Ptr () -> IO HDC
+drawItemDC = #{peek DRAWITEMSTRUCT, hDC}
+
+-- | A DRAWITEMSTRUCT's left, top, right and bottom.
+drawItemRect :: Ptr () -> IO (CInt, CInt, CInt, CInt)
+drawItemRect p =
+    (,,,)
+        <$> #{peek DRAWITEMSTRUCT, rcItem.left} p
+        <*> #{peek DRAWITEMSTRUCT, rcItem.top} p
+        <*> #{peek DRAWITEMSTRUCT, rcItem.right} p
+        <*> #{peek DRAWITEMSTRUCT, rcItem.bottom} p
+
+drawItemState :: Ptr () -> IO UINT
+drawItemState = #{peek DRAWITEMSTRUCT, itemState}
+
+odsSelected, odsFocus, odsNoFocusRect :: UINT
+odsSelected = #{const ODS_SELECTED}
+odsFocus = #{const ODS_FOCUS}
+odsNoFocusRect = #{const ODS_NOFOCUSRECT}
