@@ -2,10 +2,7 @@
 -- its content's width here, and hidden rather than closed. cbits/gui.c
 -- builds the controls not yet made in Haskell into it, and is passed the
 -- messages this doesn't handle.
-module TrackKat.Gui.Window (
-    registerMain,
-    makeMain,
-) where
+module TrackKat.Gui.Window (makeMain) where
 
 import Control.Exception (bracket_)
 import Control.Monad (unless, when)
@@ -18,13 +15,13 @@ import Graphics.Win32.GDI.Types (HWND)
 import Graphics.Win32.Message (WindowMessage, wM_CLOSE, wM_COMMAND, wM_GETMINMAXINFO, wM_SIZE, wM_VSCROLL)
 import Graphics.Win32.Misc (iDCANCEL)
 import Graphics.Win32.Window (WindowClosure, adjustWindowRect, getClientRect, getWindowRect, sW_HIDE, wS_MAXIMIZEBOX, wS_OVERLAPPEDWINDOW, wS_VSCROLL)
-import System.Win32.Info (sM_CXICON, sM_CXVSCROLL)
+import System.Win32.Info (sM_CXVSCROLL)
 import System.Win32.Types (BOOL, INT, LPARAM, LRESULT, WPARAM)
 
 import TrackKat.Display (Shown (..))
 import TrackKat.Gui.Calls (resizeWindow, scrollContent, setScrollPos, setScrollRange, showWindow)
 import TrackKat.Gui.Kit (Kit, kitDpi, scaled)
-import TrackKat.Gui.Paint (registerWindow, topWindow)
+import TrackKat.Gui.Paint (ownWindow)
 import TrackKat.Gui.Shown (snapshot)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Window
@@ -44,22 +41,13 @@ data Scrolling = Scrolling
     -- ^ whether 'fit' is under way, and the window's sizing is its own
     }
 
--- | Register the window's class, reporting what fails in it.
-registerMain :: Kit -> (String -> IO ()) -> IO (Either Int ())
-registerMain kit report = do
+-- | Make the window, hidden, named for the version shown, reporting what
+-- fails in it. Left is a Windows error code.
+makeMain :: Kit -> (String -> IO ()) -> IO (Either Int HWND)
+makeMain kit report = do
     sc <- Scrolling <$> newIORef 0 <*> newIORef False
-    size <- c_GetSystemMetrics (fromIntegral sM_CXICON)
-    registerWindow report "The window" className size (mainProc kit sc)
-
-className :: String
-className = "trackkat_window"
-
--- | Make the window, hidden, named for the version shown. Left is a
--- Windows error code.
-makeMain :: Kit -> IO (Either Int HWND)
-makeMain kit = do
     version <- shownVersion <$> snapshot
-    topWindow className ("trackkat " ++ version) (wS_OVERLAPPEDWINDOW .&. complement wS_MAXIMIZEBOX) (s contentWidth, s contentHeight)
+    ownWindow report "The window" "trackkat_window" ("trackkat " ++ version) (wS_OVERLAPPEDWINDOW .&. complement wS_MAXIMIZEBOX) (s contentWidth, s contentHeight) (mainProc kit sc)
   where
     s = scaled kit . fromIntegral
 

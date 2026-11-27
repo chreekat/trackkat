@@ -3,7 +3,7 @@
 -- | The log's own window, with window = haskell: the whole log, and
 -- trackkat's version, to copy into a bug report. cbits/gui.c's Open log
 -- shows it.
-module TrackKat.Gui.Log (registerLog, makeLog) where
+module TrackKat.Gui.Log (makeLog) where
 
 import Control.Monad (unless, void)
 import Data.Bits (shiftR, (.&.), (.|.))
@@ -19,20 +19,18 @@ import Graphics.Win32.GDI.Types (HWND, LPRECT)
 import Graphics.Win32.Message (WindowMessage, wM_APP, wM_CLOSE, wM_COMMAND, wM_CREATE, wM_GETMINMAXINFO, wM_SETFONT, wM_SETREDRAW, wM_SIZE, wM_TIMER)
 import Graphics.Win32.Misc (iDCANCEL)
 import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, sW_HIDE, wS_CHILD, wS_CLIPSIBLINGS, wS_EX_CLIENTEDGE, wS_OVERLAPPEDWINDOW, wS_TABSTOP, wS_VISIBLE, wS_VSCROLL)
-import System.Win32.Info (sM_CXICON)
 import System.Win32.Mem (gMEM_MOVEABLE)
 import System.Win32.Types (BOOL, DWORD, HANDLE, UINT, WPARAM)
 
 import TrackKat.Display (Shown (..))
 import TrackKat.Gui.Calls (createWindow, moveWindow, pointerParam, send, showWindow)
 import TrackKat.Gui.Kit (Kit, fontHandle, scaled)
-import TrackKat.Gui.Paint (Colour (..), Font (..), registerWindow, solidBrush, topWindow)
+import TrackKat.Gui.Paint (Colour (..), Font (..), ownWindow, solidBrush)
 import TrackKat.Gui.Shown (logBook, snapshot)
 import TrackKat.Gui.Tips (makeTips, tip)
 import TrackKat.Gui.Win32
 import TrackKat.UI.Log (Mark, logMax, since, start)
 
-foreign import ccall unsafe "windows.h GetSystemMetrics" c_GetSystemMetrics :: CInt -> IO CInt
 foreign import ccall unsafe "windows.h SetTimer" c_SetTimer :: HWND -> WPARAM -> UINT -> Ptr () -> IO WPARAM
 foreign import ccall unsafe "windows.h SetBkColor" c_SetBkColor :: Ptr () -> DWORD -> IO DWORD
 foreign import ccall unsafe "windows.h GetScrollInfo" c_GetScrollInfo :: HWND -> CInt -> Ptr () -> IO BOOL
@@ -55,20 +53,15 @@ foreign import ccall safe "windows.h CloseClipboard" c_CloseClipboard :: IO BOOL
 -- | The window's controls, once it has made them.
 data Parts = Parts {partHint, partBox, partVersion, partCopy, partClose :: HWND}
 
--- | Register the log window's class, reporting what fails in it.
-registerLog :: Kit -> (String -> IO ()) -> IO (Either Int ())
-registerLog kit report = do
+-- | Make the log window, hidden, reporting what fails in it: top-level,
+-- so it can sit beside a game. Left is a Windows error code.
+makeLog :: Kit -> (String -> IO ()) -> IO (Either Int HWND)
+makeLog kit report = do
     parts <- newIORef Nothing
     mark <- newIORef start
     -- Behind the read-only box, for the life of the process.
     white <- solidBrush (RGB 255 255 255)
-    size <- c_GetSystemMetrics (fromIntegral sM_CXICON)
-    registerWindow report "The log window" "trackkat_log" size (logProc kit parts mark white)
-
--- | Make the log window, hidden: top-level, so it can sit beside a game.
--- Left is a Windows error code.
-makeLog :: Kit -> IO (Either Int HWND)
-makeLog kit = topWindow "trackkat_log" "trackkat log" wS_OVERLAPPEDWINDOW (scaled kit 680, scaled kit 460)
+    ownWindow report "The log window" "trackkat_log" "trackkat log" wS_OVERLAPPEDWINDOW (scaled kit 680, scaled kit 460) (logProc kit parts mark white)
 
 logProc :: Kit -> IORef (Maybe Parts) -> IORef Mark -> HANDLE -> WindowClosure
 logProc kit parts mark white w msg wp lp

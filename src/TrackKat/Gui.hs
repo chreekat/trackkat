@@ -72,11 +72,11 @@ import TrackKat.Gui.Calls (raiseWindow)
 import TrackKat.Gui.Curve (registerCurve)
 import TrackKat.Gui.Kit (fontHandles, kitDpi, setUp)
 import TrackKat.Gui.Live (registerLive)
-import TrackKat.Gui.Log (makeLog, registerLog)
+import TrackKat.Gui.Log (makeLog)
 import TrackKat.Gui.Masthead (registerMasthead)
 import TrackKat.Gui.Shown (logLine, takeSnapshot, tell)
 import TrackKat.Gui.Tray (makeTray, startTray)
-import TrackKat.Gui.Window (makeMain, registerMain)
+import TrackKat.Gui.Window (makeMain)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
 import TrackKat.Response (Aiming (..), Trim (..))
@@ -146,9 +146,9 @@ withGui HaskellWindow w work = do
         when (isRight result) (allocaMessage messageLoop)
     start kit = first (\(Failed e) -> e) <$> try (makeAll kit)
     makeAll kit = do
-        mapM_ (\register -> register kit guiLog >>= orFail) [registerMain, registerMasthead, registerCurve, registerLive, registerLog]
-        window <- makeMain kit >>= orFail
-        logWindow <- makeLog kit >>= orFail
+        mapM_ (\register -> register kit guiLog >>= orFail) [registerMasthead, registerCurve, registerLive]
+        window <- makeMain kit guiLog >>= orFail
+        logWindow <- makeLog kit guiLog >>= orFail
         tray <- makeTray guiLog (choose window) >>= orFail
         withArray (fontHandles kit) (c_build tray window logWindow (fromIntegral (kitDpi kit)))
         startTray tray

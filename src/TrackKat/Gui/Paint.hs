@@ -5,8 +5,7 @@
 -- window procedures an exception can't escape.
 module TrackKat.Gui.Paint (
     registerPart,
-    registerWindow,
-    topWindow,
+    ownWindow,
     Background (..),
     guarded,
     Canvas (..),
@@ -45,7 +44,7 @@ import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Resource (iMAGE_ICON, lR_SHARED)
 import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, adjustWindowRect, allocaPAINTSTRUCT, cW_USEDEFAULT, defWindowProc, wS_EX_CONTROLPARENT)
 import System.Win32.DLL (getModuleHandle)
-import System.Win32.Info (cOLOR_BTNFACE, sM_CXSMICON)
+import System.Win32.Info (cOLOR_BTNFACE, sM_CXICON, sM_CXSMICON)
 import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
 import TrackKat.Gui.Calls (createWindow, pointerParam, send)
@@ -98,13 +97,6 @@ foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosu
 registerPart :: (String -> IO ()) -> String -> String -> Background -> WindowClosure -> IO (Either Int ())
 registerPart report part className background = registerClass report part className background nullPtr
 
--- | Register a window class for a window of its own, with the program's
--- icon at a size, as 'registerPart'.
-registerWindow :: (String -> IO ()) -> String -> String -> CInt -> WindowClosure -> IO (Either Int ())
-registerWindow report part className iconSize proc = do
-    icon <- resourceIcon programIcon iconSize
-    registerClass report part className ButtonFace icon proc
-
 registerClass :: (String -> IO ()) -> String -> String -> Background -> HICON -> WindowClosure -> IO (Either Int ())
 registerClass report part className background icon proc = do
     inst <- getModuleHandle Nothing
@@ -115,23 +107,29 @@ registerClass report part className background icon proc = do
     atom <- withWndClass wndProc inst cursor (backgroundBrush background) icon name c_RegisterClass
     if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
 
--- | Make a window of its own, hidden, of a class, title and style, with
--- a client area of a width and height but no taller than the screen's work
--- area, and the program's small icon. Left is a Windows error code.
-topWindow :: String -> String -> DWORD -> (CInt, CInt) -> IO (Either Int HWND)
-topWindow cls title style (w, h) = do
-    (l, t, r, b) <- adjustWindowRect (0, 0, fromIntegral w, fromIntegral h) style False
-    work <- workArea
-    let height = maybe id (\(_, top, _, bottom) -> min (bottom - top)) work (b - t)
-    wnd <- createWindow wS_EX_CONTROLPARENT cls title style (anywhere, anywhere, fromIntegral (r - l), fromIntegral height) Nothing 0
-    if wnd == nullPtr
-        then Left . fromIntegral <$> getLastError
-        else do
-            -- The title bar's and taskbar's, drawn at its own size rather
-            -- than shrunk from the class's.
-            small <- c_GetSystemMetrics (fromIntegral sM_CXSMICON) >>= resourceIcon programIcon
-            _ <- send wnd wM_SETICON iconSmall (pointerParam small)
-            pure (Right wnd)
+-- | A window of its own, hidden, of a class registered for it with the
+-- program's icon and a procedure 'guarded' as in 'registerPart'; with a
+-- title and style, and a client area of a width and height but no taller
+-- than the screen's work area. Left is a Windows error code.
+ownWindow :: (String -> IO ()) -> String -> String -> String -> DWORD -> (CInt, CInt) -> WindowClosure -> IO (Either Int HWND)
+ownWindow report part cls title style (w, h) proc = do
+    icon <- c_GetSystemMetrics (fromIntegral sM_CXICON) >>= resourceIcon programIcon
+    registered <- registerClass report part cls ButtonFace icon proc
+    case registered of
+        Left e -> pure (Left e)
+        Right () -> do
+            (l, t, r, b) <- adjustWindowRect (0, 0, fromIntegral w, fromIntegral h) style False
+            work <- workArea
+            let height = maybe id (\(_, top, _, bottom) -> min (bottom - top)) work (b - t)
+            wnd <- createWindow wS_EX_CONTROLPARENT cls title style (anywhere, anywhere, fromIntegral (r - l), fromIntegral height) Nothing 0
+            if wnd == nullPtr
+                then Left . fromIntegral <$> getLastError
+                else do
+                    -- The title bar's and taskbar's, drawn at its own size
+                    -- rather than shrunk from the class's.
+                    small <- c_GetSystemMetrics (fromIntegral sM_CXSMICON) >>= resourceIcon programIcon
+                    _ <- send wnd wM_SETICON iconSmall (pointerParam small)
+                    pure (Right wnd)
   where
     anywhere = fromIntegral cW_USEDEFAULT
 
