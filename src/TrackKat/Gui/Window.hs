@@ -61,7 +61,8 @@ mainProc kit sc w msg wp lp
     | msg == wmMouseWheel = do
         scrollBy kit sc w (Wheel (fromIntegral (fromIntegral (wp `shiftR` 16) :: Int16)))
         pure 0
-    | msg == wM_SIZE = fit kit sc w >> pure 0
+    -- Minimized, it has no content to fit.
+    | msg == wM_SIZE && wp /= sizeMinimized = fit kit sc w >> pure 0
     | msg == wM_GETMINMAXINFO = limit kit w (wordPtrToPtr (fromIntegral lp)) >> pure 0
     | msg == wM_CLOSE = hide
     | msg == wM_COMMAND && wp .&. 0xFFFF == fromIntegral iDCANCEL = hide

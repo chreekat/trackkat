@@ -30,6 +30,7 @@ module TrackKat.Gui.Win32 (
     setMinTrackSize,
     setMaxTrackSize,
     iconSmall,
+    sizeMinimized,
 
     -- * Scrolling
     sbLineUp,
@@ -235,6 +236,9 @@ setMaxTrackSize :: Ptr () -> CInt -> CInt -> IO ()
 setMaxTrackSize p w h = do
     #{poke MINMAXINFO, ptMaxTrackSize.x} p w
     #{poke MINMAXINFO, ptMaxTrackSize.y} p h
+
+sizeMinimized :: WPARAM
+sizeMinimized = #{const SIZE_MINIMIZED}
 
 iconSmall :: WPARAM
 iconSmall = #{const ICON_SMALL}
