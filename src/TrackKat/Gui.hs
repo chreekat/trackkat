@@ -69,6 +69,7 @@ import TrackKat.Frame (Blob (..))
 import TrackKat.Gui.Curve (registerCurve)
 import TrackKat.Gui.Live (registerLive)
 import TrackKat.Gui.Masthead (registerMasthead)
+import TrackKat.Gui.Shown (takeSnapshot, tell)
 import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
@@ -132,6 +133,7 @@ withGui HaskellWindow w work = do
         thread <- getCurrentThreadId
         -- Before any window, each of which keeps the awareness it is made with.
         _ <- c_SetProcessDPIAware
+        takeSnapshot
         rc <-
             firstFailure [registerMasthead guiLog, registerCurve guiLog, registerLive guiLog] >>= \case
                 Left e -> pure (fromIntegral e)
@@ -184,7 +186,7 @@ quitRunning = (\pid -> if pid == 0 then Nothing else Just (fromIntegral pid)) <$
 -- | The version the window's title, its strip across the top and the log
 -- window show. Call before 'withGui'.
 showVersion :: String -> IO ()
-showVersion v = withCWString v c_version
+showVersion v = tell (\s -> s{shownVersion = v}) >> withCWString v c_version
 
 -- | Open the settings file in an editor: the program Windows opens such a
 -- file with, the one the user picks if there is none, or else Notepad.
@@ -203,20 +205,23 @@ showUpdateButton UpdateButtonDisabled = c_updatable 0
 -- | Show a look for a newer version running, on the Check for updates
 -- button, which says so and can't be clicked until it is done.
 showUpdateCheck :: UpdateCheck -> IO ()
-showUpdateCheck CheckRunning = c_checking 1
-showUpdateCheck CheckIdle = c_checking 0
+showUpdateCheck c = tell (\s -> s{shownCheck = c}) >> c_checking (case c of CheckRunning -> 1; CheckIdle -> 0)
 
 -- | Show what the last look for a newer version found, in the strip across
 -- the top of the window, beside the Check for updates button.
 showUpdateStatus :: UpdateStatus -> IO ()
-showUpdateStatus (UpToDate s) = withCWString s (c_update_status 1)
-showUpdateStatus (UpdateNote s) = withCWString s (c_update_status 0)
+showUpdateStatus u = tell (\s -> s{shownStatus = Just u}) >> push u
+  where
+    push (UpToDate s) = withCWString s (c_update_status 1)
+    push (UpdateNote s) = withCWString s (c_update_status 0)
 
 -- | Offer something in the strip across the top of the window, which turns
 -- amber, with a button, and perhaps an item in the tray's menu, either of
 -- which asks for it with 'OfferAction'. Nothing takes the offer back.
 showOffer :: Maybe Notice -> IO ()
-showOffer o = withCWString text $ \t -> withCWString button $ \b -> withCWString tray (c_offer t b)
+showOffer o = do
+    tell (\s -> s{shownOffer = o})
+    withCWString text $ \t -> withCWString button $ \b -> withCWString tray (c_offer t b)
   where
     (text, button, tray) = case o of
         Just (Notice t b m) -> (t, b, fromMaybe "" m)
@@ -320,15 +325,18 @@ guiLog line = withCWString line c_log
 
 -- | Set the window's Camera light, and its words if the camera is down.
 showCamera :: CameraState -> IO ()
-showCamera Searching = withCWString "" (c_camera 0)
-showCamera Tracking = withCWString "" (c_camera 1)
-showCamera (CameraDown why) = withCWString why (c_camera 2)
+showCamera c = tell (\s -> s{shownCamera = c}) >> push c
+  where
+    push Searching = withCWString "" (c_camera 0)
+    push Tracking = withCWString "" (c_camera 1)
+    push (CameraDown why) = withCWString why (c_camera 2)
 
 -- | Show a frame: the head, which reflectors were seen, and the pose games
 -- are sent. Skipped if the window is busy copying the last one.
 showFrame :: Sighting -> HeadPose -> IO ()
 showFrame sighting view =
-    c_frame blobs shown (f yaw) (f pitch) (f roll) (f tx) (f ty) (f tz) (g yaw) (g pitch) (g roll) (g tx) (g ty) (g tz)
+    tell (\s -> s{shownSighting = sightingC, shownView = poseC view})
+        >> c_frame blobs shown (f yaw) (f pitch) (f roll) (f tx) (f ty) (f tz) (g yaw) (g pitch) (g roll) (g tx) (g ty) (g tz)
   where
     (blobs, shown, head') = case sighting of
         InSight hp missing -> (-1, sum [bit | (which, bit) <- reflectorBits, which `notElem` missing], hp)
@@ -337,6 +345,9 @@ showFrame sighting view =
     reflectorBits = [(LeftReflector, 1), (RightReflector, 2), (TopReflector, 4)]
     f axis = realToFrac (axis head')
     g axis = realToFrac (axis view)
+    sightingC = case sighting of
+        InSight hp missing -> InSight (poseC hp) missing
+        OutOfSight n -> OutOfSight n
 
 -- | Show a frame's blobs, heaviest first, at their places in the camera's
 -- image with their size and shape, and what each was taken for; and the
@@ -344,19 +355,22 @@ showFrame sighting view =
 -- window shows the first few of each. Skipped if the window is busy copying
 -- the last ones.
 showBlobs :: [(Blob, BlobRole)] -> [((Double, Double), Double)] -> IO ()
-showBlobs blobs areas =
-    withArrayLen (concatMap spot (take shownBlobs blobs)) $ \n spots ->
-        withArrayLen (concatMap area (take shownAreas areas)) $ \m ->
+showBlobs blobs areas = do
+    tell (\s -> s{shownBlobs = map blobC (take blobsMax blobs), shownAreas = map areaC (take areasMax areas)})
+    withArrayLen (concatMap spot (take blobsMax blobs)) $ \n spots ->
+        withArrayLen (concatMap area (take areasMax areas)) $ \m ->
             c_blobs (fromIntegral (n `div` 7)) spots (fromIntegral (m `div` 3))
   where
     -- As BLOBS_MAX and AREAS_MAX in cbits/gui.c.
-    shownBlobs = 16
-    shownAreas = 8
+    blobsMax = 16
+    areasMax = 8
     spot (b, role) =
         map realToFrac [blobX b, blobY b, fromIntegral (blobPoints b)]
             ++ [roleCode role]
             ++ map realToFrac [blobVarX b, blobVarY b, blobCovXY b]
     area ((x, y), r) = map realToFrac [x, y, r]
+    blobC (b, role) = (b{blobX = single (blobX b), blobY = single (blobY b), blobVarX = single (blobVarX b), blobVarY = single (blobVarY b), blobCovXY = single (blobCovXY b)}, role)
+    areaC ((x, y), r) = ((single x, single y), single r)
     -- As SPOT_REFLECTOR and the rest in cbits/gui.c.
     roleCode ReflectorBlob = 0
     roleCode StrayBlob = 1
@@ -366,36 +380,41 @@ showBlobs blobs areas =
 -- the neck pivot along the head's axes (see 'TrackKat.Pose.inHeadAxes'), or
 -- show none.
 showClip :: Maybe (V3, V3, V3) -> IO ()
-showClip Nothing = c_clip 0 nullPtr
-showClip (Just (l, r, t)) = withArray (concatMap coords [l, r, t]) (c_clip 1)
+showClip clip = tell (\s -> s{shownClip = fmap (\(l, r, t) -> (v3C l, v3C r, v3C t)) clip}) >> push clip
   where
+    push Nothing = c_clip 0 nullPtr
+    push (Just (l, r, t)) = withArray (concatMap coords [l, r, t]) (c_clip 1)
     coords (V3 x y z) = map realToFrac [x, y, z]
+    v3C (V3 x y z) = V3 (single x) (single y) (single z)
 
 -- | Light the Pause button, saying where the view is held, or not.
 showOutput :: Output -> IO ()
-showOutput Live = c_paused 0 0 0
-showOutput (Paused held) = c_paused 1 (realToFrac (yaw held)) (realToFrac (pitch held))
+showOutput o = tell (\s -> s{shownOutput = case o of Live -> Live; Paused held -> Paused (poseC held)}) >> push o
+  where
+    push Live = c_paused 0 0 0
+    push (Paused held) = c_paused 1 (realToFrac (yaw held)) (realToFrac (pitch held))
 
 -- | Where forward is for the view.
 showTrim :: Trim -> IO ()
-showTrim NoTrim = c_trim 0 0 0 0
-showTrim (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (if movesToo then 1 else 0)
+showTrim trim = tell (\s -> s{shownTrim = case trim of NoTrim -> NoTrim; Trim t -> Trim (poseC t)}) >> push trim
   where
-    -- Beyond turning, enough to notice.
-    movesToo = abs (roll t) >= 1 || any ((>= 5) . abs) [tx t, ty t, tz t]
+    push NoTrim = c_trim 0 0 0 0
+    push (Trim t) = c_trim 1 (realToFrac (yaw t)) (realToFrac (pitch t)) (if movesToo then 1 else 0)
+      where
+        -- Beyond turning, enough to notice.
+        movesToo = abs (roll t) >= 1 || any ((>= 5) . abs) [tx t, ty t, tz t]
 
 -- | Light the Aim button, or not.
 showAim :: Aiming -> IO ()
-showAim NotAiming = c_aiming 0
-showAim Aiming = c_aiming 1
+showAim a = tell (\s -> s{shownAiming = a}) >> c_aiming (case a of NotAiming -> 0; Aiming -> 1)
 
 -- | How many games are tracking, and the name of one of them, if known.
 showGames :: Int -> Maybe String -> IO ()
-showGames n name = withCWString (fromMaybe "" name) (c_games (fromIntegral n))
+showGames n name = tell (\s -> s{shownGames = n, shownGameName = name}) >> withCWString (fromMaybe "" name) (c_games (fromIntegral n))
 
 -- | The performance figures of the status line.
 showStats :: String -> IO ()
-showStats s = withCWString s c_stats
+showStats st = tell (\s -> s{shownStats = st}) >> withCWString st c_stats
 
 -- | What the window says of the calibration, on a line or two.
 showCalibration :: String -> IO ()
@@ -421,3 +440,12 @@ takeSavedSettings names = concat <$> mapM saved names
         if shown /= 0 then (\v -> [(name, v)]) <$> peekCWString buf else pure []
     -- cbits/gui.c's FIELD_MAX
     size = 4096
+
+-- | A pose as cbits/gui.c is told it. See Note [Matching cbits/gui.c's
+-- arithmetic] in "TrackKat.UI.Draw".
+poseC :: HeadPose -> HeadPose
+poseC (HeadPose a b c d e f) = HeadPose (single a) (single b) (single c) (single d) (single e) (single f)
+
+-- | A number in single precision, as cbits/gui.c is told numbers.
+single :: Double -> Double
+single x = realToFrac (realToFrac x :: CFloat)

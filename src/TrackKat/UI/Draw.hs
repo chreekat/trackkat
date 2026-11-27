@@ -63,6 +63,16 @@ data Shape
 scaledAt :: Int -> Int -> Int
 scaledAt dpi x = (x * dpi + 48) `div` 96
 
+-- Note [Matching cbits/gui.c's arithmetic]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- While cbits/gui.c can still draw the window (window = c), the parts drawn
+-- in Haskell are checked against it pixel for pixel. It is told each number
+-- in single precision, works some out in single precision, rounds pixels
+-- halves away from zero and lengths as MulDiv does, so the Haskell parts do
+-- the same wherever they would otherwise come out a pixel apart. Each such
+-- place points here; they go when cbits/gui.c's window does.
+
 -- | To the nearest pixel, halves away from zero, as cbits/gui.c rounds.
+-- See Note [Matching cbits/gui.c's arithmetic].
 lround :: Double -> Int
 lround v = truncate (v + if v < 0 then -0.5 else 0.5)

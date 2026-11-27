@@ -111,6 +111,7 @@ library
       TrackKat.Gui.Live
       TrackKat.Gui.Masthead
       TrackKat.Gui.Paint
+      TrackKat.Gui.Shown
       TrackKat.Gui.Tray
       TrackKat.Gui.Win32
       TrackKat.Install

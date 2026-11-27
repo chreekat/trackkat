@@ -6,9 +6,15 @@ module TrackKat.Display (
     UpdateCheck (..),
     UpdateStatus (..),
     Notice (..),
+    Shown (..),
+    nothingShown,
 ) where
 
-import TrackKat.Pose (HeadPose, Reflector)
+import TrackKat.Frame (Blob)
+import TrackKat.Linear (V3)
+import TrackKat.Pose (HeadPose (..), Reflector)
+import TrackKat.Response (Aiming (..), Trim (..))
+import TrackKat.Trackers (BlobRole)
 
 -- | What the camera is doing, for the window's Camera light.
 data CameraState
@@ -55,3 +61,57 @@ data Notice = Notice
     -- ^ its item in the tray's menu, if it has one
     }
     deriving (Eq, Show)
+
+-- | Everything the window has been told to show, as the last of each told
+-- it.
+data Shown = Shown
+    { shownVersion :: !String
+    , shownCamera :: !CameraState
+    , shownSighting :: !Sighting
+    , shownView :: !HeadPose
+    -- ^ the pose games are sent
+    , shownBlobs :: ![(Blob, BlobRole)]
+    -- ^ the last frame's, heaviest first
+    , shownAreas :: ![((Double, Double), Double)]
+    -- ^ masked around still lights: centre and radius in the camera's image
+    , shownClip :: !(Maybe (V3, V3, V3))
+    -- ^ the left, right and top reflectors in mm from the neck pivot along
+    -- the head's axes, once a calibration puts them
+    , shownOutput :: !Output
+    , shownTrim :: !Trim
+    , shownAiming :: !Aiming
+    , shownGames :: !Int
+    -- ^ tracking
+    , shownGameName :: !(Maybe String)
+    -- ^ one of them, if its name is known
+    , shownStats :: !String
+    , shownCheck :: !UpdateCheck
+    , shownStatus :: !(Maybe UpdateStatus)
+    -- ^ what the last look for a newer version found, if there was one
+    , shownOffer :: !(Maybe Notice)
+    }
+    deriving (Eq, Show)
+
+-- | What the window shows before it is told anything.
+nothingShown :: Shown
+nothingShown =
+    Shown
+        { shownVersion = "development build"
+        , shownCamera = Searching
+        , shownSighting = OutOfSight 0
+        , shownView = still
+        , shownBlobs = []
+        , shownAreas = []
+        , shownClip = Nothing
+        , shownOutput = Live
+        , shownTrim = NoTrim
+        , shownAiming = NotAiming
+        , shownGames = 0
+        , shownGameName = Nothing
+        , shownStats = ""
+        , shownCheck = CheckIdle
+        , shownStatus = Nothing
+        , shownOffer = Nothing
+        }
+  where
+    still = HeadPose 0 0 0 0 0 0

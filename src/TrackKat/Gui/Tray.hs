@@ -36,6 +36,7 @@ import System.Win32.Types (BOOL, DWORD, HINSTANCE, LPCTSTR, LPVOID, UINT, getLas
 
 import TrackKat.Display (CameraState (..))
 import TrackKat.Gui.Paint (guarded, resourceIcon)
+import TrackKat.Gui.Shown (takeSnapshot)
 import TrackKat.Gui.Win32 (nifIcon, nifMessage, nifTip, nimAdd, nimDelete, nimModify, withNotifyIconData, wmContextMenu)
 import TrackKat.UI.Tray
 
@@ -102,7 +103,7 @@ respond choose taskbarCreated shown w msg wp lp
         writeIORef shown NotShown
         update
         pure 0
-    | msg == wM_TIMER = c_refresh >> update >> pure 0
+    | msg == wM_TIMER = c_refresh >> takeSnapshot >> update >> pure 0
     | msg == wmAppTray = do
         let mouse = fromIntegral lp
         if mouse == wM_LBUTTONUP || mouse == wM_LBUTTONDBLCLK
