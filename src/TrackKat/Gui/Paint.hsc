@@ -8,6 +8,7 @@ module TrackKat.Gui.Paint (
     guarded,
     resourceIcon,
     Font (..),
+    screenDpi,
     scaled,
     Colour (..),
     solidBrush,
@@ -120,6 +121,10 @@ resourceIcon number size = do
     resource = wordPtrToPtr . fromIntegral
     -- IDI_APPLICATION, a resource number cast to a pointer.
     idiApplication = 32512
+
+-- | The screen's dots per inch, which the window is drawn to.
+screenDpi :: IO Int
+screenDpi = fromIntegral <$> c_dpi
 
 -- | A length at 96 dots per inch, at the screen's.
 scaled :: CInt -> IO CInt
@@ -240,15 +245,15 @@ penStyle Dashed = #{const PS_DASH}
 drawIcon :: HDC -> HICON -> CInt -> CInt -> CInt -> IO ()
 drawIcon dc icon x y size = () <$ c_DrawIconEx dc x y icon size size 0 nullPtr #{const DI_NORMAL}
 
--- | Draw a width and height off screen, then onto a device context at
--- once, so it never shows half drawn.
-buffered :: HDC -> CInt -> CInt -> (HDC -> IO ()) -> IO ()
-buffered dc w h paint =
+-- | Draw a width and height off screen, then onto a device context at x,
+-- y at once, so it never shows half drawn.
+buffered :: HDC -> (CInt, CInt, CInt, CInt) -> (HDC -> IO ()) -> IO ()
+buffered dc (x, y, w, h) paint =
     bracket (c_CreateCompatibleDC dc) c_DeleteDC $ \mem ->
         bracket (c_CreateCompatibleBitmap dc w h) c_DeleteObject $ \bitmap ->
             bracket (c_SelectObject mem bitmap) (c_SelectObject mem) $ \_ -> do
                 paint mem
-                () <$ c_BitBlt dc 0 0 w h mem 0 0 #{const SRCCOPY}
+                () <$ c_BitBlt dc x y w h mem 0 0 #{const SRCCOPY}
 
 selectFont :: HDC -> Font -> IO ()
 selectFont dc font = do

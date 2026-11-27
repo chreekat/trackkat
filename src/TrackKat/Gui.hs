@@ -66,6 +66,7 @@ import TrackKat.Controls (Hotkey (..))
 import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Gui.Curve (registerCurve)
+import TrackKat.Gui.HeadView (registerLive)
 import TrackKat.Gui.Masthead (registerMasthead)
 import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
@@ -128,7 +129,7 @@ withGui HaskellWindow w work = do
     runGui made = do
         thread <- getCurrentThreadId
         rc <-
-            firstFailure [registerMasthead guiLog, registerCurve guiLog] >>= \case
+            firstFailure [registerMasthead guiLog, registerCurve guiLog, registerLive guiLog] >>= \case
                 Left e -> pure (fromIntegral e)
                 Right () -> makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
         putMVar made (rc, thread)

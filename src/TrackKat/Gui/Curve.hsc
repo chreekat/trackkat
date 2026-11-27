@@ -37,7 +37,7 @@ curveProc w msg wp lp
             let (width, height) = (fromIntegral right, fromIntegral bottom)
             -- cbits/gui.c's build_window numbers each plot by its axis.
             axis <- c_GetWindowLongPtr w (#{const GWLP_USERDATA})
-            buffered dc width height (\mem -> paint mem (fromIntegral axis) width height)
+            buffered dc (0, 0, width, height) (\mem -> paint mem (fromIntegral axis) width height)
             endPaint w ps
         pure 0
     | otherwise = defWindowProc (Just w) msg wp lp

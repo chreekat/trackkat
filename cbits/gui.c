@@ -3576,6 +3576,47 @@ void hts_gui_curve_state(int axis, wchar_t *text, double *head, int *live)
     *live = seen.camera == CAMERA_TRACKING && seen.blobs < 0;
 }
 
+/* What the head view shows, from the last refresh, for
+ * TrackKat.Gui.HeadView: the view shown, as head_view numbers them; the
+ * camera, blobs and reflectors_seen, as State has them; whether paused; the
+ * head and the view games see, six each; whether the clip is shown and its
+ * reflectors, nine; up to BLOBS_MAX blobs of seven, as hts_gui_blobs takes
+ * them; and up to AREAS_MAX areas of three. */
+void hts_gui_head_state(int *view, int *camera, int *blobs, int *reflectors_seen, int *paused, float *head,
+                        float *pose, int *clip_shown, float *clip, int *spots, float *spot, int *areas, float *area)
+{
+    *view = head_view;
+    *camera = seen.camera;
+    *blobs = seen.blobs;
+    *reflectors_seen = seen.reflectors_seen;
+    *paused = seen.paused;
+    memcpy(head, seen.head, sizeof seen.head);
+    memcpy(pose, seen.view, sizeof seen.view);
+    *clip_shown = seen.clip_shown;
+    memcpy(clip, seen.clip, sizeof seen.clip);
+    *spots = seen.spots;
+    for (int i = 0; i < seen.spots; i++) {
+        const Spot *b = &seen.spot[i];
+        float *out = spot + 7 * i;
+        out[0] = b->x;
+        out[1] = b->y;
+        out[2] = b->pixels;
+        out[3] = (float)b->role;
+        out[4] = b->var_x;
+        out[5] = b->var_y;
+        out[6] = b->cov_xy;
+    }
+    *areas = seen.areas;
+    memcpy(area, seen.area, sizeof seen.area[0] * seen.areas);
+}
+
+/* Whether a window is the head view, which TrackKat.Gui.HeadView draws. */
+int hts_gui_is_head_view(HWND w) { return w == head_ctl; }
+
+/* The rest of the live view, for TrackKat.Gui.HeadView. */
+void hts_gui_paint_live(HDC dc, int width, int height) { paint_live(dc, width, height); }
+void hts_gui_draw_switch(const DRAWITEMSTRUCT *d) { draw_switch(d); }
+
 /* The screen's dots per inch, which the window is drawn to. */
 int hts_gui_dpi(void) { return dpi; }
 
