@@ -29,7 +29,7 @@ foreign import ccall unsafe "windows.h LoadCursorW" c_LoadCursor :: Ptr () -> LP
 
 -- | Register the live view's window class, reporting what fails in it.
 registerLive :: (String -> IO ()) -> IO (Either Int ())
-registerLive report = registerPart report "The live view" "trackkat_live" liveProc
+registerLive report = registerPart report "The live view" "trackkat_live" Unfilled liveProc
 
 -- | One of the live view's controls drawn here.
 data Control = SwitchControl Switch | HeadViewControl

@@ -1,17 +1,20 @@
 -- | What the window has been told to show, for the parts of it drawn in
 -- Haskell: told from any thread, and read on the window's own from a
 -- snapshot it takes each time it refreshes, so every part shows the same
--- moment.
+-- moment; and the log.
 module TrackKat.Gui.Shown (
     tell,
     takeSnapshot,
     snapshot,
+    logLine,
+    logBook,
 ) where
 
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import System.IO.Unsafe (unsafePerformIO)
 
 import TrackKat.Display (Shown, nothingShown)
+import TrackKat.UI.Log (LogBook, emptyLog, record)
 
 -- | Change what the window is told.
 tell :: (Shown -> Shown) -> IO ()
@@ -25,6 +28,18 @@ takeSnapshot = readIORef told >>= writeIORef taken
 -- | What the window shows, as of its last snapshot.
 snapshot :: IO Shown
 snapshot = readIORef taken
+
+-- | Add a line to the log.
+logLine :: String -> IO ()
+logLine line = atomicModifyIORef' logged (\b -> (record line b, ()))
+
+-- | The log as it is now.
+logBook :: IO LogBook
+logBook = readIORef logged
+
+logged :: IORef LogBook
+logged = unsafePerformIO (newIORef emptyLog)
+{-# NOINLINE logged #-}
 
 told, taken :: IORef Shown
 told = unsafePerformIO (newIORef nothingShown)

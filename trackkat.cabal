@@ -111,9 +111,11 @@ library
       TrackKat.Gui.Calls
       TrackKat.Gui.Curve
       TrackKat.Gui.Live
+      TrackKat.Gui.Log
       TrackKat.Gui.Masthead
       TrackKat.Gui.Paint
       TrackKat.Gui.Shown
+      TrackKat.Gui.Tips
       TrackKat.Gui.Tray
       TrackKat.Gui.Win32
       TrackKat.Install

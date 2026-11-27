@@ -68,8 +68,9 @@ import TrackKat.Display
 import TrackKat.Frame (Blob (..))
 import TrackKat.Gui.Curve (registerCurve)
 import TrackKat.Gui.Live (registerLive)
+import TrackKat.Gui.Log (registerLog)
 import TrackKat.Gui.Masthead (registerMasthead)
-import TrackKat.Gui.Shown (takeSnapshot, tell)
+import TrackKat.Gui.Shown (logLine, takeSnapshot, tell)
 import TrackKat.Gui.Tray (makeTray)
 import TrackKat.Linear (V3 (..))
 import TrackKat.Pose (HeadPose (..), Reflector (..))
@@ -136,7 +137,7 @@ withGui HaskellWindow w work = do
         _ <- c_SetProcessDPIAware
         takeSnapshot
         rc <-
-            firstFailure [registerMasthead guiLog, registerCurve guiLog, registerLive guiLog] >>= \case
+            firstFailure [registerMasthead guiLog, registerCurve guiLog, registerLive guiLog, registerLog guiLog] >>= \case
                 Left e -> pure (fromIntegral e)
                 Right () -> makeTray guiLog choose >>= either (pure . fromIntegral) (c_create (windowCode w))
         putMVar made (rc, thread)
@@ -322,7 +323,7 @@ list MarkKey = Nothing
 
 -- | Add a line to the log the window shows.
 guiLog :: String -> IO ()
-guiLog line = withCWString line c_log
+guiLog line = logLine line >> withCWString line c_log
 
 -- | Set the window's Camera light, and its words if the camera is down.
 showCamera :: CameraState -> IO ()

@@ -26,7 +26,7 @@ foreign import ccall unsafe "windows.h GetWindowLongPtrW" c_GetWindowLongPtr :: 
 -- | Register the response plots' window class, reporting what fails in
 -- them.
 registerCurve :: (String -> IO ()) -> IO (Either Int ())
-registerCurve report = registerPart report "A response plot" "trackkat_curve" curveProc
+registerCurve report = registerPart report "A response plot" "trackkat_curve" Unfilled curveProc
 
 curveProc :: WindowClosure
 curveProc w msg wp lp

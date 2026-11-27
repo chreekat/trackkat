@@ -397,6 +397,7 @@ void hts_gui_add_binding(int which, const wchar_t *binding)
 #define WM_APP_CAPTURE_MOUSE (WM_APP + 3) /* to an Add button, once its click is done */
 #define WM_APP_QUIT (WM_APP + 4)          /* from another trackkat, uninstalling */
 #define WM_APP_OPEN_SETTINGS (WM_APP + 5) /* once the settings are saved */
+#define WM_APP_COPY_LOG (WM_APP + 6)      /* to the log window, from the main window's Copy log */
 #define TIMER_ID 1
 #define TIMER_MS 33
 #define COVER_AWAY_MS 4000 /* the calibration cover closes once the mouse has been away from it this long */
@@ -2181,7 +2182,8 @@ static void drain_log(void)
         return;
     log_shown += n;
     chunk[n] = 0;
-    append_log(chunk);
+    if (log_box)
+        append_log(chunk);
     /* The last line, on the window's line for the log. */
     size_t end = n;
     while (end > 0 && (chunk[end - 1] == L'\n' || chunk[end - 1] == L'\r'))
@@ -2989,6 +2991,9 @@ static LRESULT CALLBACK log_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CLOSE:
         ShowWindow(w, SW_HIDE);
         return 0;
+    case WM_APP_COPY_LOG:
+        copy_log();
+        return 0;
     }
     return DefWindowProcW(w, msg, wp, lp);
 }
@@ -3100,7 +3105,7 @@ static LRESULT CALLBACK main_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             start_capture(3);
             return 0;
         case ID_COPY_LOG:
-            copy_log();
+            SendMessageW(log_hwnd, WM_APP_COPY_LOG, 0, 0);
             return 0;
         case ID_OPEN_LOG:
             show_log();
@@ -3383,11 +3388,15 @@ static void make_fonts(void)
 }
 
 /* Register one of this file's window classes, unless the thread registered
- * its own by that name: TrackKat.Gui draws that part of the window. */
+ * its own by that name: TrackKat.Gui draws that part of the window. 0 if
+ * neither. */
+enum { CLASS_OURS = 1, CLASS_THEIRS };
 static int register_class(const WNDCLASSW *wc)
 {
     WNDCLASSW theirs;
-    return GetClassInfoW(inst, wc->lpszClassName, &theirs) || RegisterClassW(wc);
+    if (GetClassInfoW(inst, wc->lpszClassName, &theirs))
+        return CLASS_THEIRS;
+    return RegisterClassW(wc) ? CLASS_OURS : 0;
 }
 
 /* Make the windows, with the hidden one the tray icon talks to: the one
@@ -3448,7 +3457,8 @@ static int create_windows(HWND tray)
     wc.lpfnWndProc = log_proc;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"trackkat_log";
-    if (!register_class(&wc))
+    int log_class = register_class(&wc);
+    if (!log_class)
         return 0;
 
     RECT r = {0, 0, S(CLIENT_W), S(CLIENT_H)};
@@ -3480,7 +3490,9 @@ static int create_windows(HWND tray)
     if (!log_hwnd)
         return 0;
     SendMessageW(log_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
-    build_log_window();
+    /* TrackKat.Gui.Log's builds its own. */
+    if (log_class == CLASS_OURS)
+        build_log_window();
 
     refresh();
     if (own_tray)

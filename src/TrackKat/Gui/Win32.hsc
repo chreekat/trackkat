@@ -9,7 +9,32 @@ module TrackKat.Gui.Win32 (
     -- * Messages
     wmPrintClient,
     wmCtlColorBtn,
+    wmCtlColorStatic,
     wmContextMenu,
+    setMinTrackSize,
+
+    -- * Edit controls
+    ssNotify,
+    emGetSel,
+    emSetSel,
+    emReplaceSel,
+    emGetFirstVisibleLine,
+    emLineFromChar,
+    emLineIndex,
+    emLineScroll,
+    emScrollCaret,
+    emSetLimitText,
+    sbVert,
+    withScrollInfo,
+
+    -- * Tooltips
+    ttsAlwaysTip,
+    ttsNoPrefix,
+    ttmSetMaxTipWidth,
+    ttmSetDelayTime,
+    ttdtAutoPop,
+    ttmAddTool,
+    withToolInfo,
 
     -- * Text and icons
     dtLeft,
@@ -45,7 +70,9 @@ module TrackKat.Gui.Win32 (
 
 #include <windows.h>
 #include <shellapi.h>
+#include <commctrl.h>
 
+import Data.Bits ((.|.))
 import Foreign.C.String (withCWStringLen)
 import Foreign.C.Types (CInt)
 import Foreign.Marshal.Alloc (allocaBytes)
@@ -53,19 +80,21 @@ import Foreign.Marshal.Array (copyArray)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (FunPtr, Ptr, castPtr, plusPtr, wordPtrToPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
-import Graphics.Win32.GDI.Types (HCURSOR, HDC, HICON, HWND)
+import Graphics.Win32.GDI.Types (HBRUSH, HCURSOR, HDC, HICON, HWND)
 import Graphics.Win32.Message (WindowMessage)
 import Graphics.Win32.Window (WindowClosure)
 import System.Win32.Types (DWORD, HINSTANCE, INT, LPCTSTR, UINT)
 
--- | A WNDCLASSW of a procedure, instance, cursor and name, the rest zero.
-withWndClass :: FunPtr WindowClosure -> HINSTANCE -> HCURSOR -> LPCTSTR -> (Ptr () -> IO a) -> IO a
-withWndClass proc inst cursor name act =
+-- | A WNDCLASSW of a procedure, instance, cursor, background brush and
+-- name, the rest zero.
+withWndClass :: FunPtr WindowClosure -> HINSTANCE -> HCURSOR -> HBRUSH -> LPCTSTR -> (Ptr () -> IO a) -> IO a
+withWndClass proc inst cursor background name act =
     allocaBytes size $ \p -> do
         fillBytes p 0 size
         #{poke WNDCLASSW, lpfnWndProc} p proc
         #{poke WNDCLASSW, hInstance} p inst
         #{poke WNDCLASSW, hCursor} p cursor
+        #{poke WNDCLASSW, hbrBackground} p background
         #{poke WNDCLASSW, lpszClassName} p name
         act p
   where
@@ -77,10 +106,78 @@ gwlpUserData = #{const GWLP_USERDATA}
 idcHand :: LPCTSTR
 idcHand = wordPtrToPtr #{const IDC_HAND}
 
-wmPrintClient, wmCtlColorBtn, wmContextMenu :: WindowMessage
+wmPrintClient, wmCtlColorBtn, wmCtlColorStatic, wmContextMenu :: WindowMessage
 wmPrintClient = #{const WM_PRINTCLIENT}
 wmCtlColorBtn = #{const WM_CTLCOLORBTN}
+wmCtlColorStatic = #{const WM_CTLCOLORSTATIC}
 wmContextMenu = #{const WM_CONTEXTMENU}
+
+-- | Set a MINMAXINFO's smallest size the window can be dragged to.
+setMinTrackSize :: Ptr () -> CInt -> CInt -> IO ()
+setMinTrackSize p w h = do
+    #{poke MINMAXINFO, ptMinTrackSize.x} p w
+    #{poke MINMAXINFO, ptMinTrackSize.y} p h
+
+ssNotify :: DWORD
+ssNotify = #{const SS_NOTIFY}
+
+emGetSel, emSetSel, emReplaceSel, emGetFirstVisibleLine, emLineFromChar, emLineIndex, emLineScroll, emScrollCaret, emSetLimitText :: WindowMessage
+emGetSel = #{const EM_GETSEL}
+emSetSel = #{const EM_SETSEL}
+emReplaceSel = #{const EM_REPLACESEL}
+emGetFirstVisibleLine = #{const EM_GETFIRSTVISIBLELINE}
+emLineFromChar = #{const EM_LINEFROMCHAR}
+emLineIndex = #{const EM_LINEINDEX}
+emLineScroll = #{const EM_LINESCROLL}
+emScrollCaret = #{const EM_SCROLLCARET}
+emSetLimitText = #{const EM_SETLIMITTEXT}
+
+sbVert :: CInt
+sbVert = #{const SB_VERT}
+
+-- | A SCROLLINFO asking for everything, to fill, and then its page,
+-- position and largest position.
+withScrollInfo :: (Ptr () -> IO a) -> IO (a, (UINT, CInt, CInt))
+withScrollInfo act =
+    allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke SCROLLINFO, cbSize} p (fromIntegral size :: UINT)
+        #{poke SCROLLINFO, fMask} p (#{const SIF_ALL} :: UINT)
+        r <- act p
+        page <- #{peek SCROLLINFO, nPage} p
+        pos <- #{peek SCROLLINFO, nPos} p
+        top <- #{peek SCROLLINFO, nMax} p
+        pure (r, (page, pos, top))
+  where
+    size = #{size SCROLLINFO}
+
+ttsAlwaysTip, ttsNoPrefix :: DWORD
+ttsAlwaysTip = #{const TTS_ALWAYSTIP}
+ttsNoPrefix = #{const TTS_NOPREFIX}
+
+ttmSetMaxTipWidth, ttmSetDelayTime, ttmAddTool :: WindowMessage
+ttmSetMaxTipWidth = #{const TTM_SETMAXTIPWIDTH}
+ttmSetDelayTime = #{const TTM_SETDELAYTIME}
+ttmAddTool = #{const TTM_ADDTOOLW}
+
+ttdtAutoPop :: CInt
+ttdtAutoPop = #{const TTDT_AUTOPOP}
+
+-- | A TTTOOLINFOW for help on a control, shown over a window, with a text:
+-- the size every version of the common controls understands, the control
+-- as its ID, and the tooltip watching its mouse itself.
+withToolInfo :: HWND -> HWND -> LPCTSTR -> (Ptr () -> IO a) -> IO a
+withToolInfo owner control text act =
+    allocaBytes size $ \p -> do
+        fillBytes p 0 size
+        #{poke TTTOOLINFOW, cbSize} p (#{const TTTOOLINFOW_V2_SIZE} :: UINT)
+        #{poke TTTOOLINFOW, uFlags} p (#{const TTF_IDISHWND} .|. #{const TTF_SUBCLASS} :: UINT)
+        #{poke TTTOOLINFOW, hwnd} p owner
+        #{poke TTTOOLINFOW, uId} p control
+        #{poke TTTOOLINFOW, lpszText} p text
+        act p
+  where
+    size = #{size TTTOOLINFOW}
 
 dtLeft, dtCenter, dtRight, dtSingleLine, dtVCenter, dtNoPrefix, dtCalcRect, dtEndEllipsis, dtWordBreak, dtEditControl :: UINT
 dtLeft = #{const DT_LEFT}

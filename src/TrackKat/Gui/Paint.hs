@@ -5,10 +5,12 @@
 -- context, and window procedures an exception can't escape.
 module TrackKat.Gui.Paint (
     registerPart,
+    Background (..),
     guarded,
     painted,
     resourceIcon,
     Font (..),
+    fontHandle,
     screenDpi,
     scaled,
     Colour (..),
@@ -41,6 +43,7 @@ import Graphics.Win32.Misc (iDC_ARROW, loadCursor)
 import Graphics.Win32.Resource (iMAGE_ICON, lR_SHARED)
 import Graphics.Win32.Window (LPPAINTSTRUCT, WindowClosure, allocaPAINTSTRUCT, defWindowProc)
 import System.Win32.DLL (getModuleHandle)
+import System.Win32.Info (cOLOR_BTNFACE)
 import System.Win32.Types (ATOM, BOOL, DWORD, HANDLE, HINSTANCE, INT, LPCTSTR, UINT, getLastError)
 
 import TrackKat.Gui.Win32
@@ -91,15 +94,28 @@ foreign import ccall "wrapper" mkProc :: WindowClosure -> IO (FunPtr WindowClosu
 -- cbits/gui.c's hts_gui_create then makes it of rather than registering its
 -- own; its procedure is 'guarded', named by the part. Left is a Windows
 -- error code.
-registerPart :: (String -> IO ()) -> String -> String -> WindowClosure -> IO (Either Int ())
-registerPart report part className proc = do
+registerPart :: (String -> IO ()) -> String -> String -> Background -> WindowClosure -> IO (Either Int ())
+registerPart report part className background proc = do
     inst <- getModuleHandle Nothing
     cursor <- loadCursor Nothing iDC_ARROW
     -- Both for the life of the process.
     wndProc <- mkProc (guarded report part proc)
     name <- newCWString className
-    atom <- withWndClass wndProc inst cursor name c_RegisterClass
+    atom <- withWndClass wndProc inst cursor (backgroundBrush background) name c_RegisterClass
     if atom /= 0 then pure (Right ()) else Left . fromIntegral <$> getLastError
+
+-- | What Windows fills a part's window with before it is painted.
+data Background
+    = -- | nothing: the part paints all of itself
+      Unfilled
+    | -- | the colour of buttons and dialogs
+      ButtonFace
+
+-- | A window class's background brush, as WNDCLASSW's hbrBackground takes a
+-- system colour.
+backgroundBrush :: Background -> HANDLE
+backgroundBrush Unfilled = nullPtr
+backgroundBrush ButtonFace = wordPtrToPtr (fromIntegral cOLOR_BTNFACE + 1)
 
 -- | A window procedure that reports what fails in it, naming the part of
 -- the window, and leaves the message to Windows' handling: an exception
@@ -275,9 +291,11 @@ buffered dc (x, y, w, h) paint =
                 () <$ c_BitBlt dc x y w h mem 0 0 sRCCOPY
 
 selectFont :: HDC -> Font -> IO ()
-selectFont dc font = do
-    f <- c_font (fromIntegral (fromEnum font))
-    () <$ c_SelectObject dc f
+selectFont dc font = fontHandle font >>= \f -> () <$ c_SelectObject dc f
+
+-- | One of the window's fonts, made by cbits/gui.c.
+fontHandle :: Font -> IO HANDLE
+fontHandle font = c_font (fromIntegral (fromEnum font))
 
 -- | Text drawn over what is there, in a colour.
 inkFor :: HDC -> Colour -> IO ()

@@ -26,7 +26,7 @@ registerMasthead report = do
     quiet <- solidBrush stripColour
     offering <- solidBrush offerColour
     -- As cbits/gui.c's build_window makes it.
-    registerPart report "The masthead" "trackkat_strip" (mastheadProc quiet offering)
+    registerPart report "The masthead" "trackkat_strip" Unfilled (mastheadProc quiet offering)
 
 mastheadProc :: HANDLE -> HANDLE -> WindowClosure
 mastheadProc quiet offering w msg wp lp
