@@ -1,7 +1,6 @@
 -- | What the masthead across the top of trackkat's window says. It is drawn by
 -- "TrackKat.Gui.Masthead".
 module TrackKat.UI.Masthead (
-    MastheadState (..),
     mastheadVersion,
     MastheadSays (..),
     Verdict (..),
@@ -10,22 +9,11 @@ module TrackKat.UI.Masthead (
 
 import Data.List (isPrefixOf)
 
-import TrackKat.Display (UpdateCheck (..), UpdateStatus (..))
-
--- | What the masthead tells of trackkat.
-data MastheadState = MastheadState
-    { mastheadBuild :: String
-    -- ^ the version, as the window's title has it
-    , mastheadOffer :: Maybe String
-    , mastheadCheck :: UpdateCheck
-    , mastheadStatus :: Maybe UpdateStatus
-    -- ^ what the last look for a newer version found, if there was one
-    }
-    deriving (Eq, Show)
+import TrackKat.Display (Notice (..), Shown (..), UpdateCheck (..), UpdateStatus (..))
 
 -- | The build's number, leaving its commit to the title and the log window.
-mastheadVersion :: MastheadState -> String
-mastheadVersion s = go (mastheadBuild s)
+mastheadVersion :: Shown -> String
+mastheadVersion s = go (shownVersion s)
   where
     go v@(c : rest)
         | " (" `isPrefixOf` v = ""
@@ -44,9 +32,9 @@ data MastheadSays
 data Verdict = Good | Plain
     deriving (Eq, Show)
 
-mastheadSays :: MastheadState -> MastheadSays
-mastheadSays s = case (mastheadOffer s, mastheadCheck s, mastheadStatus s) of
-    (Just offer, _, _) -> SaysOffer offer
+mastheadSays :: Shown -> MastheadSays
+mastheadSays s = case (shownOffer s, shownCheck s, shownStatus s) of
+    (Just offer, _, _) -> SaysOffer (noticeText offer)
     (Nothing, CheckRunning, _) -> SaysStatus Plain "Checking\8230"
     (Nothing, CheckIdle, Just (UpToDate t)) -> SaysStatus Good t
     (Nothing, CheckIdle, Just (UpdateNote t)) -> SaysStatus Plain t

@@ -3552,20 +3552,6 @@ void hts_gui_tray_state(int *camera, wchar_t *camera_text, int *clip_lost, int *
     copy_text(offer, OFFER_TRAY_MAX, seen.offer_tray);
 }
 
-/* What the masthead across the top shows, from the last refresh, for
- * TrackKat.Gui.Masthead: the version as the title has it, the offer, whether
- * a look for a newer version is running, what the last look found and
- * whether that is that none is newer; texts of 64, TEXT_MAX and TEXT_MAX
- * characters. */
-void hts_gui_masthead_state(wchar_t *version, wchar_t *offer, int *checking, wchar_t *status, int *up_to_date)
-{
-    copy_text(version, 64, version_text);
-    copy_text(offer, TEXT_MAX, seen.offer);
-    *checking = seen.checking;
-    copy_text(status, TEXT_MAX, seen.update_status);
-    *up_to_date = seen.up_to_date;
-}
-
 /* What an axis's response plot shows, for TrackKat.Gui.Curve: its curve as
  * typed, in FIELD_MAX characters, where the head is along the axis, and
  * whether that is the head as tracked now. */

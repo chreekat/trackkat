@@ -5,24 +5,18 @@
 module TrackKat.Gui.Masthead (registerMasthead) where
 
 import Control.Monad (when)
-import Foreign.C.String (CWString, peekCWString)
 import Foreign.C.Types (CInt (..))
-import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
-import Foreign.Ptr (Ptr, ptrToIntPtr, wordPtrToPtr)
-import Foreign.Storable (peek)
+import Foreign.Ptr (ptrToIntPtr, wordPtrToPtr)
 import Graphics.Win32.GDI.Types (HDC, HWND)
 import Graphics.Win32.Message (wM_COMMAND, wM_ERASEBKGND, wM_PAINT)
 import Graphics.Win32.Window (WindowClosure, defWindowProc, getClientRect, getParent, sendMessage)
 import System.Win32.Types (HANDLE)
 
-import TrackKat.Display (UpdateCheck (..), UpdateStatus (..))
+import TrackKat.Display (Shown)
 import TrackKat.Gui.Paint
+import TrackKat.Gui.Shown (snapshot)
 import TrackKat.Gui.Win32 (dtLeft, wmCtlColorBtn, wmPrintClient)
 import TrackKat.UI.Masthead
-
-foreign import ccall unsafe "hts_gui_masthead_state"
-    c_masthead_state :: CWString -> CWString -> Ptr CInt -> CWString -> Ptr CInt -> IO ()
 
 -- | Register the masthead's window class, reporting what fails in it.
 registerMasthead :: (String -> IO ()) -> IO (Either Int ())
@@ -43,7 +37,7 @@ mastheadProc quiet offering w msg wp lp
     -- Behind the buttons' rounded corners.
     | msg == wmPrintClient = paintIn w (wordPtrToPtr (fromIntegral wp)) >> pure 0
     | msg == wmCtlColorBtn = do
-        s <- mastheadState
+        s <- snapshot
         let brush = case mastheadSays s of SaysOffer _ -> offering; _ -> quiet
         pure (fromIntegral (ptrToIntPtr brush))
     | msg == wM_COMMAND = getParent w >>= \parent -> sendMessage parent msg wp lp
@@ -52,11 +46,11 @@ mastheadProc quiet offering w msg wp lp
 paintIn :: HWND -> HDC -> IO ()
 paintIn w dc = do
     (_, _, right, bottom) <- getClientRect w
-    paint dc (fromIntegral right) (fromIntegral bottom) =<< mastheadState
+    paint dc (fromIntegral right) (fromIntegral bottom) =<< snapshot
 
 -- | trackkat, its version and what the last look found; or, with an offer,
 -- the offer, on amber. The button at the right is a child of its own.
-paint :: HDC -> CInt -> CInt -> MastheadState -> IO ()
+paint :: HDC -> CInt -> CInt -> Shown -> IO ()
 paint dc w h s = do
     let says = mastheadSays s
         offer = case says of SaysOffer _ -> True; _ -> False
@@ -93,28 +87,6 @@ paint dc w h s = do
                 Plain -> pure x
             textAt dc UiFont (case verdict of Good -> goodColour; Plain -> RGB 85 85 85) (x', 0, right - x', h) dtLeft text
         SaysNothing -> pure ()
-
--- | What cbits/gui.c last saw for the masthead.
-mastheadState :: IO MastheadState
-mastheadState =
-    allocaArray 64 $ \version -> allocaArray textMax $ \offer -> alloca $ \checking ->
-        allocaArray textMax $ \status -> alloca $ \upToDate -> do
-            c_masthead_state version offer checking status upToDate
-            v <- peekCWString version
-            o <- peekCWString offer
-            c <- peek checking
-            t <- peekCWString status
-            u <- peek upToDate
-            pure
-                MastheadState
-                    { mastheadBuild = v
-                    , mastheadOffer = if null o then Nothing else Just o
-                    , mastheadCheck = if c /= 0 then CheckRunning else CheckIdle
-                    , mastheadStatus = if null t then Nothing else Just (if u /= 0 then UpToDate t else UpdateNote t)
-                    }
-  where
-    -- As TEXT_MAX in cbits/gui.c.
-    textMax = 512
 
 -- As cbits/gui.c's PROGRAM_ICON, STRIP_BUTTON_W and C_ colours.
 programIcon :: Int
