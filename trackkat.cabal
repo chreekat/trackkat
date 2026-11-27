@@ -84,6 +84,7 @@ library
     TrackKat.UI.Draw
     TrackKat.UI.HeadView
     TrackKat.UI.Live
+    TrackKat.UI.Log
     TrackKat.UI.Masthead
     TrackKat.UI.Palette
     TrackKat.UI.Tray
@@ -271,6 +272,7 @@ test-suite tests
     Test.UI.Curve
     Test.UI.HeadView
     Test.UI.Live
+    Test.UI.Log
     Test.UI.Masthead
     Test.UI.Tray
     Test.Updater
