@@ -5,40 +5,38 @@
 -- it opens is cbits/gui.c's.
 module TrackKat.Gui.Tray (makeTray) where
 
-#include <windows.h>
-#include <shellapi.h>
-
 import Control.Exception (bracket)
 import Control.Monad (forM_, unless, void, when)
 import Data.Bits ((.&.), (.|.))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Foreign.C.String (CWString, peekCWString, withCWString, withCWStringLen)
+import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CInt (..))
-import Foreign.Marshal.Alloc (alloca, allocaBytes)
-import Foreign.Marshal.Array (allocaArray, copyArray)
-import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
-import Foreign.Storable (peek, pokeByteOff)
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray)
+import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Storable (peek)
 import Graphics.Win32.GDI.Types (HICON, HMENU, HWND, LPRECT)
-import Graphics.Win32.Menu (appendMenu, createPopupMenu, destroyMenu, setMenuDefaultItem)
+import Graphics.Win32.Menu (appendMenu, createPopupMenu, destroyMenu, mFT_SEPARATOR, mFT_STRING, mF_CHECKED, setMenuDefaultItem, tPM_RIGHTBUTTON)
 import Graphics.Win32.Message (WindowMessage, wM_APP, wM_COMMAND, wM_LBUTTONDBLCLK, wM_LBUTTONUP, wM_RBUTTONUP, wM_TIMER)
 import Graphics.Win32.Misc (getCursorPos)
-import Graphics.Win32.Window
-    ( ClassName
-    , WindowClosure
-    , defWindowProc
-    , mkClassName
-    , registerClass
-    , setWindowClosure
-    , wS_OVERLAPPED
-    )
+import Graphics.Win32.Window (
+    ClassName,
+    WindowClosure,
+    defWindowProc,
+    mkClassName,
+    registerClass,
+    setWindowClosure,
+    wS_OVERLAPPED,
+ )
 import Graphics.Win32.Window.ForegroundWindow (setForegroundWindow)
 import Graphics.Win32.Window.PostMessage (postMessage)
 import System.Win32.DLL (getModuleHandle)
+import System.Win32.Info (sM_CXSMICON)
 import System.Win32.Types (BOOL, DWORD, HINSTANCE, LPCTSTR, LPVOID, UINT, getLastError)
 
 import TrackKat.Display (CameraState (..))
 import TrackKat.Gui.Paint (guarded, resourceIcon)
+import TrackKat.Gui.Win32 (nifIcon, nifMessage, nifTip, nimAdd, nimDelete, nimModify, withNotifyIconData, wmContextMenu)
 import TrackKat.UI.Tray
 
 foreign import ccall safe "hts_gui_refresh" c_refresh :: IO ()
@@ -120,7 +118,6 @@ respond choose taskbarCreated shown w msg wp lp
         pure 0
     | otherwise = defWindowProc (Just w) msg wp lp
   where
-    wmContextMenu = 0x007B
     update = do
         stopping <- c_stopping
         when (stopping == 0) $ do
@@ -131,30 +128,30 @@ respond choose taskbarCreated shown w msg wp lp
                 icon <- trayIcon (trayLook s)
                 -- Modified if it is there; added if not, or no longer.
                 ok <- if was == NotShown then pure False else notify nimModify icon (trayTip s)
-                added <- if ok then pure True else do
-                    new <- notify nimAdd icon (trayTip s)
-                    -- Taken back as in cbits/gui.c's update_tray.
-                    stopped <- c_stopping
-                    when (new && stopped /= 0) $ void (notify nimDelete icon "")
-                    pure new
+                added <-
+                    if ok
+                        then pure True
+                        else do
+                            new <- notify nimAdd icon (trayTip s)
+                            -- Taken back as in cbits/gui.c's update_tray.
+                            stopped <- c_stopping
+                            when (new && stopped /= 0) $ void (notify nimDelete icon "")
+                            pure new
                 writeIORef shown (if added then now else NotShown)
     menu = do
         s <- trayState
         bracket createPopupMenu destroyMenu $ \m -> do
             forM_ (trayMenu s) $ \case
                 MenuItem choice name tick ->
-                    appendMenu m (#{const MF_STRING} .|. (case tick of Ticked -> #{const MF_CHECKED}; Unticked -> 0)) (itemId choice) (Just name)
-                MenuSeparator -> appendMenu m #{const MF_SEPARATOR} 0 Nothing
+                    appendMenu m (mFT_STRING .|. (case tick of Ticked -> mF_CHECKED; Unticked -> 0)) (itemId choice) (Just name)
+                MenuSeparator -> appendMenu m mFT_SEPARATOR 0 Nothing
             setMenuDefaultItem m (itemId OpenChoice) False
             (x, y) <- getCursorPos
             -- Without these, the menu doesn't close when clicking elsewhere.
             void (setForegroundWindow w)
-            void (c_TrackPopupMenu m #{const TPM_RIGHTBUTTON} (fromIntegral x) (fromIntegral y) 0 w nullPtr)
+            void (c_TrackPopupMenu m tPM_RIGHTBUTTON (fromIntegral x) (fromIntegral y) 0 w nullPtr)
             postMessage (Just w) 0 0 0
     notify message icon tip = notifyIcon message w icon tip
-    nimAdd = #{const NIM_ADD}
-    nimModify = #{const NIM_MODIFY}
-    nimDelete = #{const NIM_DELETE}
 
 -- | The menu's items' IDs, from this on in the order of 'TrayChoice'.
 firstItem :: Int
@@ -189,28 +186,12 @@ trayState =
     textMax = 512
     offerMax = 128
 
--- | NOTIFYICONDATAW's szTip, in characters with the NUL.
-tipMax :: Int
-tipMax = 128
-
 -- | The look's icon (icons/trackkat.rc numbers them from 2 in the order of
 -- 'TrayLook'), at the size the tray shows.
 trayIcon :: TrayLook -> IO HICON
-trayIcon look = c_GetSystemMetrics #{const SM_CXSMICON} >>= resourceIcon (2 + fromEnum look)
+trayIcon look = c_GetSystemMetrics (fromIntegral sM_CXSMICON) >>= resourceIcon (2 + fromEnum look)
 
 -- | Add, modify or delete the window's icon, uID 1, with a tooltip.
 notifyIcon :: DWORD -> HWND -> HICON -> String -> IO BOOL
 notifyIcon message w icon tip =
-    allocaBytes size $ \p -> do
-        fillBytes p 0 size
-        #{poke NOTIFYICONDATAW, cbSize} p (fromIntegral size :: DWORD)
-        #{poke NOTIFYICONDATAW, hWnd} p w
-        #{poke NOTIFYICONDATAW, uID} p (1 :: UINT)
-        #{poke NOTIFYICONDATAW, uFlags} p (#{const NIF_ICON | NIF_TIP | NIF_MESSAGE} :: UINT)
-        #{poke NOTIFYICONDATAW, uCallbackMessage} p wmAppTray
-        #{poke NOTIFYICONDATAW, hIcon} p icon
-        withCWStringLen tip $ \(s, n) ->
-            copyArray (castPtr (p `plusPtr` #{offset NOTIFYICONDATAW, szTip})) s (min n (tipMax - 1))
-        c_Shell_NotifyIcon message (castPtr p)
-  where
-    size = #{size NOTIFYICONDATAW}
+    withNotifyIconData w 1 (nifIcon .|. nifTip .|. nifMessage) wmAppTray icon tip (c_Shell_NotifyIcon message)
