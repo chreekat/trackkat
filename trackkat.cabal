@@ -108,6 +108,7 @@ library
   if os(windows)
     exposed-modules:
       TrackKat.Gui
+      TrackKat.Gui.Calls
       TrackKat.Gui.Curve
       TrackKat.Gui.Live
       TrackKat.Gui.Masthead

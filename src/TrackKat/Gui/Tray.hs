@@ -17,7 +17,6 @@ import Graphics.Win32.Menu (appendMenu, createPopupMenu, destroyMenu, mFT_SEPARA
 import Graphics.Win32.Message (WindowMessage, wM_APP, wM_COMMAND, wM_LBUTTONDBLCLK, wM_LBUTTONUP, wM_RBUTTONUP, wM_TIMER)
 import Graphics.Win32.Misc (getCursorPos)
 import Graphics.Win32.Window (
-    ClassName,
     WindowClosure,
     defWindowProc,
     mkClassName,
@@ -29,8 +28,9 @@ import Graphics.Win32.Window.ForegroundWindow (setForegroundWindow)
 import Graphics.Win32.Window.PostMessage (postMessage)
 import System.Win32.DLL (getModuleHandle)
 import System.Win32.Info (sM_CXSMICON)
-import System.Win32.Types (BOOL, DWORD, HINSTANCE, LPCTSTR, LPVOID, UINT, getLastError)
+import System.Win32.Types (BOOL, DWORD, LPCTSTR, UINT, getLastError)
 
+import TrackKat.Gui.Calls (createWindow)
 import TrackKat.Gui.Paint (guarded, resourceIcon)
 import TrackKat.Gui.Shown (snapshot, takeSnapshot)
 import TrackKat.Gui.Win32 (nifIcon, nifMessage, nifTip, nimAdd, nimDelete, nimModify, withNotifyIconData, wmContextMenu)
@@ -42,8 +42,6 @@ foreign import ccall unsafe "hts_gui_stopping" c_stopping :: IO CInt
 
 -- Calls that may hand the thread's windows messages, and so the window
 -- procedure here, while they wait: safe.
-foreign import ccall safe "windows.h CreateWindowExW"
-    c_CreateWindowEx :: DWORD -> ClassName -> LPCTSTR -> DWORD -> CInt -> CInt -> CInt -> CInt -> HWND -> HMENU -> HINSTANCE -> LPVOID -> IO HWND
 foreign import ccall safe "shellapi.h Shell_NotifyIconW" c_Shell_NotifyIcon :: DWORD -> Ptr () -> IO BOOL
 foreign import ccall safe "windows.h TrackPopupMenu"
     c_TrackPopupMenu :: HMENU -> UINT -> CInt -> CInt -> CInt -> HWND -> LPRECT -> IO BOOL
@@ -74,8 +72,7 @@ makeTray report choose = do
         Just _ -> do
             -- Hidden, but top-level, so a second trackkat can find it and
             -- Explorer's TaskbarCreated reaches it.
-            w <- withCWString "trackkat" $ \title ->
-                c_CreateWindowEx 0 className title wS_OVERLAPPED 0 0 0 0 nullPtr nullPtr inst nullPtr
+            w <- createWindow 0 "trackkat" "trackkat" wS_OVERLAPPED (0, 0, 0, 0) Nothing 0
             if w == nullPtr
                 then Left . fromIntegral <$> getLastError
                 else do
