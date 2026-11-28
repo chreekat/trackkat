@@ -1997,10 +1997,12 @@ static void add_binding(int field, const wchar_t *binding)
     save_soon(1);
 }
 
-/* A binding list's box takes Enter for a new line, but leaves Tab and Esc to
- * the window. */
+/* A binding list's box takes Enter for a new line, but leaves Tab, Esc and
+ * the wheel to the window. */
 static LRESULT CALLBACK list_box_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (msg == WM_MOUSEWHEEL)
+        return SendMessageW(GetParent(w), msg, wp, lp);
     if (msg == WM_GETDLGCODE) {
         LRESULT code = CallWindowProcW(edit_proc, w, msg, wp, lp) & ~(DLGC_WANTALLKEYS | DLGC_WANTTAB);
         const MSG *m = (const MSG *)lp;
